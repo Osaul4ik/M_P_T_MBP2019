@@ -59,7 +59,7 @@ typedef struct _PTP_CORE_FRAME
 
 // PTPCore_ProcessFrame - single frame-orchestration entry point.
 // ButtonDown: current integrated-button physical state (TYPE2 hardware).
-// Drives the click-edge synthetic-rebirth workaround - see PTPCore.c.
+// Drives the click-edge forced-rebirth workaround - see PTPCore.c.
 
 struct _DEVICE_CONTEXT; // fwd decl, defined in Device.h
 
@@ -71,10 +71,6 @@ PTPCore_ProcessFrame(
     _In_    BOOLEAN                 ButtonDown,
     _Out_   PTP_CORE_FRAME*         OutResult
 );
-
-// Hot-path trace rate gate. Shared between Interrupt.c and PTPCore.c.
-BOOLEAN
-AmtHotPathTraceGate(_Inout_ struct _DEVICE_CONTEXT* pCtx, _In_ LONGLONG NowQpc100ns);
 
 // Recent-lift ring buffer for retap smoothing.
 
