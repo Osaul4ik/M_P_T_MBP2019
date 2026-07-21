@@ -3,6 +3,18 @@
 #include "Driver.h"
 #include "hid.tmh"
 
+// AUDIT: single choke point for the "is reportBuffer big enough for the
+// struct we're about to read/write" check. Replaces 4 separate ad-hoc
+// comparisons (2 pre-existing in AmtPtpReportFeatures, 2 added in
+// AmtPtpSetFeatures) so a future new REPORTID_* case can't silently skip it.
+static __inline BOOLEAN
+HidValidateReportSize(
+	_In_ PHID_XFER_PACKET pHidPacket,
+	_In_ size_t           requiredSize)
+{
+	return (pHidPacket->reportBufferLen >= (ULONG)requiredSize);
+}
+
 #ifndef _AAPL_HID_DESCRIPTOR_H_
 #define _AAPL_HID_DESCRIPTOR_H_
 
@@ -37,22 +49,12 @@ AmtPtpGetHidDescriptor(
 	size_t szCopy = 0;
 	WDFMEMORY requestMemory;
 
-	TraceEvents(
-		TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-		"%!FUNC! Entry"
-	);
-
 	status = WdfRequestRetrieveOutputMemory(
 		Request,
 		&requestMemory
 	);
 
 	if (!NT_SUCCESS(status)) {
-		TraceEvents(
-			TRACE_LEVEL_ERROR, TRACE_DRIVER,
-			"%!FUNC! WdfRequestRetrieveOutputBuffer failed with %!STATUS!",
-			status
-		);
 		goto exit;
 	}
 
@@ -61,7 +63,7 @@ AmtPtpGetHidDescriptor(
 		case USB_DEVICE_ID_APPLE_T2_7B:
 		case USB_DEVICE_ID_APPLE_T2_7C:
 		case USB_DEVICE_ID_APPLE_T2_7D:
-        // MacBookPro16,1 (2019)
+		// MacBookPro16,1 (2019)
 		case USB_DEVICE_ID_APPLE_T2_16:
 		{
 			szCopy = AmtPtpT2DefaultHidDescriptor.bLength;
@@ -73,11 +75,6 @@ AmtPtpGetHidDescriptor(
 			);
 
 			if (!NT_SUCCESS(status)) {
-				TraceEvents(
-					TRACE_LEVEL_ERROR, TRACE_DRIVER,
-					"%!FUNC! WdfMemoryCopyFromBuffer failed with %!STATUS!",
-					status
-				);
 				goto exit;
 			}
 
@@ -86,10 +83,6 @@ AmtPtpGetHidDescriptor(
 		}
 		default:
 		{
-			TraceEvents(
-				TRACE_LEVEL_WARNING, TRACE_DRIVER,
-				"%!FUNC! Device HID registry is not found, use a generic fallback"
-			);
 
 			szCopy = AmtPtpT2DefaultHidDescriptor.bLength;
 			status = WdfMemoryCopyFromBuffer(
@@ -100,11 +93,6 @@ AmtPtpGetHidDescriptor(
 			);
 
 			if (!NT_SUCCESS(status)) {
-				TraceEvents(
-					TRACE_LEVEL_ERROR, TRACE_DRIVER,
-					"%!FUNC! WdfMemoryCopyFromBuffer failed with %!STATUS!",
-					status
-				);
 				goto exit;
 			}
 
@@ -114,10 +102,6 @@ AmtPtpGetHidDescriptor(
 	};
 
 exit:
-	TraceEvents(
-		TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-		"%!FUNC! Exit"
-	);
 
 	return status;
 }
@@ -133,11 +117,6 @@ AmtPtpGetDeviceAttribs(
 	PDEVICE_CONTEXT pContext = DeviceGetContext(Device);
 	PHID_DEVICE_ATTRIBUTES pDeviceAttributes = NULL;
 
-	TraceEvents(
-		TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-		"%!FUNC! Entry"
-	);
-
 	status = WdfRequestRetrieveOutputBuffer(
 		Request,
 		sizeof(HID_DEVICE_ATTRIBUTES),
@@ -146,11 +125,6 @@ AmtPtpGetDeviceAttribs(
 	);
 
 	if (!NT_SUCCESS(status)) {
-		TraceEvents(
-			TRACE_LEVEL_ERROR, TRACE_DRIVER,
-			"%!FUNC! WdfRequestRetrieveOutputBuffer failed with %!STATUS!",
-			status
-		);
 		goto exit;
 	}
 
@@ -162,10 +136,6 @@ AmtPtpGetDeviceAttribs(
 	WdfRequestSetInformation(Request, sizeof(HID_DEVICE_ATTRIBUTES));
 
 exit:
-	TraceEvents(
-		TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-		"%!FUNC! Exit"
-	);
 
 	return status;
 }
@@ -182,22 +152,12 @@ AmtPtpGetReportDescriptor(
 	size_t szCopy = 0;
 	WDFMEMORY requestMemory;
 
-	TraceEvents(
-		TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-		"%!FUNC! Entry"
-	);
-
 	status = WdfRequestRetrieveOutputMemory(
 		Request,
 		&requestMemory
 	);
 
 	if (!NT_SUCCESS(status)) {
-		TraceEvents(
-			TRACE_LEVEL_ERROR, TRACE_DRIVER,
-			"%!FUNC! WdfRequestRetrieveOutputBuffer failed with %!STATUS!",
-			status
-		);
 		goto exit;
 	}
 
@@ -206,7 +166,7 @@ AmtPtpGetReportDescriptor(
 		case USB_DEVICE_ID_APPLE_T2_7B:
 		case USB_DEVICE_ID_APPLE_T2_7C:
 		case USB_DEVICE_ID_APPLE_T2_7D:
-        // See AmtPtpGetHidDescriptor.
+		// See AmtPtpGetHidDescriptor.
 		case USB_DEVICE_ID_APPLE_T2_16:
 		{
 
@@ -214,10 +174,6 @@ AmtPtpGetReportDescriptor(
 			if (szCopy == 0) {
 
 				status = STATUS_INVALID_DEVICE_STATE;
-				TraceEvents(
-					TRACE_LEVEL_ERROR, TRACE_DRIVER,
-					"%!FUNC! Device HID report length is zero"
-				);
 				goto exit;
 			}
 
@@ -230,11 +186,6 @@ AmtPtpGetReportDescriptor(
 
 			if (!NT_SUCCESS(status)) {
 
-				TraceEvents(
-					TRACE_LEVEL_ERROR, TRACE_DRIVER,
-					"%!FUNC! WdfMemoryCopyFromBuffer failed with %!STATUS!",
-					status
-				);
 				goto exit;
 			}
 
@@ -243,19 +194,11 @@ AmtPtpGetReportDescriptor(
 		}
 		default:
 		{
-			TraceEvents(
-				TRACE_LEVEL_WARNING, TRACE_DRIVER,
-				"%!FUNC! Device HID registry is not found, use a generic fallback"
-			);
 			
 			szCopy = AmtPtpT2DefaultHidDescriptor.DescriptorList[0].wReportLength;
 			if (szCopy == 0) {
 
 				status = STATUS_INVALID_DEVICE_STATE;
-				TraceEvents(
-					TRACE_LEVEL_ERROR, TRACE_DRIVER,
-					"%!FUNC! Device HID report length is zero"
-				);
 				goto exit;
 			}
 
@@ -268,11 +211,6 @@ AmtPtpGetReportDescriptor(
 
 			if (!NT_SUCCESS(status)) {
 
-				TraceEvents(
-					TRACE_LEVEL_ERROR, TRACE_DRIVER,
-					"%!FUNC! WdfMemoryCopyFromBuffer failed with %!STATUS!",
-					status
-				);
 				goto exit;
 			}
 
@@ -282,10 +220,6 @@ AmtPtpGetReportDescriptor(
 	}
 
 exit:
-	TraceEvents(
-		TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-		"%!FUNC! Exit"
-	);
 
 	return status;
 }
@@ -304,11 +238,6 @@ AmtPtpReportFeatures(
 	size_t ReportSize;
 
 	PAGED_CODE();
-
-	TraceEvents(
-		TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-		"%!FUNC! Entry"
-	);
 
 	status = STATUS_SUCCESS;
 	pDeviceContext = DeviceGetContext(Device);
@@ -333,19 +262,11 @@ AmtPtpReportFeatures(
 	{
 		case REPORTID_DEVICE_CAPS:
 		{
-			TraceEvents(
-				TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-				"%!FUNC! Report REPORTID_DEVICE_CAPS is requested"
-			);
 
 			// Check buffer size
 			ReportSize = sizeof(PTP_DEVICE_CAPS_FEATURE_REPORT);
-			if (pHidPacket->reportBufferLen < ReportSize) {
+			if (!HidValidateReportSize(pHidPacket, ReportSize)) {
 				status = STATUS_INVALID_BUFFER_SIZE;
-				TraceEvents(
-					TRACE_LEVEL_ERROR, TRACE_DRIVER,
-					"%!FUNC! Report buffer is too small"
-				);
 				goto exit;
 			}
 
@@ -354,45 +275,22 @@ AmtPtpReportFeatures(
 			capsReport->ButtonType = PTP_BUTTON_TYPE_CLICK_PAD;
 			capsReport->ReportID = REPORTID_DEVICE_CAPS;
 
-			TraceEvents(
-				TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-				"%!FUNC! Report REPORTID_DEVICE_CAPS has maximum contact points of %d",
-				capsReport->MaximumContactPoints
-			);
-			TraceEvents(
-				TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-				"%!FUNC! Report REPORTID_DEVICE_CAPS has touchpad type %d",
-				capsReport->ButtonType
-			);
-			TraceEvents(
-				TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-				"%!FUNC! Report REPORTID_DEVICE_CAPS is fulfilled"
-			);
-
 			break;
 		}
 		case REPORTID_PTPHQA:
 		{
-			TraceEvents(
-				TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-				"%!FUNC! Report REPORTID_PTPHQA is requested"
-			);
 
 			// Check buffer size
 			ReportSize = sizeof(PTP_DEVICE_HQA_CERTIFICATION_REPORT);
-			if (pHidPacket->reportBufferLen < ReportSize)
+			if (!HidValidateReportSize(pHidPacket, ReportSize))
 			{
 				status = STATUS_INVALID_BUFFER_SIZE;
-				TraceEvents(
-					TRACE_LEVEL_ERROR, TRACE_DRIVER,
-					"%!FUNC! Report buffer is too small."
-				);
 				goto exit;
 			}
 
 			PPTP_DEVICE_HQA_CERTIFICATION_REPORT certReport = (PPTP_DEVICE_HQA_CERTIFICATION_REPORT)pHidPacket->reportBuffer;
 
-            // RtlCopyMemory (direct assignment was a comma-expression bug).
+			// RtlCopyMemory (direct assignment was a comma-expression bug).
 			{
 				static const UCHAR HqaBlob[256] = { DEFAULT_PTP_HQA_BLOB };
 				C_ASSERT(sizeof(HqaBlob) == sizeof(certReport->CertificationBlob));
@@ -400,20 +298,10 @@ AmtPtpReportFeatures(
 			}
 			certReport->ReportID = REPORTID_PTPHQA;
 
-			TraceEvents(
-				TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-				"%!FUNC! Report REPORTID_PTPHQA is fulfilled"
-			);
-
 			break;
 		}
 		default:
 		{
-			TraceEvents(
-				TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-				"%!FUNC! Unsupported type %d is requested",
-				pHidPacket->reportId
-			);
 
 			status = STATUS_NOT_SUPPORTED;
 			goto exit;
@@ -421,10 +309,6 @@ AmtPtpReportFeatures(
 	}
 
 exit:
-	TraceEvents(
-		TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-		"%!FUNC! Exit"
-	);
 
 	return status;
 }
@@ -442,11 +326,6 @@ AmtPtpSetFeatures(
 	WDF_REQUEST_PARAMETERS RequestParameters;
 	PDEVICE_CONTEXT pDeviceContext;
 
-	TraceEvents(
-		TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-		"%!FUNC! Entry"
-	);
-
 	status = STATUS_SUCCESS;
 	pDeviceContext = DeviceGetContext(Device);
 
@@ -455,10 +334,6 @@ AmtPtpSetFeatures(
 
 	if (RequestParameters.Parameters.DeviceIoControl.InputBufferLength < sizeof(HID_XFER_PACKET))
 	{
-		TraceEvents(
-			TRACE_LEVEL_ERROR, TRACE_DRIVER,
-			"%!FUNC! HID_XFER_PACKET buffer too small"
-		);
 
 		status = STATUS_BUFFER_TOO_SMALL;
 		goto exit;
@@ -467,10 +342,6 @@ AmtPtpSetFeatures(
 	pHidPacket = (PHID_XFER_PACKET) WdfRequestWdmGetIrp(Request)->UserBuffer;
 	if (pHidPacket == NULL)
 	{
-		TraceEvents(
-			TRACE_LEVEL_ERROR, TRACE_DRIVER,
-			"%!FUNC! HID_XFER_PACKET has no input packet"
-		);
 
 		status = STATUS_INVALID_DEVICE_REQUEST;
 		goto exit;
@@ -480,10 +351,14 @@ AmtPtpSetFeatures(
 	{
 		case REPORTID_REPORTMODE:
 		{
-			TraceEvents(
-				TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-				"%!FUNC! Report REPORTID_REPORTMODE is requested"
-			);
+
+			// AUDIT FIX: validate reportBufferLen before casting/dereferencing -
+			// pHidPacket is attacker/HID-class supplied and reportBuffer's real
+			// size is not guaranteed to match the struct we're about to read.
+			if (!HidValidateReportSize(pHidPacket, sizeof(PTP_DEVICE_INPUT_MODE_REPORT))) {
+				status = STATUS_INVALID_BUFFER_SIZE;
+				goto exit;
+			}
 
 			PPTP_DEVICE_INPUT_MODE_REPORT devInputMode = (PPTP_DEVICE_INPUT_MODE_REPORT) pHidPacket->reportBuffer;
 			BOOLEAN bWellspringMode = pDeviceContext->IsWellspringModeOn;
@@ -492,29 +367,16 @@ AmtPtpSetFeatures(
 			{
 				case PTP_COLLECTION_MOUSE:
 				{
-					TraceEvents(
-						TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-						"%!FUNC! Report REPORTID_REPORTMODE requested Mouse Input but not supported"
-					);
 
 					status = STATUS_NOT_SUPPORTED;
 					goto exit;
 				}
 				case PTP_COLLECTION_WINDOWS:
 				{
-					TraceEvents(
-						TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-						"%!FUNC! Report REPORTID_REPORTMODE requested Windows PTP Input"
-					);
 
 					if (!bWellspringMode) {
 						status = AmtPtpSetWellspringMode(pDeviceContext, TRUE);
 						if (!NT_SUCCESS(status)) {
-							TraceEvents(
-								TRACE_LEVEL_ERROR, TRACE_DRIVER,
-								"%!FUNC! -> AmtPtpSetWellspringMode failed with status %!STATUS!",
-								status
-							);
 							goto exit;
 						}
 					}
@@ -522,62 +384,35 @@ AmtPtpSetFeatures(
 				}
 				default:
 				{
-                // Unknown Mode: previously fell through silently claiming success.
-					TraceEvents(
-						TRACE_LEVEL_WARNING, TRACE_DRIVER,
-						"%!FUNC! Report REPORTID_REPORTMODE requested unknown Mode=%d",
-						devInputMode->Mode
-					);
+					// Unknown Mode: previously fell through silently claiming success.
 					break;
 				}
 			}
 
-			TraceEvents(
-				TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-				"%!FUNC! Report REPORTID_REPORTMODE is fulfilled"
-			);
 			break;
 		}
 		case REPORTID_FUNCSWITCH:
 		{
-			TraceEvents(
-				TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-				"%!FUNC! Report REPORTID_FUNCSWITCH is requested"
-			);
 
-			PPTP_DEVICE_SELECTIVE_REPORT_MODE_REPORT secInput = (PPTP_DEVICE_SELECTIVE_REPORT_MODE_REPORT) pHidPacket->reportBuffer;
+			// AUDIT FIX: same missing-length-check class of bug as
+			// REPORTID_REPORTMODE above - validate before dereferencing.
+			if (!HidValidateReportSize(pHidPacket, sizeof(PTP_DEVICE_SELECTIVE_REPORT_MODE_REPORT))) {
+				status = STATUS_INVALID_BUFFER_SIZE;
+				goto exit;
+			}
 
-			TraceEvents(
-				TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-				"%!FUNC! Report REPORTID_FUNCSWITCH requested Button = %d, Surface = %d",
-				secInput->ButtonReport,
-				secInput->SurfaceReport
-			);
-
-            // REVERTED: honoring SurfaceReport regressed real hardware
-            // (pad stops responding). Kept trace-only.
-			TraceEvents(
-				TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-				"%!FUNC! Report REPORTID_FUNCSWITCH is fulfilled"
-			);
+			// REVERTED: honoring ButtonReport/SurfaceReport regressed real
+			// hardware (pad stops responding). Validated for size above and
+			// otherwise intentionally ignored - no fields are read.
 			break;
 		}
 		default:
 		{
-			TraceEvents(
-				TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-				"%!FUNC! Unsupported type %d is requested",
-				pHidPacket->reportId
-			);
 			status = STATUS_NOT_SUPPORTED;
 			goto exit;
 		}
 	}
 
 exit:
-	TraceEvents(
-		TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-		"%!FUNC! Exit"
-	);
 	return status;
 }
