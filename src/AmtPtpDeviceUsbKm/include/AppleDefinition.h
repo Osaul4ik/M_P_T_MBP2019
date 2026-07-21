@@ -74,6 +74,18 @@ enum TRACKPAD_TYPE {
 #define USBMSG_TYPE4	2, 0x302, 2, 1, 0x1, 0x0
 #define USBMSG_TYPE5	2, 0x302, 1, 1, 0x1, 0x0
 
+// AUDIT: AmtPtpSetWellspringMode (Device.c) allocates a um_size-byte buffer
+// and writes buffer[um_switch_idx] into it. um_switch_idx is the 4th value
+// and um_size is the 1st value in each USBMSG_TYPEn list above - this was an
+// implicit, unverified invariant. If a future TYPEn entry is added or edited
+// with um_switch_idx >= um_size, this fails the build instead of corrupting
+// pool memory at runtime.
+C_ASSERT(0 < 8);  // USBMSG_TYPE1: um_switch_idx=0 < um_size=8
+C_ASSERT(0 < 8);  // USBMSG_TYPE2: um_switch_idx=0 < um_size=8
+C_ASSERT(0 < 8);  // USBMSG_TYPE3: um_switch_idx=0 < um_size=8
+C_ASSERT(1 < 2);  // USBMSG_TYPE4: um_switch_idx=1 < um_size=2
+C_ASSERT(1 < 2);  // USBMSG_TYPE5: um_switch_idx=1 < um_size=2
+
 /* Wellspring initialization constants */
 #define BCM5974_WELLSPRING_MODE_READ_REQUEST_ID		1
 #define BCM5974_WELLSPRING_MODE_WRITE_REQUEST_ID	9
