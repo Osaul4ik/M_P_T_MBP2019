@@ -29,7 +29,7 @@ typedef struct _DEVICE_CONTEXT
 
     // Previous frame's physical integrated-button state. Compared against
     // the current frame in PTPCore.c to detect the 0->1 click edge that
-    // drives the synthetic-rebirth anti-jitter-snap workaround.
+    // drives the forced-rebirth anti-jitter-snap workaround.
     BOOLEAN PrevButtonClicked;
 
     // Scan time
@@ -57,9 +57,6 @@ typedef struct _DEVICE_CONTEXT
     // QPC frequency cached at D0Entry
     LARGE_INTEGER PerfFrequency;
 
-    // Hot-path trace rate limiting - QPC of last verbose trace emission.
-    LONGLONG LastHotPathTraceQpc;
-
     // Overflow lift-off queue - when PTPCore_ProcessFrame produces more
     // lift-offs than remaining PTP_CORE_FRAME capacity, deferred
     // entries are drained at the front of the next frame. See
@@ -83,6 +80,13 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 
 #define POOL_TAG_PTP_CONTROL    'PTPC'
 
+// AUDIT: WdfUsbTargetDeviceSendControlTransferSynchronously in
+// AmtPtpSetWellspringMode previously ran with no send-options/timeout, so a
+// stalled/malicious USB device or hub could block the calling thread
+// (including the D0Entry power-up path) forever. 5s is generous for a
+// single control transfer but keeps a hard upper bound.
+#define WELLSPRING_CONTROL_TRANSFER_TIMEOUT_SEC   5
+
 NTSTATUS
 AmtPtpDeviceUsbKmCreateDevice(
     _Inout_ PWDFDEVICE_INIT DeviceInit
@@ -102,9 +106,6 @@ AmtPtpConfigContReaderForInterruptEndPoint(_In_ PDEVICE_CONTEXT DeviceContext);
 
 EVT_WDF_USB_READER_COMPLETION_ROUTINE AmtPtpEvtUsbInterruptPipeReadComplete;
 EVT_WDF_USB_READERS_FAILED            AmtPtpEvtUsbInterruptReadersFailed;
-
-PCHAR DbgDevicePowerString(_In_ WDF_POWER_DEVICE_STATE Type);
-PCHAR DbgIoControlGetString(_In_ ULONG IoControlCode);
 
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS
