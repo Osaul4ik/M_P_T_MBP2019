@@ -6,19 +6,6 @@
 #include "Input.h"
 #include "Interrupt.tmh"
 
-// Hot-path trace rate limiting.
-#define TRACE_HOT_PATH_MIN_INTERVAL_100NS  (50LL * 10000LL)  // 50 ms
-
-// Shared with PTPCore.c (declared in PTPCore.h).
-BOOLEAN
-AmtHotPathTraceGate(_Inout_ PDEVICE_CONTEXT pCtx, _In_ LONGLONG NowQpc100ns)
-{
-    if (NowQpc100ns - pCtx->LastHotPathTraceQpc < TRACE_HOT_PATH_MIN_INTERVAL_100NS)
-        return FALSE;
-    pCtx->LastHotPathTraceQpc = NowQpc100ns;
-    return TRUE;
-}
-
 #if DBG
 static VOID
 AmtReportCheckInvariants(_In_ const PTP_REPORT* Report)
@@ -67,8 +54,6 @@ AmtPtpConfigContReaderForInterruptEndPoint(_In_ PDEVICE_CONTEXT DeviceContext)
     NTSTATUS status;
     size_t   transferLength = 0;
 
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "%!FUNC! Entry");
-
     switch (DeviceContext->DeviceInfo->tp_type) {
     case TYPE1: transferLength = HEADER_TYPE1 + FSIZE_TYPE1 * MAX_FINGERS; break;
     case TYPE2: transferLength = HEADER_TYPE2 + FSIZE_TYPE2 * MAX_FINGERS; break;
@@ -76,8 +61,6 @@ AmtPtpConfigContReaderForInterruptEndPoint(_In_ PDEVICE_CONTEXT DeviceContext)
     case TYPE4: transferLength = HEADER_TYPE4 + FSIZE_TYPE4 * MAX_FINGERS; break;
     case TYPE5: transferLength = HEADER_TYPE5 + FSIZE_TYPE5 * MAX_FINGERS; break;
     default:
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_DRIVER,
-            "%!FUNC! Unknown tp_type %d", DeviceContext->DeviceInfo->tp_type);
         status = STATUS_UNKNOWN_REVISION;
         goto exit;
     }
@@ -98,12 +81,7 @@ AmtPtpConfigContReaderForInterruptEndPoint(_In_ PDEVICE_CONTEXT DeviceContext)
     status = WdfUsbTargetPipeConfigContinuousReader(
         DeviceContext->InterruptPipe, &contReaderConfig);
 
-    if (!NT_SUCCESS(status))
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_DRIVER,
-            "%!FUNC! WdfUsbTargetPipeConfigContinuousReader failed %!STATUS!", status);
-
 exit:
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "%!FUNC! Exit");
     return status;
 }
 
@@ -133,14 +111,11 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     if (NumBytesTransferred < headerSize ||
         (NumBytesTransferred - headerSize) % fingerSize != 0) {
-        TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-            "%!FUNC! Malformed packet, len=%llu", (ULONG64)NumBytesTransferred);
         return;
     }
 
     TouchBuffer = WdfMemoryGetBuffer(Buffer, NULL);
     if (TouchBuffer == NULL) {
-        TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "%!FUNC! NULL buffer");
         return;
     }
 
@@ -150,8 +125,6 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     Status = WdfRequestRetrieveOutputMemory(Request, &RequestMemory);
     if (!NT_SUCCESS(Status)) {
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_DRIVER,
-            "%!FUNC! RetrieveOutputMemory failed %!STATUS!", Status);
         WdfRequestComplete(Request, Status);
         return;
     }
@@ -183,8 +156,6 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         if (raw_n > PTP_MAX_CONTACT_POINTS) raw_n = PTP_MAX_CONTACT_POINTS;
 
         if (raw_n * fingerSize > (NumBytesTransferred - headerSize)) {
-            TraceEvents(TRACE_LEVEL_ERROR, TRACE_DRIVER,
-                "%!FUNC! Buffer size mismatch");
             WdfRequestComplete(Request, STATUS_DATA_ERROR);
             return;
         }
@@ -204,9 +175,6 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     if (buttonSnapshot) {
         Report.IsButtonClicked = TRUE;
-        if (AmtHotPathTraceGate(pCtx, Now.QuadPart)) {
-            TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_INPUT, "%!FUNC! Button clicked");
-        }
     }
 
     AmtReportCheckInvariants(&Report);
@@ -214,8 +182,6 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     Status = WdfMemoryCopyFromBuffer(
         RequestMemory, 0, (PVOID)&Report, sizeof(PTP_REPORT));
     if (!NT_SUCCESS(Status)) {
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_DRIVER,
-            "%!FUNC! WdfMemoryCopyFromBuffer failed %!STATUS!", Status);
         WdfRequestComplete(Request, Status);
         return;
     }
