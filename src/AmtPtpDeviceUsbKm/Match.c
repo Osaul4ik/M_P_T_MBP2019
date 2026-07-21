@@ -119,8 +119,15 @@ AmtMatchBuildCandidates(
         cand.X = isStationary ? Pool[bestPoolIdx].ReportX : rc->X;
         cand.Y = isStationary ? Pool[bestPoolIdx].ReportY : rc->Y;
 
-        // Clamp to prevent Confidence=1 on UCHAR wrap.
-        cand.TipDropApplied = 0;
+        // AUDIT FIX: this was previously hardcoded to 0 in both branches,
+        // silently disabling the documented "Confidence=FALSE on stale
+        // bridged position" contract (see Match.h / Interrupt.c's
+        // outC->Confident = (cand->TipDropApplied == 0)). Only the
+        // stationary/anchor branch actually reports a stale position
+        // (Pool[bestPoolIdx].ReportX/Y instead of the live rc->X/Y), so
+        // only that branch should mark low confidence. The moving branch
+        // reports the real live coordinate and stays full-confidence.
+        cand.TipDropApplied = isStationary ? 1 : 0;
 
         OutCandidates->Candidates[OutCandidates->Count++] = cand;
     }
