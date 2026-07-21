@@ -11,7 +11,6 @@
 #pragma alloc_text (PAGE, AmtPtpDeviceUsbKmEvtDriverContextCleanup)
 #endif
 
-
 NTSTATUS
 DriverEntry(
     _In_ PDRIVER_OBJECT  DriverObject,
@@ -25,8 +24,6 @@ DriverEntry(
 
     // Init WPP
     WPP_INIT_TRACING( DriverObject, RegistryPath );
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "%!FUNC! Entry");
 
     // Register cleanup callback for WPP_CLEANUP.
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
@@ -44,12 +41,9 @@ DriverEntry(
                              );
 
     if (!NT_SUCCESS(status)) {
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_DRIVER, "WdfDriverCreate failed %!STATUS!", status);
         WPP_CLEANUP(DriverObject);
         return status;
     }
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "%!FUNC! Exit");
 
     return status;
 }
@@ -67,19 +61,10 @@ AmtPtpDeviceUsbKmEvtDeviceAdd(
 
     PAGED_CODE();
 
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "%!FUNC! Entry");
-
-	TraceEvents(
-		TRACE_LEVEL_INFORMATION, TRACE_DRIVER,
-		"%!FUNC! Set FDO driver filter"
-	);
-
-	WdfFdoInitSetFilter(DeviceInit);
-	WdfPdoInitAllowForwardingRequestToParent(DeviceInit);
+    WdfFdoInitSetFilter(DeviceInit);
+    WdfPdoInitAllowForwardingRequestToParent(DeviceInit);
 
     status = AmtPtpDeviceUsbKmCreateDevice(DeviceInit);
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "%!FUNC! Exit");
 
     return status;
 }
@@ -93,8 +78,6 @@ AmtPtpDeviceUsbKmEvtDriverContextCleanup(
     UNREFERENCED_PARAMETER(DriverObject);
 
     PAGED_CODE ();
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "%!FUNC! Entry");
 
     // Stop WPP
     WPP_CLEANUP( WdfDriverWdmGetDriverObject( (WDFDRIVER) DriverObject) );
