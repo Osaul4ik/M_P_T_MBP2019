@@ -10,7 +10,11 @@
 #include "Palm.h"
 
 #define PALM_LARGE_MAJOR    380
-#define PALM_SCORE_THRESH   45
+#define PALM_SCORE_THRESH   55   // was 45 - raised so a wide/flat fingertip
+                                 // pad (large Major, but not elongated/
+                                 // edge-adjacent like a real palm) needs
+                                 // more corroborating signal before it's
+                                 // suppressed.
 #define PALM_MIN_MAJOR  80   // мінімальний major для підозри на долоню
 #define PALM_MIN_MINOR  40   // мінімальний minor для підозри на долоню
 
@@ -43,9 +47,9 @@ AmtPalmClassify(
     if (major >= PALM_LARGE_MAJOR)
         return PALM_LARGE;
 
-    if      (major > 260) score += 35;
-    else if (major > 190) score += 15;
-    else if (major > 130) score +=  8;
+    if      (major > 300) score += 35;   // was 260
+    else if (major > 220) score += 15;   // was 190
+    else if (major > 150) score +=  8;   // was 130
 
     if (minor > 0 && major > 120) {
         INT ratio = major * 100 / minor;
