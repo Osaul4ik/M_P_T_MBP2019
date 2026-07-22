@@ -276,15 +276,15 @@ PTPCore_ProcessFrame(
     AmtContactPoolCheckInvariants(pCtx->ActiveContacts);
 
     // Phase A.5 (button-click forced rebirth): on the rising edge of the
-    // integrated button, force a REAL Kill->Birth of every still-live,
-    // pre-existing matched contact, at its own current position. This is
-    // the only sanctioned way to mint a new ContactID (ActiveContact.h:
+    // integrated button, force a new ContactID onto every still-live,
+    // pre-existing matched contact, in place, at its own current position.
+    // This is the only sanctioned way to mint a new ContactID (ActiveContact.h:
     // "ContactID monotonic... the only permitted NEW_IDENTITY path is
-    // Kill->Birth") - there is deliberately no separate in-place identity
-    // mutation here. WasInGesture/FramesAlive are carried across the swap
-    // via AmtContactBirthForButtonRebirth, since the same physical finger
-    // never actually left the pad. Pre-existing == LastSeenQpc != 0: a
-    // contact birthed earlier in THIS frame (NewIdentity path above, or a
+    // Kill->Birth" or, here, an equivalent in-place rebind) - the pool slot
+    // itself is NOT freed/reacquired, so WasInGesture/FramesAlive/HystX/Y/
+    // ReportX/Y all carry across automatically, since the same physical
+    // finger never actually left the pad. Pre-existing == LastSeenQpc != 0:
+    // a contact birthed earlier in THIS frame (NewIdentity path above, or a
     // genuinely new touch in Phase B below) has no "old" cursor-latched
     // identity for Windows to be snapping against yet, so it's skipped.
     if (buttonClickEdge) {
@@ -295,32 +295,19 @@ PTPCore_ProcessFrame(
             if (p == MATCH_NO_CORRESPONDENCE) continue;
             if (pCtx->ActiveContacts[p].LastSeenQpc == 0) continue; // born this frame
 
-            BOOLEAN wasInGesture = pCtx->ActiveContacts[p].WasInGesture;
-            UCHAR   framesAlive  = pCtx->ActiveContacts[p].FramesAlive;
+            USHORT oldX = pCtx->ActiveContacts[p].ReportX;
+            USHORT oldY = pCtx->ActiveContacts[p].ReportY;
 
-            ULONG  oldId; USHORT oldX, oldY;
-            AmtContactKill(pCtx->ActiveContacts, p, &oldId, &oldX, &oldY);
+            ULONG oldId;
+            AmtContactRebindIdentity(pCtx->ActiveContacts, p, &pCtx->NextContactId, &oldId);
             AmtCoreEmitLift(pCtx, OutResult, oldId, oldX, oldY);
             // Deliberately NOT AmtRecentLiftRecord'd - this isn't a real
             // lift and must not seed retap-smoothing for unrelated future
             // taps in the same area.
 
-            size_t freeIdx = AmtContactPoolFindFree(pCtx->ActiveContacts);
-            if (freeIdx == MAX_CONTACTS) {
-                // Pool exhausted re-acquiring our own just-freed slot
-                // should not happen (we just killed one), but fail safe:
-                // leave this candidate unmatched: Phase B will treat it
-                // as a fresh untainted touch instead of dropping it.
-                matchResult.CorrespondingPoolIndex[ci] = MATCH_NO_CORRESPONDENCE;
-                continue;
-            }
-
-            AmtContactBirthForButtonRebirth(
-                pCtx->ActiveContacts, freeIdx, &pCtx->NextContactId,
-                oldX, oldY, candidates.Candidates[ci].SlotIndex,
-                wasInGesture, framesAlive);
-
-            matchResult.CorrespondingPoolIndex[ci] = freeIdx;
+            // matchResult.CorrespondingPoolIndex[ci] stays == p: the same
+            // pool slot now carries the new ContactID and Phase C below
+            // updates/reports it normally, at this frame's live position.
         }
     }
 
