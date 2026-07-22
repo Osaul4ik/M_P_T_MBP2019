@@ -139,6 +139,8 @@ AmtPtpEvtDeviceD0Entry(
     NTSTATUS        status;
     BOOLEAN         isTargetStarted;
 
+    UNREFERENCED_PARAMETER(PreviousState);
+
     pDeviceContext  = DeviceGetContext(Device);
     isTargetStarted = FALSE;
 
@@ -189,6 +191,7 @@ AmtPtpEvtDeviceD0Exit(
 {
     PDEVICE_CONTEXT pDeviceContext;
 
+    UNREFERENCED_PARAMETER(TargetState);
     PAGED_CODE();
 
     pDeviceContext = DeviceGetContext(Device);
