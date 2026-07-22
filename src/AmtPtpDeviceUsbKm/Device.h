@@ -57,15 +57,18 @@ typedef struct _DEVICE_CONTEXT
     // QPC frequency cached at D0Entry
     LARGE_INTEGER PerfFrequency;
 
-    // Overflow lift-off queue - when PTPCore_ProcessFrame produces more
-    // lift-offs than remaining PTP_CORE_FRAME capacity, deferred
+    // Overflow report queue - when PTPCore_ProcessFrame produces more
+    // contact events (lift-offs, or DOWN/MOVE reports that lost the race
+    // for a report slot) than remaining PTP_CORE_FRAME capacity, deferred
     // entries are drained at the front of the next frame. See
-    // AmtCoreEmitLift/AmtCoreDrainOverflow in PTPCore.c.
+    // AmtCoreEmitContact/AmtCoreDrainOverflow in PTPCore.c.
     // ---------------------------------------------------------------
-    ULONG  OverflowContactID[PTP_MAX_CONTACT_POINTS];
-    USHORT OverflowX[PTP_MAX_CONTACT_POINTS];
-    USHORT OverflowY[PTP_MAX_CONTACT_POINTS];
-    UCHAR  OverflowCount;
+    ULONG         OverflowContactID[PTP_MAX_CONTACT_POINTS];
+    USHORT        OverflowX[PTP_MAX_CONTACT_POINTS];
+    USHORT        OverflowY[PTP_MAX_CONTACT_POINTS];
+    CONTACT_PHASE OverflowPhase[PTP_MAX_CONTACT_POINTS];
+    BOOLEAN       OverflowConfident[PTP_MAX_CONTACT_POINTS];
+    UCHAR         OverflowCount;
 
     // Recent-lift memory for retap smoothing (PTPCore.h /
     // RECENT_LIFT_RING). Deliberately NOT slot-indexed - see PTPCore.h
