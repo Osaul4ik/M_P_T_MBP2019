@@ -78,23 +78,33 @@ AmtRecentLiftFindNearby(
     return found;
 }
 
-// Emit lift-off; overflow queue if frame full.
+// Emit a contact report of any phase; overflow-queue if the frame is full.
+// AUDIT FIX: previously this only ever emitted CONTACT_PHASE_UP (as
+// AmtCoreEmitLift) and Phase C's DOWN/MOVE reports had NO overflow
+// fallback at all - if ContactCount was already at PTP_MAX_CONTACT_POINTS
+// (e.g. all 5 fingers down + a button click in the same frame, where
+// Phase A.5 below fills every report slot with synthetic lift-offs),
+// Phase C's brand-new-ContactID DOWN reports were silently dropped
+// outright, leaving Windows with a ContactID it never saw go down.
 static VOID
-AmtCoreEmitLift(
+AmtCoreEmitContact(
     _Inout_ PDEVICE_CONTEXT pCtx,
     _Inout_ PTP_CORE_FRAME* OutResult,
     _In_    ULONG           ContactID,
     _In_    USHORT          X,
-    _In_    USHORT          Y
+    _In_    USHORT          Y,
+    _In_    CONTACT_PHASE   Phase,
+    _In_    BOOLEAN         Confident
 )
 {
     if (OutResult->ContactCount < PTP_MAX_CONTACT_POINTS) {
         PPTP_CORE_CONTACT outC = &OutResult->Contacts[OutResult->ContactCount];
-        outC->ContactID = ContactID;
-        outC->X         = X;
-        outC->Y         = Y;
-        outC->Phase     = CONTACT_PHASE_UP;
-        outC->Confident = TRUE;
+        outC->ContactID   = ContactID;
+        outC->X           = X;
+        outC->Y           = Y;
+        outC->Phase       = Phase;
+        outC->Confident   = Confident;
+        outC->PalmSuspect = FALSE;
         OutResult->ContactCount++;
         return;
     }
@@ -103,30 +113,55 @@ AmtCoreEmitLift(
         pCtx->OverflowContactID[pCtx->OverflowCount] = ContactID;
         pCtx->OverflowX[pCtx->OverflowCount]         = X;
         pCtx->OverflowY[pCtx->OverflowCount]         = Y;
+        pCtx->OverflowPhase[pCtx->OverflowCount]     = Phase;
+        pCtx->OverflowConfident[pCtx->OverflowCount] = Confident;
         pCtx->OverflowCount++;
     }
-    // else: overflow queue full too - contact's lift-off is dropped this
-    // frame. Extremely rare (would need > 2*PTP_MAX_CONTACT_POINTS lifts
-    // in flight simultaneously).
+    // else: overflow queue full too - event is dropped this frame.
+    // Would need > 2*PTP_MAX_CONTACT_POINTS events in flight
+    // simultaneously; not reachable with PTP_MAX_CONTACT_POINTS physical
+    // fingers (worst case is PTP_MAX_CONTACT_POINTS UPs + the same number
+    // of DOWNs from an all-fingers-down button click, which exactly fits
+    // one in-frame report plus one full overflow queue).
 }
 
-// Drain deferred lift-offs from previous frame.
+// Drain deferred reports from previous frame(s).
 static VOID
 AmtCoreDrainOverflow(
     _Inout_ PDEVICE_CONTEXT pCtx,
     _Inout_ PTP_CORE_FRAME* OutResult
 )
 {
-    for (UCHAR k = 0; k < pCtx->OverflowCount && OutResult->ContactCount < PTP_MAX_CONTACT_POINTS; k++) {
+    UCHAR k = 0;
+    for (; k < pCtx->OverflowCount && OutResult->ContactCount < PTP_MAX_CONTACT_POINTS; k++) {
         PPTP_CORE_CONTACT outC = &OutResult->Contacts[OutResult->ContactCount];
-        outC->ContactID = pCtx->OverflowContactID[k];
-        outC->X         = pCtx->OverflowX[k];
-        outC->Y         = pCtx->OverflowY[k];
-        outC->Phase     = CONTACT_PHASE_UP;
-        outC->Confident = TRUE;
+        outC->ContactID   = pCtx->OverflowContactID[k];
+        outC->X           = pCtx->OverflowX[k];
+        outC->Y           = pCtx->OverflowY[k];
+        outC->Phase       = pCtx->OverflowPhase[k];
+        outC->Confident   = pCtx->OverflowConfident[k];
+        outC->PalmSuspect = FALSE;
         OutResult->ContactCount++;
     }
-    pCtx->OverflowCount = 0;
+
+    // AUDIT FIX: entries beyond what fit this frame used to be discarded
+    // outright (OverflowCount was unconditionally zeroed below regardless
+    // of k). Not reachable today - DrainOverflow runs against a freshly
+    // zeroed OutResult before anything else touches it, and OverflowCount
+    // is itself capped at PTP_MAX_CONTACT_POINTS, so k always reaches
+    // OverflowCount before the capacity check can fail. Compacting the
+    // (currently always-empty) tail down to index 0 instead of an
+    // unconditional reset costs nothing and keeps this function correct
+    // by construction rather than by coincidence of today's call order.
+    UCHAR remaining = (UCHAR)(pCtx->OverflowCount - k);
+    if (remaining > 0) {
+        RtlMoveMemory(pCtx->OverflowContactID, &pCtx->OverflowContactID[k], remaining * sizeof(ULONG));
+        RtlMoveMemory(pCtx->OverflowX,         &pCtx->OverflowX[k],         remaining * sizeof(USHORT));
+        RtlMoveMemory(pCtx->OverflowY,         &pCtx->OverflowY[k],         remaining * sizeof(USHORT));
+        RtlMoveMemory(pCtx->OverflowPhase,     &pCtx->OverflowPhase[k],     remaining * sizeof(CONTACT_PHASE));
+        RtlMoveMemory(pCtx->OverflowConfident, &pCtx->OverflowConfident[k], remaining * sizeof(BOOLEAN));
+    }
+    pCtx->OverflowCount = remaining;
 }
 
 // PTPCore_ProcessFrame
@@ -217,17 +252,10 @@ PTPCore_ProcessFrame(
                 // Defer one frame for gesture recognizer.
                 pCtx->ActiveContacts[p].FramesAlive++;
 
-                if (OutResult->ContactCount < PTP_MAX_CONTACT_POINTS) {
-                    PPTP_CORE_CONTACT outC = &OutResult->Contacts[OutResult->ContactCount];
-                    outC->ContactID   = pCtx->ActiveContacts[p].ContactID;
-                    outC->X           = pCtx->ActiveContacts[p].ReportX;
-                    outC->Y           = pCtx->ActiveContacts[p].ReportY;
-                    outC->Phase       = CONTACT_PHASE_MOVE;
-                    outC->Confident   = TRUE;
-                    outC->PalmSuspect = FALSE;
-                    OutResult->ContactCount++;
-                    pCtx->ActiveContacts[p].ReportedLastFrame = TRUE;
-                }
+                AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
+                                   pCtx->ActiveContacts[p].ReportX, pCtx->ActiveContacts[p].ReportY,
+                                   CONTACT_PHASE_MOVE, TRUE);
+                pCtx->ActiveContacts[p].ReportedLastFrame = TRUE;
                 continue; // no lift-off this frame
             }
 
@@ -235,7 +263,7 @@ PTPCore_ProcessFrame(
             AmtContactEnterGrace(pCtx->ActiveContacts, p, &oldId, &oldX, &oldY);
             AmtContactExpireGrace(pCtx->ActiveContacts, p);
             // No AmtRecentLiftRecord here - intentional (Issue #4 fix).
-            AmtCoreEmitLift(pCtx, OutResult, oldId, oldX, oldY);
+            AmtCoreEmitContact(pCtx, OutResult, oldId, oldX, oldY, CONTACT_PHASE_UP, TRUE);
 
         } else {
             // Solo contact: kill immediately.
@@ -245,7 +273,7 @@ PTPCore_ProcessFrame(
             if (!palmSuppressedFrame) {
                 AmtRecentLiftRecord(&pCtx->RecentLifts, NowQpc, oldX, oldY);
             }
-            AmtCoreEmitLift(pCtx, OutResult, oldId, oldX, oldY);
+            AmtCoreEmitContact(pCtx, OutResult, oldId, oldX, oldY, CONTACT_PHASE_UP, TRUE);
         }
     }
 
@@ -268,7 +296,7 @@ PTPCore_ProcessFrame(
             AmtRecentLiftRecord(&pCtx->RecentLifts, NowQpc, oldX, oldY);
         }
 
-        AmtCoreEmitLift(pCtx, OutResult, oldId, oldX, oldY);
+        AmtCoreEmitContact(pCtx, OutResult, oldId, oldX, oldY, CONTACT_PHASE_UP, TRUE);
 
         matchResult.CorrespondingPoolIndex[ci] = MATCH_NO_CORRESPONDENCE;
     }
@@ -300,7 +328,7 @@ PTPCore_ProcessFrame(
 
             ULONG oldId;
             AmtContactRebindIdentity(pCtx->ActiveContacts, p, &pCtx->NextContactId, &oldId);
-            AmtCoreEmitLift(pCtx, OutResult, oldId, oldX, oldY);
+            AmtCoreEmitContact(pCtx, OutResult, oldId, oldX, oldY, CONTACT_PHASE_UP, TRUE);
             // Deliberately NOT AmtRecentLiftRecord'd - this isn't a real
             // lift and must not seed retap-smoothing for unrelated future
             // taps in the same area.
@@ -390,17 +418,11 @@ PTPCore_ProcessFrame(
                          cand->SlotIndex, NowQpc,
                          (BOOLEAN)(aliveCount == 1), &repX, &repY);
 
-        if (OutResult->ContactCount < PTP_MAX_CONTACT_POINTS) {
-            PPTP_CORE_CONTACT outC = &OutResult->Contacts[OutResult->ContactCount];
-            outC->ContactID = pCtx->ActiveContacts[p].ContactID;
-            outC->X         = repX;
-            outC->Y         = repY;
-            outC->Phase     = justBorn ? CONTACT_PHASE_DOWN : CONTACT_PHASE_MOVE;
-            outC->Confident = (cand->TipDropApplied == 0);
-            outC->PalmSuspect = FALSE;
-            OutResult->ContactCount++;
-            pCtx->ActiveContacts[p].ReportedLastFrame = TRUE;
-        }
+        AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
+                           repX, repY,
+                           justBorn ? CONTACT_PHASE_DOWN : CONTACT_PHASE_MOVE,
+                           (BOOLEAN)(cand->TipDropApplied == 0));
+        pCtx->ActiveContacts[p].ReportedLastFrame = TRUE;
     }
 
     AmtContactPoolCheckInvariants(pCtx->ActiveContacts);
