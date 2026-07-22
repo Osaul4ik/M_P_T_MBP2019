@@ -305,6 +305,23 @@ PTPCore_ProcessFrame(
             // lift and must not seed retap-smoothing for unrelated future
             // taps in the same area.
 
+            // AUDIT FIX: AmtContactRebindIdentity (unlike AmtContactBirth)
+            // deliberately does NOT touch LastSeenQpc - it's an in-place
+            // identity swap, not a birth. But Phase C below decides
+            // DOWN-vs-MOVE purely from (LastSeenQpc == 0), and this slot's
+            // LastSeenQpc still holds last frame's timestamp from before
+            // the rebind. Left alone, Phase C would report the brand-new
+            // ContactID as MOVE instead of DOWN - which defeats the whole
+            // point of this rebind (Windows' PTP stack only routes a
+            // contact through the non-snapping soft-tap path when it sees
+            // TipSwitch go 0->1 for that ContactID). Force it to 0 here so
+            // Phase C's justBorn check fires correctly; AmtContactUpdate
+            // overwrites it with the real nowQpc a few lines later
+            // regardless, and PendingFirstSample (untouched, already
+            // FALSE) keeps hysteresis/deadzone tracking uninterrupted -
+            // only the reported Phase flips, not the internal tracking.
+            pCtx->ActiveContacts[p].LastSeenQpc = 0;
+
             // matchResult.CorrespondingPoolIndex[ci] stays == p: the same
             // pool slot now carries the new ContactID and Phase C below
             // updates/reports it normally, at this frame's live position.
