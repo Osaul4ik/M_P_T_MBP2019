@@ -36,9 +36,6 @@ typedef struct _ACTIVE_CONTACT
     USHORT HystX;
     USHORT HystY;
 
-    // Tip-size debounce counter.
-    UCHAR TipDropCount;
-
     // TRUE if contact was in >=2-finger frame during ACTIVE lifetime.
     // Causes EMA skip on first solo frame (aliveCountIsOne).
     BOOLEAN WasInGesture;
@@ -53,9 +50,6 @@ typedef struct _ACTIVE_CONTACT
     // Prevents first-frame clobber of EMA seed from
     // AmtContactBirthWithRetapSmoothing.
     BOOLEAN RetapSeeded;
-
-    // Reported last frame? Drives Phase A lift-off detection.
-    BOOLEAN ReportedLastFrame;
 
     // ---- Matching-hint fields. NOT identity. ----
     USHORT   LastSlotHint;    // hw slot matched to last frame; speeds up matching
