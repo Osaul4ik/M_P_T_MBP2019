@@ -3,7 +3,7 @@
 #include "Driver.h"
 #include "ActiveContact.h"
 
-#define XY_DEADZONE_UNITS    2
+#define XY_DEADZONE_UNITS    3
 #define SMOOTHING_ALPHA_NUM  5
 #define SMOOTHING_ALPHA_DEN  8
 
