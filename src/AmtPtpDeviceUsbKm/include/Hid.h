@@ -138,7 +138,7 @@ typedef struct _PTP_CONTACT {
 
 typedef struct _PTP_REPORT {
 	UCHAR       ReportID;
-	PTP_CONTACT Contacts[5];
+	PTP_CONTACT Contacts[PTP_MAX_CONTACT_POINTS];
 	USHORT      ScanTime;
 	UCHAR       ContactCount;
 	UCHAR       IsButtonClicked;
