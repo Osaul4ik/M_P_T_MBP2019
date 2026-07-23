@@ -61,11 +61,9 @@ AmtContactBirth(
     c->ReportY            = y;
     c->HystX              = x;
     c->HystY              = y;
-    c->TipDropCount       = 0;
     c->WasInGesture       = FALSE;
     c->PendingFirstSample = TRUE;
     c->RetapSeeded        = FALSE; // plain birth - no seeded baseline to preserve
-    c->ReportedLastFrame  = FALSE;
     c->LastSlotHint        = slotHint;
     c->LastSeenQpc         = 0; // set by first AmtContactUpdate call
     c->FramesAlive         = 1; // birth frame counts as 1
@@ -96,11 +94,9 @@ AmtContactBirthWithRetapSmoothing(
     c->ReportY            = RecentLiftY;
     c->HystX              = RecentLiftX;
     c->HystY              = RecentLiftY;
-    c->TipDropCount       = 0;
     c->WasInGesture       = FALSE;
     c->PendingFirstSample = TRUE;
     c->RetapSeeded        = TRUE; // preserve seed on first update
-    c->ReportedLastFrame  = FALSE;
     c->LastSlotHint        = slotHint;
     c->LastSeenQpc         = 0;
     c->FramesAlive         = 1;
