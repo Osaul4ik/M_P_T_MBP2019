@@ -255,7 +255,6 @@ PTPCore_ProcessFrame(
                 AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
                                    pCtx->ActiveContacts[p].ReportX, pCtx->ActiveContacts[p].ReportY,
                                    CONTACT_PHASE_MOVE, TRUE);
-                pCtx->ActiveContacts[p].ReportedLastFrame = TRUE;
                 continue; // no lift-off this frame
             }
 
@@ -410,9 +409,6 @@ PTPCore_ProcessFrame(
             pCtx->ActiveContacts[p].WasInGesture = TRUE;
         }
 
-        // Mirror tip-drop verdict back into pool.
-        pCtx->ActiveContacts[p].TipDropCount = cand->TipDropApplied;
-
         USHORT repX, repY;
         AmtContactUpdate(&pCtx->ActiveContacts[p], cand->X, cand->Y,
                          cand->SlotIndex, NowQpc,
@@ -422,7 +418,6 @@ PTPCore_ProcessFrame(
                            repX, repY,
                            justBorn ? CONTACT_PHASE_DOWN : CONTACT_PHASE_MOVE,
                            (BOOLEAN)(cand->TipDropApplied == 0));
-        pCtx->ActiveContacts[p].ReportedLastFrame = TRUE;
     }
 
     AmtContactPoolCheckInvariants(pCtx->ActiveContacts);
