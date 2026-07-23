@@ -266,8 +266,12 @@ AmtPtpSetWellspringMode(
     WDF_MEMORY_DESCRIPTOR       memoryDescriptor;
     WDF_REQUEST_SEND_OPTIONS    sendOptions;
     ULONG                       cbTransferred;
-    WDFMEMORY                   bufHandle = NULL;
-    unsigned char*              buffer    = NULL;
+    // OPTIMIZATION: um_size is at most 8 bytes across every USBMSG_TYPEn
+    // table entry (statically guaranteed by the C_ASSERT block next to
+    // those defines in AppleDefinition.h) - a WdfMemoryCreate/WdfObjectDelete
+    // pool round-trip for this was unnecessary overhead and an extra
+    // failure path for what's really just a few bytes on the stack.
+    UCHAR                       buffer[8] = { 0 };
 
     // AUDIT FIX: bound both control transfers below so a stalled device/hub
     // can't hang the calling thread (this runs on the D0Entry path) forever.
@@ -280,19 +284,8 @@ AmtPtpSetWellspringMode(
         return STATUS_SUCCESS;
     }
 
-    status = WdfMemoryCreate(
-        WDF_NO_OBJECT_ATTRIBUTES,
-        PagedPool,
-        POOL_TAG_PTP_CONTROL,
-        (SIZE_T)DeviceContext->DeviceInfo->um_size,
-        &bufHandle,
-        (PVOID*)&buffer);
+    NT_ASSERT(DeviceContext->DeviceInfo->um_size <= sizeof(buffer));
 
-    if (!NT_SUCCESS(status)) {
-        goto cleanup;
-    }
-
-    RtlZeroMemory(buffer, (SIZE_T)DeviceContext->DeviceInfo->um_size);
     WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(
         &memoryDescriptor, buffer, (ULONG)DeviceContext->DeviceInfo->um_size);
 
@@ -308,7 +301,7 @@ AmtPtpSetWellspringMode(
         DeviceContext->UsbDevice, WDF_NO_HANDLE, &sendOptions,
         &setupPacket, &memoryDescriptor, &cbTransferred);
     if (!NT_SUCCESS(status)) {
-        goto cleanup;
+        return status;
     }
 
     buffer[DeviceContext->DeviceInfo->um_switch_idx] = IsWellspringModeOn
@@ -327,15 +320,10 @@ AmtPtpSetWellspringMode(
         DeviceContext->UsbDevice, WDF_NO_HANDLE, &sendOptions,
         &setupPacket, &memoryDescriptor, &cbTransferred);
     if (!NT_SUCCESS(status)) {
-        goto cleanup;
+        return status;
     }
 
     DeviceContext->IsWellspringModeOn = IsWellspringModeOn;
 
-cleanup:
-    if (bufHandle != NULL) {
-        WdfObjectDelete(bufHandle);
-        bufHandle = NULL;
-    }
     return status;
 }
