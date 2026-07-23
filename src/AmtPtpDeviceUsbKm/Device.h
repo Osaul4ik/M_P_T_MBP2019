@@ -81,8 +81,6 @@ typedef struct _DEVICE_CONTEXT
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 
-#define POOL_TAG_PTP_CONTROL    'PTPC'
-
 // AUDIT: WdfUsbTargetDeviceSendControlTransferSynchronously in
 // AmtPtpSetWellspringMode previously ran with no send-options/timeout, so a
 // stalled/malicious USB device or hub could block the calling thread
