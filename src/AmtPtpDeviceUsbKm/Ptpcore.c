@@ -300,8 +300,11 @@ PTPCore_ProcessFrame(
         matchResult.CorrespondingPoolIndex[ci] = MATCH_NO_CORRESPONDENCE;
     }
 
-    AmtContactPoolCheckInvariants(pCtx->ActiveContacts);
-
+    // OPTIMIZATION: consolidated from 4 checkpoints (after NewIdentity, A.5,
+    // Phase B, Phase C) to 2 - DBG-only either way (compiles to (VOID)0 in
+    // retail), but halves the walk-the-whole-pool cost in debug builds
+    // without losing meaningful phase isolation: this one now covers
+    // Phase A (lift) + NewIdentity + Phase A.5 combined.
     // Phase A.5 (button-click forced rebirth): on the rising edge of the
     // integrated button, force a new ContactID onto every still-live,
     // pre-existing matched contact, in place, at its own current position.
@@ -392,8 +395,6 @@ PTPCore_ProcessFrame(
 
         matchResult.CorrespondingPoolIndex[ci] = freeIdx;
     }
-
-    AmtContactPoolCheckInvariants(pCtx->ActiveContacts);
 
     // Phase C (update / report): update once, report once.
     for (UCHAR ci = 0; ci < candidates.Count; ci++) {
