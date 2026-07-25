@@ -411,14 +411,36 @@ PTPCore_ProcessFrame(
                 cand->X, cand->Y, cand->SlotIndex);
         }
 
-        if (gestureThisFrame) {
-            pCtx->ActiveContacts[freeIdx].WasInGesture = TRUE;
-        }
+        // NOTE: WasInGesture is NOT decided here. Phase C below runs
+        // immediately after for this exact same candidate (candidates
+        // are walked again by index) and makes the real, final taint
+        // decision - setting it here would just be overwritten. See the
+        // AUDIT FIX comment in Phase C for the actual logic.
 
         matchResult.CorrespondingPoolIndex[ci] = freeIdx;
     }
 
     // Phase C (update / report): update once, report once.
+    //
+    // Pre-pass: snapshot, BEFORE the mutating loop below runs, (a) which
+    // candidates are fresh births (LastSeenQpc == 0) and (b) each live
+    // contact's WasInGesture as of the START of this frame. Needed so
+    // the tail-overlap taint check further down sees a stable,
+    // order-independent picture - reading pool state mid-loop would give
+    // different answers depending on candidate iteration order, since
+    // AmtContactUpdate (called per-candidate below) and the taint
+    // assignment itself immediately mutate whichever contact was just
+    // processed.
+    BOOLEAN candidateJustBorn[PTP_MAX_CONTACT_POINTS]   = { 0 };
+    BOOLEAN candidateWasTainted[PTP_MAX_CONTACT_POINTS] = { 0 };
+    for (UCHAR pc = 0; pc < candidates.Count; pc++) {
+        if (candidates.Candidates[pc].PalmLocal) continue;
+        size_t pp = matchResult.CorrespondingPoolIndex[pc];
+        if (pp == MATCH_NO_CORRESPONDENCE) continue;
+        candidateJustBorn[pc]   = (pCtx->ActiveContacts[pp].LastSeenQpc == 0);
+        candidateWasTainted[pc] = pCtx->ActiveContacts[pp].WasInGesture;
+    }
+
     for (UCHAR ci = 0; ci < candidates.Count; ci++) {
         const MATCH_CANDIDATE* cand = &candidates.Candidates[ci];
         if (cand->PalmLocal) continue;
@@ -426,9 +448,64 @@ PTPCore_ProcessFrame(
         size_t p = matchResult.CorrespondingPoolIndex[ci];
         if (p == MATCH_NO_CORRESPONDENCE) continue;
 
-        BOOLEAN justBorn = (pCtx->ActiveContacts[p].LastSeenQpc == 0);
+        BOOLEAN justBorn = candidateJustBorn[ci];
 
-        if (gestureThisFrame) {
+        // AUDIT FIX (tail-overlap false taint): gestureThisFrame alone
+        // (aliveCount>=2 this frame) does NOT mean a contact born THIS
+        // frame is a participant in a real multi-finger gesture. Sensor
+        // scan cadence means a dying gesture's last finger can still be
+        // present in this exact frame's raw candidates (matched,
+        // continuing) at the same time a brand-new solo tap is born -
+        // producing aliveCount==2 for one transient frame despite this
+        // being two unrelated touches, not a co-starting gesture. That
+        // used to taint the new tap with WasInGesture unconditionally,
+        // routing an intended solo tap through the gesture-lift
+        // defer/grace path (Phase A above) instead of an immediate kill
+        // + RecentLifts record - silently eating taps right after any
+        // multi-finger gesture release (2-finger scroll, 3-finger swipe,
+        // etc), because the driver never distinguished gesture size or
+        // type - only raw finger count this frame.
+        //
+        // Fix applies only to contacts born THIS frame (justBorn):
+        // inherit the taint only if ANOTHER live candidate this frame
+        // was NOT ALREADY tainted as of the start of this frame. An
+        // untainted co-alive partner (whether it's also a fresh birth,
+        // or an existing contact that simply hasn't joined a gesture
+        // yet) is the real signature of a genuine gesture start - and
+        // this correctly covers a multi-finger gesture whose fingers
+        // touch down a frame or two apart, not just the exact same
+        // frame (an earlier version of this fix required same-frame
+        // co-birth, which wrongly failed to taint the second finger of
+        // a staggered-start gesture that lifted again before its own
+        // next Phase C pass). A co-alive partner that was ALREADY
+        // tainted before this frame is, by construction, the tail of a
+        // separate, already-established gesture - that's the actual
+        // tail-overlap case, and must NOT cause the new birth to be
+        // tainted.
+        //
+        // Pre-existing (non-justBorn) contacts are unaffected: they keep
+        // getting (re-)tainted on every gestureThisFrame frame exactly
+        // as before, since they are genuinely still part of whatever
+        // gesture they started in - this only changes what a BIRTH
+        // inherits.
+        BOOLEAN shouldTaint = gestureThisFrame;
+
+        if (shouldTaint && justBorn) {
+            BOOLEAN otherCandidateUntainted = FALSE;
+            for (UCHAR oc = 0; oc < candidates.Count; oc++) {
+                if (oc == ci || candidates.Candidates[oc].PalmLocal) continue;
+                if (matchResult.CorrespondingPoolIndex[oc] == MATCH_NO_CORRESPONDENCE)
+                    continue;
+                if (!candidateWasTainted[oc]) {
+                    otherCandidateUntainted = TRUE;
+                    break;
+                }
+            }
+
+            shouldTaint = otherCandidateUntainted;
+        }
+
+        if (shouldTaint) {
             pCtx->ActiveContacts[p].WasInGesture = TRUE;
         }
 
