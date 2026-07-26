@@ -34,7 +34,7 @@
 // of size/shape. Kept narrow on purpose (large divisor = thin strip) -
 // this is NOT the same as the wider, size-gated scored zone below,
 // which still lets real small touches through further up from the edge.
-#define BOTTOM_HARD_CUTOFF_DIVISOR 32
+#define BOTTOM_HARD_CUTOFF_DIVISOR 70
 
 static inline INT
 AmtPalmRawToInteger(_In_ USHORT x)
