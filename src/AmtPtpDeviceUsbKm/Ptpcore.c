@@ -516,7 +516,8 @@ PTPCore_ProcessFrame(
         USHORT repX, repY;
         AmtContactUpdate(&pCtx->ActiveContacts[p], cand->X, cand->Y,
                          cand->SlotIndex, NowQpc,
-                         (BOOLEAN)(aliveCount == 1), &repX, &repY);
+                         (BOOLEAN)(aliveCount == 1), gestureThisFrame,
+                         &repX, &repY);
 
         // AUDIT FIX (click Confidence false-negative): TipDropApplied
         // means "X/Y is stale/bridged," not "this isn't a real finger" -
