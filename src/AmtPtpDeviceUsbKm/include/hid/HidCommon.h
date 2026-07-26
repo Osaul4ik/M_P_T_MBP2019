@@ -48,4 +48,4 @@
 // If it still misfires, this is the one knob to move; a longer-term
 // fix would be to log real pressure traces (click vs. deliberate force
 // press) and set the threshold from percentiles instead of a guess.
-#define FORCE_TOUCH_PRESSURE_THRESHOLD 375
+#define FORCE_TOUCH_PRESSURE_THRESHOLD 355
