@@ -257,6 +257,84 @@ SelectInterruptInterface(_In_ WDFDEVICE Device)
     return STATUS_SUCCESS;
 }
 
+// AmtPtpSetHapticFeedback
+//
+// Ported from the SET_REPORT mechanism confirmed identical in both
+// drivers/hid/hid-magicmouse.c (Linux) and vitoplantamura/
+// MagicTrackpad2ForWindows (Windows) for the Magic Trackpad 2. See the
+// long comment next to HAPTIC_INTERFACE_INDEX in AppleDefinition.h -
+// UNVERIFIED on this MacBookPro16,1 internal T2 trackpad. Best-effort:
+// a failure here should not prevent the device from otherwise working,
+// same as the existing AmtPtpSetWellspringMode call sites already treat
+// its own failures as non-fatal.
+
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS
+AmtPtpSetHapticFeedback(
+    _In_ PDEVICE_CONTEXT DeviceContext,
+    _In_ ULONG           FeedbackClick,
+    _In_ ULONG           FeedbackRelease)
+{
+    NTSTATUS                     status;
+    WDF_USB_CONTROL_SETUP_PACKET setupPacket;
+    WDF_MEMORY_DESCRIPTOR        memoryDescriptor;
+    WDF_REQUEST_SEND_OPTIONS     sendOptions;
+    ULONG                        cbTransferred;
+
+    // Payload template from mt2_click/mt2_release in both reference
+    // drivers (byte 0, the report ID, is passed separately as the low
+    // byte of wValue below - not part of the transfer buffer, matching
+    // the Windows fork's usb_control_msg call which strips it too).
+    UCHAR clickBuffer[]   = { 0x01, 0x00, 0x78, 0x02, 0x00, 0x24, 0x30, 0x06, 0x01, 0x00, 0x18, 0x48, 0x13 };
+    UCHAR releaseBuffer[] = { 0x01, 0x00, 0x78, 0x02, 0x00, 0x24, 0x30, 0x06, 0x01, 0x00, 0x18, 0x48, 0x13 };
+
+    WDF_REQUEST_SEND_OPTIONS_INIT(&sendOptions, WDF_REQUEST_SEND_OPTION_TIMEOUT);
+    WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(
+        &sendOptions, WDF_REL_TIMEOUT_IN_SEC(WELLSPRING_CONTROL_TRANSFER_TIMEOUT_SEC));
+
+    // Offsets 1, 4, 9 here == offsets 2, 5, 10 in the reference sources'
+    // 14-byte buffer (report ID included there at index 0) - same bytes,
+    // shifted down by one since our buffer excludes the report ID.
+    clickBuffer[1] = (UCHAR)(FeedbackClick >> 0);
+    clickBuffer[4] = (UCHAR)(FeedbackClick >> 8);
+    clickBuffer[9] = (UCHAR)(FeedbackClick >> 16);
+
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&memoryDescriptor, clickBuffer, sizeof(clickBuffer));
+    WDF_USB_CONTROL_SETUP_PACKET_INIT(
+        &setupPacket,
+        BmRequestHostToDevice, BmRequestToInterface,
+        HAPTIC_FEEDBACK_REQUEST_ID,
+        (USHORT)(HAPTIC_REPORT_TYPE_FEATURE | HAPTIC_REPORTID_CLICK),
+        HAPTIC_INTERFACE_INDEX);
+    setupPacket.Packet.bm.Request.Type = BmRequestClass;
+
+    status = WdfUsbTargetDeviceSendControlTransferSynchronously(
+        DeviceContext->UsbDevice, WDF_NO_HANDLE, &sendOptions,
+        &setupPacket, &memoryDescriptor, &cbTransferred);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    releaseBuffer[1] = (UCHAR)(FeedbackRelease >> 0);
+    releaseBuffer[4] = (UCHAR)(FeedbackRelease >> 8);
+    releaseBuffer[9] = (UCHAR)(FeedbackRelease >> 16);
+
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&memoryDescriptor, releaseBuffer, sizeof(releaseBuffer));
+    WDF_USB_CONTROL_SETUP_PACKET_INIT(
+        &setupPacket,
+        BmRequestHostToDevice, BmRequestToInterface,
+        HAPTIC_FEEDBACK_REQUEST_ID,
+        (USHORT)(HAPTIC_REPORT_TYPE_FEATURE | HAPTIC_REPORTID_RELEASE),
+        HAPTIC_INTERFACE_INDEX);
+    setupPacket.Packet.bm.Request.Type = BmRequestClass;
+
+    status = WdfUsbTargetDeviceSendControlTransferSynchronously(
+        DeviceContext->UsbDevice, WDF_NO_HANDLE, &sendOptions,
+        &setupPacket, &memoryDescriptor, &cbTransferred);
+
+    return status;
+}
+
 // AmtPtpSetWellspringMode
 
 _IRQL_requires_(PASSIVE_LEVEL)
@@ -282,6 +360,19 @@ AmtPtpSetWellspringMode(
     WDF_REQUEST_SEND_OPTIONS_INIT(&sendOptions, WDF_REQUEST_SEND_OPTION_TIMEOUT);
     WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(
         &sendOptions, WDF_REL_TIMEOUT_IN_SEC(WELLSPRING_CONTROL_TRANSFER_TIMEOUT_SEC));
+
+    // Haptic actuator setup - deliberately BEFORE the TYPE3 early-return
+    // below: TYPE3 (T2) devices skip the normal Wellspring mode-switch
+    // read/modify/write entirely, but the actuator profile is a
+    // completely separate SET_REPORT and still needs configuring on
+    // T2 hardware. Best-effort: ignore failure here, same treatment
+    // AmtPtpEvtDeviceD0Entry already gives AmtPtpSetWellspringMode's own
+    // status. See AppleDefinition.h for why this is unverified on T2.
+    if (IsWellspringModeOn) {
+        NTSTATUS hapticStatus = AmtPtpSetHapticFeedback(
+            DeviceContext, HAPTIC_FEEDBACK_CLICK_DEFAULT, HAPTIC_FEEDBACK_RELEASE_DEFAULT);
+        UNREFERENCED_PARAMETER(hapticStatus);
+    }
 
     if (DeviceContext->DeviceInfo->tp_type == TYPE3) {
         DeviceContext->IsWellspringModeOn = IsWellspringModeOn;
