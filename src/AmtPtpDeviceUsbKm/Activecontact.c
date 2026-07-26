@@ -3,7 +3,7 @@
 #include "Driver.h"
 #include "ActiveContact.h"
 
-#define XY_DEADZONE_UNITS          2  // solo movement: click/drag precision
+#define XY_DEADZONE_UNITS          5  // solo movement: click/drag precision
 // AUDIT (2-finger scroll quality): the same 2-unit threshold, evaluated
 // independently per contact every frame, was also gating genuine
 // simultaneous 2(+)-finger movement (scroll). Two fingers scrolling
