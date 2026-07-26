@@ -3,7 +3,22 @@
 #include "Driver.h"
 #include "ActiveContact.h"
 
-#define XY_DEADZONE_UNITS    2
+#define XY_DEADZONE_UNITS          2  // solo movement: click/drag precision
+// AUDIT (2-finger scroll quality): the same 2-unit threshold, evaluated
+// independently per contact every frame, was also gating genuine
+// simultaneous 2(+)-finger movement (scroll). Two fingers scrolling
+// together rarely cross a fixed threshold in perfect lockstep frame to
+// frame - one finger's delta clears it while the other's doesn't,
+// producing an asymmetric stale-vs-updated report between the two
+// contacts and a visibly steppy/uneven scroll at slow, deliberate
+// speeds. A lower (not zero) threshold specifically while >=2 fingers
+// are concurrently down keeps genuinely stationary multi-finger holds
+// (e.g. a 2-finger tap-and-hold for right-click) still filtered against
+// single-unit sensor noise, while roughly doubling responsiveness for
+// real scroll motion. This only changes raw contact position fidelity -
+// Windows' own PTP stack still derives the scroll gesture itself from
+// these contacts, so this stays within the PTP contract.
+#define XY_DEADZONE_UNITS_GESTURE   1
 #define SMOOTHING_ALPHA_NUM  5
 #define SMOOTHING_ALPHA_DEN  8
 
@@ -219,22 +234,20 @@ BOOLEAN
 AmtContactEvaluateDeadzone(
     _In_ const ACTIVE_CONTACT* Contact,
     _In_ USHORT                candX,
-    _In_ USHORT                candY
+    _In_ USHORT                candY,
+    _In_ INT                   ThresholdUnits
 )
 {
-#if XY_DEADZONE_UNITS > 0
+    if (ThresholdUnits <= 0) {
+        return TRUE;
+    }
+
     INT dx = (INT)candX - (INT)Contact->HystX;
     if (dx < 0) dx = -dx;
     INT dy = (INT)candY - (INT)Contact->HystY;
     if (dy < 0) dy = -dy;
 
-    return (dx >= XY_DEADZONE_UNITS) || (dy >= XY_DEADZONE_UNITS);
-#else
-    UNREFERENCED_PARAMETER(Contact);
-    UNREFERENCED_PARAMETER(candX);
-    UNREFERENCED_PARAMETER(candY);
-    return TRUE;
-#endif
+    return (dx >= ThresholdUnits) || (dy >= ThresholdUnits);
 }
 
 // RetapSeeded birth: run EMA normally against seeded baseline.
@@ -293,6 +306,7 @@ AmtContactUpdate(
     _In_    USHORT          slotHint,
     _In_    LONGLONG        nowQpc,
     _In_    BOOLEAN         aliveCountIsOne,
+    _In_    BOOLEAN         gestureActive,
     _Out_   USHORT*         OutX,
     _Out_   USHORT*         OutY
 )
@@ -305,17 +319,20 @@ AmtContactUpdate(
     BOOLEAN retapSeededFirstSample =
         Contact->PendingFirstSample && Contact->RetapSeeded;
 
+    INT deadzoneThreshold =
+        gestureActive ? XY_DEADZONE_UNITS_GESTURE : XY_DEADZONE_UNITS;
+
     if (Contact->PendingFirstSample) {
         if (retapSeededFirstSample) {
             // Do not reset HystX/Y - they hold the seeded baseline.
-            passed = AmtContactEvaluateDeadzone(Contact, rawX, rawY);
+            passed = AmtContactEvaluateDeadzone(Contact, rawX, rawY, deadzoneThreshold);
         } else {
             Contact->HystX = rawX;
             Contact->HystY = rawY;
             passed = TRUE;
         }
     } else {
-        passed = AmtContactEvaluateDeadzone(Contact, rawX, rawY);
+        passed = AmtContactEvaluateDeadzone(Contact, rawX, rawY, deadzoneThreshold);
     }
 
     AmtContactCommitSample(Contact, rawX, rawY, passed, aliveCountIsOne,
