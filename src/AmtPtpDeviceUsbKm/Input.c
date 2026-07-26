@@ -1,239 +1,80 @@
-// Interrupt.c: USB completion -> RawFrame -> PTPCore_ProcessFrame -> PTP_REPORT.
-// No lifecycle decisions here.
+// Input.c - InputAdapter implementation. See Input.h for the contract.
+//
+// Extracted from the old AmtMatchParseFrame (Match.c). That function
+// mixed three concerns: geometry decode, palm classification, and
+// tip-size debounce. This file keeps ONLY geometry decode + coordinate
+// normalization - the part that genuinely has no state. Palm
+// classification moved to Palm.c. Tip-size debounce moved into PTPCore
+// (Match.c L1.5 / Track.c), since it requires reading previous track
+// position - see PTPCore.h note #2 for why that can't live here.
 
 #include "Driver.h"
-#include "PTPCore.h"
 #include "Input.h"
-#include "Interrupt.tmh"
 
-#if DBG
-static VOID
-AmtReportCheckInvariants(_In_ const PTP_REPORT* Report)
+static inline INT
+AmtInputRawToInteger(_In_ USHORT x)
 {
-    NT_ASSERT(Report->ContactCount <= PTP_MAX_CONTACT_POINTS);
-
-    for (UCHAR a = 0; a < Report->ContactCount; a++) {
-        NT_ASSERT(Report->Contacts[a].TipSwitch == 0 || Report->Contacts[a].TipSwitch == 1);
-        for (UCHAR b = (UCHAR)(a + 1); b < Report->ContactCount; b++) {
-            NT_ASSERT(Report->Contacts[a].ContactID != Report->Contacts[b].ContactID);
-        }
-    }
-}
-#else
-#define AmtReportCheckInvariants(Report) ((VOID)0)
-#endif
-
-// Serialize PTP_CORE_FRAME to PTP_REPORT. Pure formatting.
-static VOID
-AmtSerializeCoreFrameToReport(
-    _In_  const PTP_CORE_FRAME* CoreFrame,
-    _Out_ PTP_REPORT*           Report
-)
-{
-    UCHAR n = CoreFrame->ContactCount;
-    if (n > PTP_MAX_CONTACT_POINTS) n = PTP_MAX_CONTACT_POINTS;
-
-    for (UCHAR i = 0; i < n; i++) {
-        const PTP_CORE_CONTACT* c = &CoreFrame->Contacts[i];
-
-        Report->Contacts[i].ContactID  = c->ContactID;
-        Report->Contacts[i].X          = c->X;
-        Report->Contacts[i].Y          = c->Y;
-        Report->Contacts[i].TipSwitch  = (c->Phase == CONTACT_PHASE_UP) ? 0 : 1;
-        Report->Contacts[i].Confidence = c->Confident ? 1 : 0;
-    }
-
-    Report->ContactCount = n;
+    return (signed short)x;
 }
 
-_IRQL_requires_(PASSIVE_LEVEL)
-NTSTATUS
-AmtPtpConfigContReaderForInterruptEndPoint(_In_ PDEVICE_CONTEXT DeviceContext)
+static inline USHORT
+AmtInputClampCoord(_In_ INT raw, _In_ INT minVal, _In_ INT maxVal)
 {
-    WDF_USB_CONTINUOUS_READER_CONFIG contReaderConfig;
-    NTSTATUS status;
-    size_t   transferLength = 0;
-
-    switch (DeviceContext->DeviceInfo->tp_type) {
-    case TYPE1: transferLength = HEADER_TYPE1 + FSIZE_TYPE1 * MAX_FINGERS; break;
-    case TYPE2: transferLength = HEADER_TYPE2 + FSIZE_TYPE2 * MAX_FINGERS; break;
-    case TYPE3: transferLength = HEADER_TYPE3 + FSIZE_TYPE3 * MAX_FINGERS; break;
-    case TYPE4: transferLength = HEADER_TYPE4 + FSIZE_TYPE4 * MAX_FINGERS; break;
-    case TYPE5: transferLength = HEADER_TYPE5 + FSIZE_TYPE5 * MAX_FINGERS; break;
-    default:
-        status = STATUS_UNKNOWN_REVISION;
-        goto exit;
-    }
-
-    if (transferLength == 0) {
-        status = STATUS_UNKNOWN_REVISION;
-        goto exit;
-    }
-
-    WDF_USB_CONTINUOUS_READER_CONFIG_INIT(
-        &contReaderConfig,
-        AmtPtpEvtUsbInterruptPipeReadComplete,
-        DeviceContext,
-        transferLength);
-
-    contReaderConfig.EvtUsbTargetPipeReadersFailed = AmtPtpEvtUsbInterruptReadersFailed;
-
-    status = WdfUsbTargetPipeConfigContinuousReader(
-        DeviceContext->InterruptPipe, &contReaderConfig);
-
-exit:
-    return status;
+    INT shifted = raw - minVal;
+    if (shifted < 0)               shifted = 0;
+    if (shifted > maxVal - minVal) shifted = maxVal - minVal;
+    return (USHORT)shifted;
 }
 
 VOID
-AmtPtpEvtUsbInterruptPipeReadComplete(
-    _In_ WDFUSBPIPE  Pipe,
-    _In_ WDFMEMORY   Buffer,
-    _In_ size_t      NumBytesTransferred,
-    _In_ WDFCONTEXT  Context)
+AmtInputParseFrame(
+    _In_  const UCHAR*                 FrameBase,
+    _In_  size_t                       FingerSize,
+    _In_  size_t                       RawContactCount,
+    _In_  const struct BCM5974_CONFIG* DevInfo,
+    _In_  LONGLONG                     TimestampQpc,
+    _Out_ PRAW_FRAME                   OutFrame
+)
 {
-    UNREFERENCED_PARAMETER(Pipe);
+    RtlZeroMemory(OutFrame, sizeof(RAW_FRAME));
+    OutFrame->TimestampQpc = TimestampQpc;
 
-    PDEVICE_CONTEXT pCtx       = Context;
-    size_t          headerSize = (unsigned int)pCtx->DeviceInfo->tp_header;
-    size_t          fingerSize = (unsigned int)pCtx->DeviceInfo->tp_fsize;
-    size_t          raw_n;
-    UCHAR*          TouchBuffer = NULL;
+    if (RawContactCount > PTP_MAX_CONTACT_POINTS)
+        RawContactCount = PTP_MAX_CONTACT_POINTS;
 
-    LONGLONG      PerfDelta;
-    LARGE_INTEGER Now;
-    NTSTATUS      Status;
-    PTP_REPORT    Report;
-    WDFREQUEST    Request;
-    WDFMEMORY     RequestMemory;
+    UCHAR emitted = 0;
 
-    // USB read completion
+    for (size_t i = 0; i < RawContactCount; i++) {
+        const struct TRACKPAD_FINGER* f =
+            (const struct TRACKPAD_FINGER*)(FrameBase + i * FingerSize);
 
-    if (NumBytesTransferred < headerSize ||
-        (NumBytesTransferred - headerSize) % fingerSize != 0) {
-        return;
+        INT major = AmtInputRawToInteger(f->touch_major);
+        INT minor = AmtInputRawToInteger(f->touch_minor);
+        INT pressure = AmtInputRawToInteger(f->pressure);
+        if (pressure < 0) pressure = 0; // clamp - negative pressure is not meaningful
+
+        // No contact at all - InputAdapter does not debounce this; a
+        // downstream layer with track history may choose to bridge it.
+        if (major <= 0 && minor <= 0)
+            continue;
+
+        INT nx = (INT)AmtInputClampCoord(
+            AmtInputRawToInteger(f->abs_x), DevInfo->x.min, DevInfo->x.max);
+
+        INT yRange = DevInfo->y.max - DevInfo->y.min;
+        INT nyRaw  = DevInfo->y.max - AmtInputRawToInteger(f->abs_y);
+        INT ny     = (nyRaw < 0) ? 0 : (nyRaw > yRange ? yRange : nyRaw);
+
+        PRAW_CONTACT rc = &OutFrame->Contacts[emitted];
+        rc->SlotIndex = (USHORT)i;
+        rc->X         = (USHORT)nx;
+        rc->Y         = (USHORT)ny;
+        rc->Major     = (USHORT)major;
+        rc->Minor     = (USHORT)minor;
+        rc->Pressure  = (USHORT)pressure;
+        rc->Origin    = (UCHAR)f->origin;
+        emitted++;
     }
 
-    TouchBuffer = WdfMemoryGetBuffer(Buffer, NULL);
-    if (TouchBuffer == NULL) {
-        return;
-    }
-
-    Status = WdfIoQueueRetrieveNextRequest(pCtx->InputQueue, &Request);
-    if (!NT_SUCCESS(Status))
-        return;
-
-    Status = WdfRequestRetrieveOutputMemory(Request, &RequestMemory);
-    if (!NT_SUCCESS(Status)) {
-        WdfRequestComplete(Request, Status);
-        return;
-    }
-
-    RtlZeroMemory(&Report, sizeof(PTP_REPORT));
-    Report.ReportID = REPORTID_MULTITOUCH;
-
-    KeQueryPerformanceCounter(&Now);
-    PerfDelta = Now.QuadPart - pCtx->LastReportTime.QuadPart;
-    if (pCtx->PerfFrequency.QuadPart > 0)
-        PerfDelta = PerfDelta * 10000LL / pCtx->PerfFrequency.QuadPart;
-    else
-        PerfDelta /= 100LL;
-    if (PerfDelta > 0xFFFF) PerfDelta = 0xFFFF;
-    if (PerfDelta < 0)      PerfDelta = 0;
-    Report.ScanTime = (USHORT)PerfDelta;
-    pCtx->LastReportTime = Now;
-
-    BOOLEAN buttonSnapshot =
-        pCtx->PtpReportButton && TouchBuffer[pCtx->DeviceInfo->tp_button];
-
-    // RawFrame construction (InputAdapter - no decisions)
-    RAW_FRAME rawFrame;
-    RtlZeroMemory(&rawFrame, sizeof(rawFrame));
-    rawFrame.TimestampQpc = Now.QuadPart;
-
-    if (pCtx->PtpReportTouch) {
-        raw_n = (NumBytesTransferred - headerSize) / fingerSize;
-        if (raw_n > PTP_MAX_CONTACT_POINTS) raw_n = PTP_MAX_CONTACT_POINTS;
-
-        if (raw_n * fingerSize > (NumBytesTransferred - headerSize)) {
-            WdfRequestComplete(Request, STATUS_DATA_ERROR);
-            return;
-        }
-
-        UCHAR* f_base = TouchBuffer + headerSize + pCtx->DeviceInfo->tp_delta;
-        AmtInputParseFrame(f_base, fingerSize, raw_n, pCtx->DeviceInfo,
-                           Now.QuadPart, &rawFrame);
-    }
-    // else: empty RawFrame -> PTPCore_ProcessFrame lifts all active contacts.
-
-    // PTPCore orchestration
-    PTP_CORE_FRAME coreFrame;
-    BOOLEAN forceTouchDownEdge = FALSE;
-    BOOLEAN forceTouchUpEdge   = FALSE;
-    PTPCore_ProcessFrame(pCtx, &rawFrame, Now.QuadPart, buttonSnapshot,
-                         &coreFrame, &forceTouchDownEdge, &forceTouchUpEdge);
-
-    // Serialize to PTP_REPORT
-    AmtSerializeCoreFrameToReport(&coreFrame, &Report);
-
-    if (buttonSnapshot) {
-        Report.IsButtonClicked = TRUE;
-    }
-
-    AmtReportCheckInvariants(&Report);
-
-    Status = WdfMemoryCopyFromBuffer(
-        RequestMemory, 0, (PVOID)&Report, sizeof(PTP_REPORT));
-    if (!NT_SUCCESS(Status)) {
-        WdfRequestComplete(Request, Status);
-        return;
-    }
-
-    WdfRequestSetInformation(Request, sizeof(PTP_REPORT));
-    WdfRequestComplete(Request, STATUS_SUCCESS);
-
-    // Force-touch -> synthetic right-click, delivered on the SEPARATE
-    // Mouse top-level collection (REPORTID_STANDARDMOUSE) - see
-    // AAPL_WELLSPRING_T2_FORCETOUCH_MOUSE_TLC. This never touches the
-    // PTP_REPORT/digitizer path above; it opportunistically claims a
-    // second pending IOCTL_HID_READ_REPORT request off the SAME manual
-    // InputQueue (mouhid.sys keeps its own read continuously queued
-    // there, same as the touch/digitizer client does). If none is
-    // available yet this pass, the edge is simply missed - not fatal,
-    // but worth knowing about if testing shows missed right-clicks:
-    // the fix would be a short retry/deferred-completion path rather
-    // than assuming a second request is always ready here.
-    if (forceTouchDownEdge || forceTouchUpEdge) {
-        WDFREQUEST mouseRequest;
-        Status = WdfIoQueueRetrieveNextRequest(pCtx->InputQueue, &mouseRequest);
-        if (NT_SUCCESS(Status)) {
-            WDFMEMORY mouseRequestMemory;
-            Status = WdfRequestRetrieveOutputMemory(mouseRequest, &mouseRequestMemory);
-            if (NT_SUCCESS(Status)) {
-                PTP_FORCETOUCH_MOUSE_REPORT mouseReport;
-                RtlZeroMemory(&mouseReport, sizeof(mouseReport));
-                mouseReport.ReportID = REPORTID_STANDARDMOUSE;
-                mouseReport.Button2  = forceTouchDownEdge ? 1 : 0; // 0 on the up edge
-
-                Status = WdfMemoryCopyFromBuffer(
-                    mouseRequestMemory, 0, (PVOID)&mouseReport, sizeof(mouseReport));
-                if (NT_SUCCESS(Status)) {
-                    WdfRequestSetInformation(mouseRequest, sizeof(mouseReport));
-                }
-            }
-            WdfRequestComplete(mouseRequest, Status);
-        }
-    }
-}
-
-BOOLEAN
-AmtPtpEvtUsbInterruptReadersFailed(
-    _In_ WDFUSBPIPE  Pipe,
-    _In_ NTSTATUS    Status,
-    _In_ USBD_STATUS UsbdStatus)
-{
-    UNREFERENCED_PARAMETER(Pipe);
-    UNREFERENCED_PARAMETER(Status);
-    UNREFERENCED_PARAMETER(UsbdStatus);
-    return TRUE;
+    OutFrame->ContactCount = emitted;
 }
