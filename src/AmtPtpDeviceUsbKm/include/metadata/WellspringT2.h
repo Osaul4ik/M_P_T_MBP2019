@@ -118,6 +118,48 @@
 		/* End of 4 bytes */ \
 	END_COLLECTION /* End Collection */ \
 
+// Force-touch -> synthetic right-click delivery.
+//
+// This is a SEPARATE top-level collection from AAPL_WELLSPRING_T2_PTP_TLC
+// below - it does not add a second button to the digitizer collection
+// (the Windows PTP spec's single-button digitizer report is untouched,
+// so PTP compliance/certification-shaped behavior is unaffected). It's
+// a plain, minimal Generic-Desktop Mouse collection: 3 buttons (only
+// Button 2 / right button is ever driven non-zero - Button 1 and
+// Button 3 are wired but always report 0, since left-click is already
+// handled entirely through the digitizer collection) plus a constant
+// X/Y pair. mouhid.sys expects X/Y on a Mouse usage even when unused;
+// we always report 0/0 so this collection never moves the cursor,
+// only pulses the right-button bit.
+#define AAPL_WELLSPRING_T2_FORCETOUCH_MOUSE_TLC \
+	USAGE_PAGE, 0x01, /* Usage Page: Generic Desktop */ \
+	USAGE, 0x02, /* Usage: Mouse */ \
+	BEGIN_COLLECTION, 0x01, /* Begin Collection: Application */ \
+		REPORT_ID, REPORTID_STANDARDMOUSE, \
+		USAGE, 0x01, /* Usage: Pointer */ \
+		BEGIN_COLLECTION, 0x00, /* Begin Collection: Physical */ \
+			USAGE_PAGE, 0x09, /* Usage Page: Button */ \
+			USAGE_MINIMUM, 0x01, /* Button 1 */ \
+			USAGE_MAXIMUM, 0x03, /* Button 3 */ \
+			LOGICAL_MINIMUM, 0x00, \
+			LOGICAL_MAXIMUM, 0x01, \
+			REPORT_COUNT, 0x03, \
+			REPORT_SIZE, 0x01, \
+			INPUT, 0x02, /* Input: (Data, Var, Abs) */ \
+			REPORT_COUNT, 0x01, \
+			REPORT_SIZE, 0x05, \
+			INPUT, 0x03, /* Input: (Const, Var, Abs) - padding */ \
+			USAGE_PAGE, 0x01, /* Usage Page: Generic Desktop */ \
+			USAGE, 0x30, /* Usage: X */ \
+			USAGE, 0x31, /* Usage: Y */ \
+			LOGICAL_MINIMUM, 0x81, /* -127 */ \
+			LOGICAL_MAXIMUM, 0x7f, /* 127 */ \
+			REPORT_SIZE, 0x08, \
+			REPORT_COUNT, 0x02, \
+			INPUT, 0x06, /* Input: (Data, Var, Rel) - always sent as 0 */ \
+		END_COLLECTION, /* End Collection */ \
+	END_COLLECTION /* End Collection */
+
 #define AAPL_WELLSPRING_T2_PTP_TLC \
 	USAGE_PAGE, 0x0d, /* Usage Page: Digitizer */ \
 	USAGE, 0x05, /* Usage: Touch Pad */ \
