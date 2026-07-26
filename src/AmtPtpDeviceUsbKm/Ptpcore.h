@@ -71,6 +71,12 @@ struct _DEVICE_CONTEXT; // fwd decl, defined in Device.h
 // drops back down, or the button/contact lifts). Interrupt.c uses these
 // edges (not the level) to pulse the synthetic right-click mouse report
 // exactly once per press, rather than re-firing every frame.
+//
+// OutButtonClickReport: the arbitrated ordinary-click level (see
+// CLICK_ARBITRATION_STATE in Device.h) - Interrupt.c uses this, not the
+// raw button bit, for PTP_REPORT.IsButtonClicked. FALSE while a press
+// is still being arbitrated or has been decided a force touch, so a
+// force touch never also reports a regular click underneath it.
 VOID
 PTPCore_ProcessFrame(
     _Inout_ struct _DEVICE_CONTEXT* DeviceContext,
@@ -79,7 +85,8 @@ PTPCore_ProcessFrame(
     _In_    BOOLEAN                 ButtonDown,
     _Out_   PTP_CORE_FRAME*         OutResult,
     _Out_   BOOLEAN*                OutForceTouchDownEdge,
-    _Out_   BOOLEAN*                OutForceTouchUpEdge
+    _Out_   BOOLEAN*                OutForceTouchUpEdge,
+    _Out_   BOOLEAN*                OutButtonClickReport
 );
 
 // Recent-lift ring buffer for retap smoothing.
