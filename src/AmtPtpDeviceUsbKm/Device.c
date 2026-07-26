@@ -154,6 +154,7 @@ AmtPtpEvtDeviceD0Entry(
     AmtGestureSessionInit(&pDeviceContext->GestureSession);
     pDeviceContext->OverflowCount        = 0;
     pDeviceContext->PrevButtonClicked    = FALSE;
+    pDeviceContext->ForceTouchActive     = FALSE;
     AmtContactPoolInit(pDeviceContext->ActiveContacts);
 
     // Zero RecentLifts on D0Entry to prevent stale retap-smoothing
