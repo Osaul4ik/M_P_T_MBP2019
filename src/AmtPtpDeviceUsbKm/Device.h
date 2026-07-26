@@ -8,6 +8,20 @@
 
 EXTERN_C_START
 
+// Force-touch vs hard-tap click arbitration (Ptpcore.c). While the
+// mechanical button is held, the ordinary click report is withheld
+// until PTPCore can tell whether the press is turning into a force
+// touch (deep press) or staying an ordinary click - so a force touch
+// never also fires a regular click underneath it. See ClickArbitration*
+// fields below.
+typedef enum _CLICK_ARBITRATION_STATE
+{
+    CLICK_ARBITRATION_IDLE = 0,    // button not down
+    CLICK_ARBITRATION_PENDING,     // button down, still deciding
+    CLICK_ARBITRATION_HARD_TAP,    // decided: ordinary click - report it
+    CLICK_ARBITRATION_FORCE_TOUCH  // decided: force touch - suppress click
+} CLICK_ARBITRATION_STATE;
+
 typedef struct _DEVICE_CONTEXT
 {
     // USB
@@ -48,6 +62,12 @@ typedef struct _DEVICE_CONTEXT
     USHORT  ForceTouchAnchorX;
     USHORT  ForceTouchAnchorY;
     BOOLEAN ForceTouchDragLockout;
+
+    // Click arbitration (Ptpcore.c) - see CLICK_ARBITRATION_STATE above.
+    // PrevPressure/StartQpc are only meaningful while State == PENDING.
+    CLICK_ARBITRATION_STATE ClickArbitrationState;
+    USHORT                  ClickArbitrationPrevPressure;
+    LONGLONG                ClickArbitrationStartQpc;
 
     // Scan time
     LARGE_INTEGER LastReportTime;
