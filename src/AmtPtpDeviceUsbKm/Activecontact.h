@@ -51,6 +51,14 @@ typedef struct _ACTIVE_CONTACT
     // AmtContactBirthWithRetapSmoothing.
     BOOLEAN RetapSeeded;
 
+    // Fractional remainder from scroll-delta scaling (SCROLL_SCALE_NUM/DEN),
+    // carried frame-to-frame within one continuous gesture so a ~30% slowdown
+    // doesn't zero out via integer truncation at slow scroll speeds (same
+    // idea as a Bresenham error term). Reset to 0 whenever gestureActive is
+    // FALSE - it must not leak into an unrelated later scroll.
+    LONG ScrollRemX;
+    LONG ScrollRemY;
+
     // ---- Matching-hint fields. NOT identity. ----
     USHORT   LastSlotHint;    // hw slot matched to last frame; speeds up matching
     LONGLONG LastSeenQpc;     // QPC of last successful match; grace/retap timing
