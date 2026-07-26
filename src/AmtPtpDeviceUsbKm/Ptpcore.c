@@ -339,6 +339,8 @@ PTPCore_ProcessFrame(
     // a contact birthed earlier in THIS frame (NewIdentity path above, or a
     // genuinely new touch in Phase B below) has no "old" cursor-latched
     // identity for Windows to be snapping against yet, so it's skipped.
+    BOOLEAN rebindThisFrame[MAX_CONTACTS] = { 0 };
+
     if (buttonClickEdge) {
         for (UCHAR ci = 0; ci < candidates.Count; ci++) {
             if (candidates.Candidates[ci].PalmLocal) continue;
@@ -356,6 +358,8 @@ PTPCore_ProcessFrame(
             // Deliberately NOT AmtRecentLiftRecord'd - this isn't a real
             // lift and must not seed retap-smoothing for unrelated future
             // taps in the same area.
+
+            rebindThisFrame[p] = TRUE;
 
             // AUDIT FIX: AmtContactRebindIdentity (unlike AmtContactBirth)
             // deliberately does NOT touch LastSeenQpc - it's an in-place
@@ -514,10 +518,33 @@ PTPCore_ProcessFrame(
                          cand->SlotIndex, NowQpc,
                          (BOOLEAN)(aliveCount == 1), &repX, &repY);
 
+        // AUDIT FIX (click Confidence false-negative): TipDropApplied
+        // means "X/Y is stale/bridged," not "this isn't a real finger" -
+        // but Phase C was reusing it as-is for Confident on EVERY report,
+        // including a buttonClickEdge rebind's DOWN. A physical mechanical
+        // click on this hardware momentarily flexes the pad and shrinks
+        // the reported touch ellipse (Major/Minor), often dropping it
+        // below AmtMatchCandidateTip's threshold right at the click - and
+        // since a deliberate click is almost always thrown while the
+        // finger is held still, that lands in the "isStationary" tip-drop
+        // branch (Match.c) which sets TipDropApplied=1. That falsely
+        // reported the freshly-rebound ContactID's DOWN as Confident=
+        // FALSE, and Windows' PTP stack discards non-confident contacts
+        // for pointer/click purposes - so the click never registered
+        // unless the finger was lifted and touched again (a real birth,
+        // on a later frame once the ellipse recovered above threshold).
+        // A rebound contact is by definition an already-tracked, real
+        // finger (identity swap only, per AmtContactRebindIdentity) - so
+        // its Confidence must not be gated by the tip-threshold heuristic
+        // meant for brand-new/continuing touch candidates.
+        BOOLEAN reportConfident = rebindThisFrame[p]
+            ? TRUE
+            : (BOOLEAN)(cand->TipDropApplied == 0);
+
         AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
                            repX, repY,
                            justBorn ? CONTACT_PHASE_DOWN : CONTACT_PHASE_MOVE,
-                           (BOOLEAN)(cand->TipDropApplied == 0));
+                           reportConfident);
     }
 
     AmtContactPoolCheckInvariants(pCtx->ActiveContacts);
