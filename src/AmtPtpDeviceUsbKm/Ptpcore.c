@@ -12,7 +12,7 @@
 // latches ForceTouchDragLockout for the rest of the press: once the user
 // is visibly dragging (e.g. moving a window) after a hard tap, a deeper
 // press must not fire a synthetic right-click on top of that drag.
-#define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 80
+#define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 60
 
 // How long PTPCore will wait, once the button goes down, for the press
 // to either cross FORCE_TOUCH_PRESSURE_THRESHOLD or start receding
