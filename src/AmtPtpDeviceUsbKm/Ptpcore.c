@@ -608,18 +608,26 @@ PTPCore_ProcessFrame(
     // Click arbitration: force-touch vs ordinary hard-tap. Decides BEFORE
     // the force-touch check below so both see the same, already-updated
     // state this frame. Once the button is held, this press stays
-    // CLICK_ARBITRATION_PENDING until one of three things happens:
+    // CLICK_ARBITRATION_PENDING until one of four things happens:
     //   - pressure crosses FORCE_TOUCH_PRESSURE_THRESHOLD -> FORCE_TOUCH,
     //     the ordinary click is suppressed for the rest of the press;
     //   - pressure drops from one frame to the next before ever reaching
     //     that threshold -> the press has peaked and is on its way back
     //     down, so it can only be a plain click from here on -> HARD_TAP,
     //     immediately;
-    //   - neither happens within CLICK_ARBITRATION_TIMEOUT_MS (pressure
+    //   - the drag lockout above trips before pressure ever reached the
+    //     threshold -> the finger is moving (e.g. dragging a window) on
+    //     an ordinary tap that never became a hard press -> HARD_TAP;
+    //   - none of the above within CLICK_ARBITRATION_TIMEOUT_MS (pressure
     //     climbing slowly or just wobbling) -> give up waiting -> HARD_TAP.
     // The decision then latches for the remainder of the press (reset to
-    // IDLE only on button release), so a later pressure swing can't flip
-    // it - "100% hard tap" per the design note is permanent, not a level.
+    // IDLE only on button release), so a later pressure swing OR later
+    // movement can't flip it - once FORCE_TOUCH is decided, moving the
+    // finger while still pressing is a right-click-drag (e.g. dragging
+    // out a selection) and must NOT cancel the force touch; only the
+    // pressure dropping back down (or the button releasing) ends it -
+    // see forceTouchNow below, which is intentionally NOT gated on the
+    // drag lockout once FORCE_TOUCH is already latched.
     if (!ButtonDown) {
         pCtx->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
     } else {
@@ -635,6 +643,8 @@ PTPCore_ProcessFrame(
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
             } else if (!justEnteredPending &&
                        framePeakPressure < pCtx->ClickArbitrationPrevPressure) {
+                pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
+            } else if (pCtx->ForceTouchDragLockout) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
             } else {
                 LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
@@ -655,16 +665,21 @@ PTPCore_ProcessFrame(
 
     // Force-touch: fixed pressure threshold, gated on the integrated
     // button being held (a "harder press after the click" - matches
-    // the physical gesture of pushing further past the click trip),
-    // the drag lockout above being clear, AND click arbitration not
-    // having already committed this press to an ordinary hard-tap
-    // click - once it has, force-touch is permanently disabled for the
-    // rest of the press so the two never both fire for one press.
+    // the physical gesture of pushing further past the click trip) AND
+    // click arbitration not having already committed this press to an
+    // ordinary hard-tap click - once it has, force-touch is permanently
+    // disabled for the rest of the press so the two never both fire for
+    // one press. Deliberately NOT gated on the drag lockout here: that
+    // lockout only feeds the arbitration decision above (movement
+    // before the threshold was ever crossed means "hard tap, not force
+    // touch"). Once FORCE_TOUCH is latched, continuing to move the
+    // finger is a right-click-drag and must keep the synthetic
+    // right-click held, not release it.
     BOOLEAN forceTouchNow = FALSE;
-    if (ButtonDown && !pCtx->ForceTouchDragLockout &&
-        pCtx->ClickArbitrationState != CLICK_ARBITRATION_HARD_TAP) {
+    if (ButtonDown && pCtx->ClickArbitrationState != CLICK_ARBITRATION_HARD_TAP) {
         forceTouchNow = framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD;
     }
+
 
     *OutForceTouchDownEdge = forceTouchNow && !pCtx->ForceTouchActive;
     *OutForceTouchUpEdge   = !forceTouchNow && pCtx->ForceTouchActive;
