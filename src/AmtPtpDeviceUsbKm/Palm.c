@@ -27,6 +27,15 @@
 #define PALM_MIN_MAJOR  80   // мінімальний major для підозри на долоню
 #define PALM_MIN_MINOR  40   // мінімальний minor для підозри на долоню
 
+// Thin hard cutoff right at the physical bottom edge - the strip where
+// the heel of the hand rests against the laptop's chassis when leaning
+// on it. No real finger ever deliberately lands this close to the
+// physical edge, so this slice is rejected unconditionally, regardless
+// of size/shape. Kept narrow on purpose (large divisor = thin strip) -
+// this is NOT the same as the wider, size-gated scored zone below,
+// which still lets real small touches through further up from the edge.
+#define BOTTOM_HARD_CUTOFF_DIVISOR 32
+
 static inline INT
 AmtPalmRawToInteger(_In_ USHORT x)
 {
@@ -42,6 +51,10 @@ AmtPalmClassify(
     _In_ INT                          NormY
 )
 {
+    INT yRangeFull = DevInfo->y.max - DevInfo->y.min;
+    if (NormY > (yRangeFull - yRangeFull / BOTTOM_HARD_CUTOFF_DIVISOR))
+        return PALM_LOCAL;
+
     INT major = AmtPalmRawToInteger(Major);
     INT minor = AmtPalmRawToInteger(Minor);
     
@@ -81,16 +94,19 @@ AmtPalmClassify(
         INT xRange   = DevInfo->x.max - DevInfo->x.min;
         INT yRange   = DevInfo->y.max - DevInfo->y.min;
 
-        // Per-side edge deadzone divisors (smaller divisor = wider zone).
-        // Top stays tight - legitimate taps/scroll gestures land close to
-        // the top edge often enough that widening it would cost real
-        // input. Left/right are widened (palm/side-of-hand contact is
-        // more likely there), and bottom is widened the most, since the
-        // heel of the hand rests closest to the bottom edge.
+        // Per-side edge score divisors (smaller divisor = wider zone).
+        // Top stays tight - legitimate taps/scroll gestures land close
+        // to the top edge often enough that widening it would cost
+        // real input. Left/right and bottom are widened - palm contact
+        // is far more likely there. Bottom's zone here is wider than
+        // the thin hard cutoff above it - this is the size-gated
+        // transition band: only major>130 contacts get scored, so a
+        // normal small fingertip passing through is never affected,
+        // only wide/flat palm-shaped ones.
         #define EDGE_DIVISOR_TOP     28
         #define EDGE_DIVISOR_LEFT    12
         #define EDGE_DIVISOR_RIGHT   12
-        #define EDGE_DIVISOR_BOTTOM   3
+        #define EDGE_DIVISOR_BOTTOM   6
 
         INT edgeTop    = yRange / EDGE_DIVISOR_TOP;
         INT edgeLeft   = xRange / EDGE_DIVISOR_LEFT;
