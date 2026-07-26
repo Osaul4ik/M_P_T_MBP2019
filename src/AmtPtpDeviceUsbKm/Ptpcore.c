@@ -617,8 +617,17 @@ PTPCore_ProcessFrame(
     // the force-touch check below so both see the same, already-updated
     // state this frame. Once the button is held, this press stays
     // CLICK_ARBITRATION_PENDING until one of four things happens:
-    //   - pressure crosses FORCE_TOUCH_PRESSURE_THRESHOLD -> FORCE_TOUCH,
-    //     the ordinary click is suppressed for the rest of the press;
+    //   - the drag lockout trips (finger has moved past
+    //     FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the button-down anchor,
+    //     e.g. dragging a window) -> HARD_TAP, unconditionally, even if
+    //     pressure ALSO crosses the force-touch threshold in this exact
+    //     same frame. Movement wins over pressure: a press that's moving
+    //     is a drag, full stop, regardless of how hard it's pressed.
+    //     Checked FIRST, ahead of the pressure check below, specifically
+    //     for that same-frame race;
+    //   - pressure crosses FORCE_TOUCH_PRESSURE_THRESHOLD (and the drag
+    //     lockout has NOT tripped) -> FORCE_TOUCH, the ordinary click is
+    //     suppressed for the rest of the press;
     //   - pressure falls CLICK_ARBITRATION_PRESSURE_HYSTERESIS units or
     //     more below the highest pressure seen so far this press, before
     //     ever reaching the threshold -> the press has peaked and is on
@@ -627,9 +636,6 @@ PTPCore_ProcessFrame(
     //     the sensor is noisy (252, 250, 251, 252, 251...), so a single
     //     frame-to-frame dip is not a reliable "it's receding" signal -
     //     only falling meaningfully below the best value seen is;
-    //   - the drag lockout above trips before pressure ever reached the
-    //     threshold -> the finger is moving (e.g. dragging a window) on
-    //     an ordinary tap that never became a hard press -> HARD_TAP;
     //   - none of the above within CLICK_ARBITRATION_TIMEOUT_MS (pressure
     //     climbing slowly or just wobbling) -> give up waiting -> HARD_TAP.
     // The decision then latches for the remainder of the press (reset to
@@ -655,11 +661,13 @@ PTPCore_ProcessFrame(
             INT dropFromPeak = (INT)pCtx->ClickArbitrationPeakPressure -
                                 (INT)framePeakPressure;
 
-            if (framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
+            if (pCtx->ForceTouchDragLockout) {
+                // Movement beats pressure, even in a same-frame tie -
+                // checked before the threshold test below on purpose.
+                pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
+            } else if (framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
             } else if (dropFromPeak >= CLICK_ARBITRATION_PRESSURE_HYSTERESIS) {
-                pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
-            } else if (pCtx->ForceTouchDragLockout) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
             } else {
                 LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
