@@ -14,6 +14,12 @@
 // press must not fire a synthetic right-click on top of that drag.
 #define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 150
 
+// How long PTPCore will wait, once the button goes down, for the press
+// to either cross FORCE_TOUCH_PRESSURE_THRESHOLD or start receding
+// before giving up and committing it as an ordinary click. "Some time"
+// per the design note - tunable.
+#define CLICK_ARBITRATION_TIMEOUT_MS 120
+
 // Recent-lift ring buffer (slot-independent retap memory)
 
 VOID
@@ -181,7 +187,8 @@ PTPCore_ProcessFrame(
     _In_    BOOLEAN          ButtonDown,
     _Out_   PTP_CORE_FRAME*  OutResult,
     _Out_   BOOLEAN*         OutForceTouchDownEdge,
-    _Out_   BOOLEAN*         OutForceTouchUpEdge
+    _Out_   BOOLEAN*         OutForceTouchUpEdge,
+    _Out_   BOOLEAN*         OutButtonClickReport
 )
 {
     PDEVICE_CONTEXT pCtx = DeviceContext;
@@ -588,23 +595,75 @@ PTPCore_ProcessFrame(
         }
     }
 
+    // Peak raw pressure this frame - shared by the click arbitration and
+    // force-touch checks below (same click-flex rationale as the old
+    // per-block loops: use the RAW frame, not the matched/palm-filtered
+    // candidates).
+    USHORT framePeakPressure = 0;
+    for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
+        if (RawFrame->Contacts[fi].Pressure > framePeakPressure)
+            framePeakPressure = RawFrame->Contacts[fi].Pressure;
+    }
+
+    // Click arbitration: force-touch vs ordinary hard-tap. Decides BEFORE
+    // the force-touch check below so both see the same, already-updated
+    // state this frame. Once the button is held, this press stays
+    // CLICK_ARBITRATION_PENDING until one of three things happens:
+    //   - pressure crosses FORCE_TOUCH_PRESSURE_THRESHOLD -> FORCE_TOUCH,
+    //     the ordinary click is suppressed for the rest of the press;
+    //   - pressure drops from one frame to the next before ever reaching
+    //     that threshold -> the press has peaked and is on its way back
+    //     down, so it can only be a plain click from here on -> HARD_TAP,
+    //     immediately;
+    //   - neither happens within CLICK_ARBITRATION_TIMEOUT_MS (pressure
+    //     climbing slowly or just wobbling) -> give up waiting -> HARD_TAP.
+    // The decision then latches for the remainder of the press (reset to
+    // IDLE only on button release), so a later pressure swing can't flip
+    // it - "100% hard tap" per the design note is permanent, not a level.
+    if (!ButtonDown) {
+        pCtx->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
+    } else {
+        BOOLEAN justEnteredPending = FALSE;
+        if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_IDLE) {
+            pCtx->ClickArbitrationState        = CLICK_ARBITRATION_PENDING;
+            pCtx->ClickArbitrationStartQpc     = NowQpc;
+            pCtx->ClickArbitrationPrevPressure = framePeakPressure;
+            justEnteredPending = TRUE; // no prior sample yet - decrease check below is meaningless this frame
+        }
+        if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
+            if (framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
+                pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
+            } else if (!justEnteredPending &&
+                       framePeakPressure < pCtx->ClickArbitrationPrevPressure) {
+                pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
+            } else {
+                LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
+                LONGLONG timeoutTicks = (pCtx->PerfFrequency.QuadPart > 0)
+                    ? (pCtx->PerfFrequency.QuadPart * CLICK_ARBITRATION_TIMEOUT_MS) / 1000
+                    : 0; // no usable clock - fail open to a plain click below
+                if (elapsedTicks >= timeoutTicks) {
+                    pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
+                }
+            }
+            pCtx->ClickArbitrationPrevPressure = framePeakPressure;
+        }
+        // else: HARD_TAP or FORCE_TOUCH already latched - hold it.
+    }
+
+    *OutButtonClickReport =
+        (pCtx->ClickArbitrationState == CLICK_ARBITRATION_HARD_TAP);
+
     // Force-touch: fixed pressure threshold, gated on the integrated
     // button being held (a "harder press after the click" - matches
-    // the physical gesture of pushing further past the click trip) AND
-    // on the drag lockout above being clear. Uses the RAW frame
-    // directly, not the matched/palm-filtered candidate set: a
-    // genuinely harder press can shrink the reported touch ellipse (see
-    // the click-Confidence audit note above this function) and we
-    // don't want that same effect to also hide the force-touch
-    // condition it causes.
+    // the physical gesture of pushing further past the click trip),
+    // the drag lockout above being clear, AND click arbitration not
+    // having already committed this press to an ordinary hard-tap
+    // click - once it has, force-touch is permanently disabled for the
+    // rest of the press so the two never both fire for one press.
     BOOLEAN forceTouchNow = FALSE;
-    if (ButtonDown && !pCtx->ForceTouchDragLockout) {
-        for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
-            if (RawFrame->Contacts[fi].Pressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
-                forceTouchNow = TRUE;
-                break;
-            }
-        }
+    if (ButtonDown && !pCtx->ForceTouchDragLockout &&
+        pCtx->ClickArbitrationState != CLICK_ARBITRATION_HARD_TAP) {
+        forceTouchNow = framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD;
     }
 
     *OutForceTouchDownEdge = forceTouchNow && !pCtx->ForceTouchActive;
