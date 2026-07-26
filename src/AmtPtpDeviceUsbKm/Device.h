@@ -56,8 +56,12 @@ typedef struct _DEVICE_CONTEXT
     // the button-down edge; if a contact wanders past
     // FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the anchor while the button
     // stays held, ForceTouchDragLockout latches TRUE for the rest of the
-    // press - a hard-tap-then-drag (e.g. moving a window) must never
-    // trip a synthetic right-click mid-drag. Reset on button release.
+    // press. Feeds the click arbitration decision below - moving before
+    // the force-touch pressure threshold was ever crossed commits the
+    // press to an ordinary hard-tap click (e.g. dragging a window).
+    // Once the press has already been arbitrated as a force touch, this
+    // flag is ignored - dragging while holding a force touch is a
+    // right-click-drag and must not cancel it. Reset on button release.
     BOOLEAN ForceTouchAnchorValid;
     USHORT  ForceTouchAnchorX;
     USHORT  ForceTouchAnchorY;
