@@ -144,6 +144,19 @@ typedef struct _PTP_REPORT {
 	UCHAR       IsButtonClicked;
 } PTP_REPORT, *PPTP_REPORT;
 
+#pragma pack(push)
+#pragma pack(1)
+typedef struct _PTP_FORCETOUCH_MOUSE_REPORT {
+	UCHAR ReportID;
+	UCHAR Button1 : 1;   // left  - always 0, left click stays on the digitizer collection
+	UCHAR Button2 : 1;   // right - the only bit force-touch ever sets
+	UCHAR Button3 : 1;   // middle - always 0, wired for spec completeness only
+	UCHAR Padding : 5;
+	CHAR  X;             // always 0 - this collection never moves the cursor
+	CHAR  Y;             // always 0
+} PTP_FORCETOUCH_MOUSE_REPORT, *PPTP_FORCETOUCH_MOUSE_REPORT;
+#pragma pack(pop)
+
 typedef struct _PTP_USERMODEAPP_CONF_REPORT {
 	UCHAR		ReportID;
 	UCHAR		PressureQualificationLevel;
