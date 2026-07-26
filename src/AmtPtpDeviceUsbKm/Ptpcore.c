@@ -7,6 +7,13 @@
 #include "Match.h"
 #include "Gesture.h"
 
+// Movement past this distance (normalized units - same coordinate space
+// as RETAP_MAX_DISTANCE in ActiveContact.h) from the button-down anchor
+// latches ForceTouchDragLockout for the rest of the press: once the user
+// is visibly dragging (e.g. moving a window) after a hard tap, a deeper
+// press must not fire a synthetic right-click on top of that drag.
+#define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 150
+
 // Recent-lift ring buffer (slot-independent retap memory)
 
 VOID
@@ -552,16 +559,46 @@ PTPCore_ProcessFrame(
 
     AmtContactPoolCheckInvariants(pCtx->ActiveContacts);
 
+    // Force-touch drag lockout. Recomputed every frame from the RAW
+    // frame (same rationale as below: click-flex must not distort this
+    // either), BEFORE the pressure check, so a press that has turned
+    // into a drag can never still trip force-touch this same frame.
+    if (!ButtonDown) {
+        pCtx->ForceTouchAnchorValid = FALSE;
+        pCtx->ForceTouchDragLockout = FALSE;
+    } else {
+        if (buttonClickEdge && RawFrame->ContactCount > 0) {
+            pCtx->ForceTouchAnchorX     = RawFrame->Contacts[0].X;
+            pCtx->ForceTouchAnchorY     = RawFrame->Contacts[0].Y;
+            pCtx->ForceTouchAnchorValid = TRUE;
+        }
+
+        if (pCtx->ForceTouchAnchorValid) {
+            for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
+                INT dx = (INT)RawFrame->Contacts[fi].X - (INT)pCtx->ForceTouchAnchorX;
+                INT dy = (INT)RawFrame->Contacts[fi].Y - (INT)pCtx->ForceTouchAnchorY;
+                if (dx < 0) dx = -dx;
+                if (dy < 0) dy = -dy;
+                if (dx > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE ||
+                    dy > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE) {
+                    pCtx->ForceTouchDragLockout = TRUE;
+                    break;
+                }
+            }
+        }
+    }
+
     // Force-touch: fixed pressure threshold, gated on the integrated
     // button being held (a "harder press after the click" - matches
-    // the physical gesture of pushing further past the click trip).
-    // Uses the RAW frame directly, not the matched/palm-filtered
-    // candidate set: a genuinely harder press can shrink the reported
-    // touch ellipse (see the click-Confidence audit note above this
-    // function) and we don't want that same effect to also hide the
-    // force-touch condition it causes.
+    // the physical gesture of pushing further past the click trip) AND
+    // on the drag lockout above being clear. Uses the RAW frame
+    // directly, not the matched/palm-filtered candidate set: a
+    // genuinely harder press can shrink the reported touch ellipse (see
+    // the click-Confidence audit note above this function) and we
+    // don't want that same effect to also hide the force-touch
+    // condition it causes.
     BOOLEAN forceTouchNow = FALSE;
-    if (ButtonDown) {
+    if (ButtonDown && !pCtx->ForceTouchDragLockout) {
         for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
             if (RawFrame->Contacts[fi].Pressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
                 forceTouchNow = TRUE;
