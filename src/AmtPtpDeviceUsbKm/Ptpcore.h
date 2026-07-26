@@ -17,6 +17,7 @@ typedef struct _RAW_CONTACT
     USHORT Y;
     USHORT Major;        // touch_major, raw
     USHORT Minor;        // touch_minor, raw
+    USHORT Pressure;     // force-touch trackpad pressure, raw ADC units (~0-300)
     UCHAR  Origin;        // firmware origin field; 0 == identity break signal
 } RAW_CONTACT, *PRAW_CONTACT;
 
@@ -63,13 +64,22 @@ typedef struct _PTP_CORE_FRAME
 
 struct _DEVICE_CONTEXT; // fwd decl, defined in Device.h
 
+// OutForceTouchDownEdge: TRUE for exactly one call - the frame where a
+// contact's pressure first crosses FORCE_TOUCH_PRESSURE_THRESHOLD while
+// the integrated button is held down. OutForceTouchUpEdge: TRUE for
+// exactly one call - the frame the force-touch condition ends (pressure
+// drops back down, or the button/contact lifts). Interrupt.c uses these
+// edges (not the level) to pulse the synthetic right-click mouse report
+// exactly once per press, rather than re-firing every frame.
 VOID
 PTPCore_ProcessFrame(
     _Inout_ struct _DEVICE_CONTEXT* DeviceContext,
     _In_    const RAW_FRAME*        RawFrame,
     _In_    LONGLONG                NowQpc,
     _In_    BOOLEAN                 ButtonDown,
-    _Out_   PTP_CORE_FRAME*         OutResult
+    _Out_   PTP_CORE_FRAME*         OutResult,
+    _Out_   BOOLEAN*                OutForceTouchDownEdge,
+    _Out_   BOOLEAN*                OutForceTouchUpEdge
 );
 
 // Recent-lift ring buffer for retap smoothing.
