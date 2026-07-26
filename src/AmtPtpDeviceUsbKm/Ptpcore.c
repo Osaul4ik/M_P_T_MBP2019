@@ -20,6 +20,14 @@
 // per the design note - tunable.
 #define CLICK_ARBITRATION_TIMEOUT_MS 120
 
+// A press is considered to be receding once its pressure falls this many
+// raw units below the highest value seen so far this press (rather than
+// below the immediately preceding frame - the sensor is noisy enough
+// that a single frame-to-frame dip isn't reliable on its own). Tunable;
+// ~3-5 units is enough margin to absorb sensor noise without meaningfully
+// delaying the decision.
+#define CLICK_ARBITRATION_PRESSURE_HYSTERESIS 4
+
 // Recent-lift ring buffer (slot-independent retap memory)
 
 VOID
@@ -611,10 +619,14 @@ PTPCore_ProcessFrame(
     // CLICK_ARBITRATION_PENDING until one of four things happens:
     //   - pressure crosses FORCE_TOUCH_PRESSURE_THRESHOLD -> FORCE_TOUCH,
     //     the ordinary click is suppressed for the rest of the press;
-    //   - pressure drops from one frame to the next before ever reaching
-    //     that threshold -> the press has peaked and is on its way back
-    //     down, so it can only be a plain click from here on -> HARD_TAP,
-    //     immediately;
+    //   - pressure falls CLICK_ARBITRATION_PRESSURE_HYSTERESIS units or
+    //     more below the highest pressure seen so far this press, before
+    //     ever reaching the threshold -> the press has peaked and is on
+    //     its way back down -> HARD_TAP, immediately. Compared against
+    //     the running PEAK rather than the previous frame's raw sample:
+    //     the sensor is noisy (252, 250, 251, 252, 251...), so a single
+    //     frame-to-frame dip is not a reliable "it's receding" signal -
+    //     only falling meaningfully below the best value seen is;
     //   - the drag lockout above trips before pressure ever reached the
     //     threshold -> the finger is moving (e.g. dragging a window) on
     //     an ordinary tap that never became a hard press -> HARD_TAP;
@@ -631,18 +643,21 @@ PTPCore_ProcessFrame(
     if (!ButtonDown) {
         pCtx->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
     } else {
-        BOOLEAN justEnteredPending = FALSE;
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_IDLE) {
-            pCtx->ClickArbitrationState        = CLICK_ARBITRATION_PENDING;
-            pCtx->ClickArbitrationStartQpc     = NowQpc;
-            pCtx->ClickArbitrationPrevPressure = framePeakPressure;
-            justEnteredPending = TRUE; // no prior sample yet - decrease check below is meaningless this frame
+            pCtx->ClickArbitrationState         = CLICK_ARBITRATION_PENDING;
+            pCtx->ClickArbitrationStartQpc      = NowQpc;
+            pCtx->ClickArbitrationPeakPressure  = framePeakPressure;
         }
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
+            if (framePeakPressure > pCtx->ClickArbitrationPeakPressure)
+                pCtx->ClickArbitrationPeakPressure = framePeakPressure;
+
+            INT dropFromPeak = (INT)pCtx->ClickArbitrationPeakPressure -
+                                (INT)framePeakPressure;
+
             if (framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
-            } else if (!justEnteredPending &&
-                       framePeakPressure < pCtx->ClickArbitrationPrevPressure) {
+            } else if (dropFromPeak >= CLICK_ARBITRATION_PRESSURE_HYSTERESIS) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
             } else if (pCtx->ForceTouchDragLockout) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
@@ -655,7 +670,6 @@ PTPCore_ProcessFrame(
                     pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
                 }
             }
-            pCtx->ClickArbitrationPrevPressure = framePeakPressure;
         }
         // else: HARD_TAP or FORCE_TOUCH already latched - hold it.
     }
