@@ -90,7 +90,7 @@ AmtPalmClassify(
         #define EDGE_DIVISOR_TOP     28
         #define EDGE_DIVISOR_LEFT    12
         #define EDGE_DIVISOR_RIGHT   12
-        #define EDGE_DIVISOR_BOTTOM   6
+        #define EDGE_DIVISOR_BOTTOM   3
 
         INT edgeTop    = yRange / EDGE_DIVISOR_TOP;
         INT edgeLeft   = xRange / EDGE_DIVISOR_LEFT;
