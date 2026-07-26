@@ -21,6 +21,9 @@ HidValidateReportSize(
 HID_REPORT_DESCRIPTOR AmtPtpT2ReportDescriptor[] = {
 	AAPL_WELLSPRING_T2_PTP_TLC,
 	AAPL_PTP_WINDOWS_CONFIGURATION_TLC,
+	// Additive: separate Mouse TLC, force-touch right-click delivery
+	// only. Does not alter the PTP TLC above in any way.
+	AAPL_WELLSPRING_T2_FORCETOUCH_MOUSE_TLC,
 };
 
 CONST HID_DESCRIPTOR AmtPtpT2DefaultHidDescriptor = {
