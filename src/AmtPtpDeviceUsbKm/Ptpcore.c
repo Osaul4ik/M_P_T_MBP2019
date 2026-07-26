@@ -172,7 +172,9 @@ PTPCore_ProcessFrame(
     _In_    const RAW_FRAME* RawFrame,
     _In_    LONGLONG         NowQpc,
     _In_    BOOLEAN          ButtonDown,
-    _Out_   PTP_CORE_FRAME*  OutResult
+    _Out_   PTP_CORE_FRAME*  OutResult,
+    _Out_   BOOLEAN*         OutForceTouchDownEdge,
+    _Out_   BOOLEAN*         OutForceTouchUpEdge
 )
 {
     PDEVICE_CONTEXT pCtx = DeviceContext;
@@ -549,4 +551,26 @@ PTPCore_ProcessFrame(
     }
 
     AmtContactPoolCheckInvariants(pCtx->ActiveContacts);
+
+    // Force-touch: fixed pressure threshold, gated on the integrated
+    // button being held (a "harder press after the click" - matches
+    // the physical gesture of pushing further past the click trip).
+    // Uses the RAW frame directly, not the matched/palm-filtered
+    // candidate set: a genuinely harder press can shrink the reported
+    // touch ellipse (see the click-Confidence audit note above this
+    // function) and we don't want that same effect to also hide the
+    // force-touch condition it causes.
+    BOOLEAN forceTouchNow = FALSE;
+    if (ButtonDown) {
+        for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
+            if (RawFrame->Contacts[fi].Pressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
+                forceTouchNow = TRUE;
+                break;
+            }
+        }
+    }
+
+    *OutForceTouchDownEdge = forceTouchNow && !pCtx->ForceTouchActive;
+    *OutForceTouchUpEdge   = !forceTouchNow && pCtx->ForceTouchActive;
+    pCtx->ForceTouchActive = forceTouchNow;
 }
