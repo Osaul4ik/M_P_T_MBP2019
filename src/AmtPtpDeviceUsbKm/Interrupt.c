@@ -170,13 +170,20 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     PTP_CORE_FRAME coreFrame;
     BOOLEAN forceTouchDownEdge = FALSE;
     BOOLEAN forceTouchUpEdge   = FALSE;
+    BOOLEAN buttonClickReport  = FALSE;
     PTPCore_ProcessFrame(pCtx, &rawFrame, Now.QuadPart, buttonSnapshot,
-                         &coreFrame, &forceTouchDownEdge, &forceTouchUpEdge);
+                         &coreFrame, &forceTouchDownEdge, &forceTouchUpEdge,
+                         &buttonClickReport);
 
     // Serialize to PTP_REPORT
     AmtSerializeCoreFrameToReport(&coreFrame, &Report);
 
-    if (buttonSnapshot) {
+    // Arbitrated by PTPCore (Ptpcore.c click arbitration), not the raw
+    // button bit directly: withheld while a press is still deciding
+    // between an ordinary click and a force touch, and permanently
+    // suppressed for presses that resolve to force touch - so a force
+    // touch never also reports a regular click underneath it.
+    if (buttonClickReport) {
         Report.IsButtonClicked = TRUE;
     }
 
