@@ -22,6 +22,18 @@
 #define SMOOTHING_ALPHA_NUM  5
 #define SMOOTHING_ALPHA_DEN  8
 
+// Scroll delta scale: reports ~70% of the raw per-frame delta during
+// gestureActive frames (SMOOTHING_ALPHA_* has nothing to do with this -
+// EMA is skipped entirely on gesture frames, see AUDIT comment below).
+// NOT a resurrection of EMA lag: this scales the delta between
+// Contact->ReportX/Y and the incoming raw sample once, per frame, then
+// commits the scaled result as the new ReportX/Y baseline - it never
+// blends toward a stale previous value or "catches up" over multiple
+// frames, so it does not reintroduce the brake-before-stop artifact the
+// EMA skip above was written to fix.
+#define SCROLL_SCALE_NUM  7
+#define SCROLL_SCALE_DEN  10
+
 static inline USHORT
 AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal)
 {
@@ -29,6 +41,20 @@ AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal)
                    (INT)prevVal * (SMOOTHING_ALPHA_DEN - SMOOTHING_ALPHA_NUM)) /
                   SMOOTHING_ALPHA_DEN;
     return (USHORT)(blended < 0 ? 0 : blended);
+}
+
+// Scales one axis of a gesture-frame delta by SCROLL_SCALE_NUM/DEN using a
+// carried remainder (Bresenham-style error term), so slow, deliberate
+// scroll motion (e.g. dx=1 unit/frame) still moves the cursor instead of
+// being zeroed out by integer truncation (1 * 7 / 10 == 0 without this).
+// *Rem must be reset to 0 by the caller whenever gestureActive is FALSE.
+static inline SHORT
+AmtScaleScrollDelta(_In_ INT rawDelta, _Inout_ LONG* Rem)
+{
+    INT numerator = rawDelta * SCROLL_SCALE_NUM + *Rem;
+    INT scaled    = numerator / SCROLL_SCALE_DEN;       // truncates toward 0
+    *Rem = numerator - scaled * SCROLL_SCALE_DEN;        // exact remainder
+    return (SHORT)scaled;
 }
 
 // ContactID issuance: pre-increment, 0 reserved, never reused while warm.
@@ -79,6 +105,8 @@ AmtContactBirth(
     c->WasInGesture       = FALSE;
     c->PendingFirstSample = TRUE;
     c->RetapSeeded        = FALSE; // plain birth - no seeded baseline to preserve
+    c->ScrollRemX          = 0;
+    c->ScrollRemY          = 0;
     c->LastSlotHint        = slotHint;
     c->LastSeenQpc         = 0; // set by first AmtContactUpdate call
     c->FramesAlive         = 1; // birth frame counts as 1
@@ -112,6 +140,8 @@ AmtContactBirthWithRetapSmoothing(
     c->WasInGesture       = FALSE;
     c->PendingFirstSample = TRUE;
     c->RetapSeeded        = TRUE; // preserve seed on first update
+    c->ScrollRemX          = 0;
+    c->ScrollRemY          = 0;
     c->LastSlotHint        = slotHint;
     c->LastSeenQpc         = 0;
     c->FramesAlive         = 1;
@@ -299,13 +329,39 @@ AmtContactCommitSample(
             gestureActive;
 
         if (skipEma) {
-            repX = candX;
-            repY = candY;
+            if (gestureActive) {
+                // Scroll frame: report ReportX/Y + 70% of the raw delta,
+                // not the raw position itself. Baseline for the *next*
+                // frame's delta is this scaled result (Contact->ReportX/Y
+                // below), so scaling never compounds across frames - only
+                // the current frame's motion is reduced, same as the raw
+                // path was doing before this change, just at 70% rate.
+                INT dx = (INT)candX - (INT)Contact->ReportX;
+                INT dy = (INT)candY - (INT)Contact->ReportY;
+
+                LONG newX = (LONG)Contact->ReportX + AmtScaleScrollDelta(dx, &Contact->ScrollRemX);
+                LONG newY = (LONG)Contact->ReportY + AmtScaleScrollDelta(dy, &Contact->ScrollRemY);
+
+                repX = (USHORT)(newX < 0 ? 0 : newX);
+                repY = (USHORT)(newY < 0 ? 0 : newY);
+            } else {
+                // Not a scroll frame (first sample, or solo frame right
+                // after a gesture ends) - report the raw position as
+                // before, and drop any leftover scroll remainder so it
+                // can't leak into a later, unrelated scroll gesture.
+                repX = candX;
+                repY = candY;
+
+                Contact->ScrollRemX = 0;
+                Contact->ScrollRemY = 0;
+            }
 
             if (Contact->WasInGesture && aliveCountIsOne) {
                 Contact->WasInGesture = FALSE;
             }
         } else {
+            Contact->ScrollRemX = 0;
+            Contact->ScrollRemY = 0;
             repX = AmtContactSmoothCoord(candX, Contact->ReportX);
             repY = AmtContactSmoothCoord(candY, Contact->ReportY);
         }
