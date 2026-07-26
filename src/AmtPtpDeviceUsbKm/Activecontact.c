@@ -19,7 +19,7 @@
 // Windows' own PTP stack still derives the scroll gesture itself from
 // these contacts, so this stays within the PTP contract.
 #define XY_DEADZONE_UNITS_GESTURE   1
-#define SMOOTHING_ALPHA_NUM  5
+#define SMOOTHING_ALPHA_NUM  3
 #define SMOOTHING_ALPHA_DEN  8
 
 // Scroll delta scale: reports ~70% of the raw per-frame delta during
