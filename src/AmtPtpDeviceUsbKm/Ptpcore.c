@@ -12,13 +12,13 @@
 // latches ForceTouchDragLockout for the rest of the press: once the user
 // is visibly dragging (e.g. moving a window) after a hard tap, a deeper
 // press must not fire a synthetic right-click on top of that drag.
-#define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 150
+#define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 80
 
 // How long PTPCore will wait, once the button goes down, for the press
 // to either cross FORCE_TOUCH_PRESSURE_THRESHOLD or start receding
 // before giving up and committing it as an ordinary click. "Some time"
 // per the design note - tunable.
-#define CLICK_ARBITRATION_TIMEOUT_MS 120
+#define CLICK_ARBITRATION_TIMEOUT_MS 80
 
 // A press is considered to be receding once its pressure falls this many
 // raw units below the highest value seen so far this press (rather than
