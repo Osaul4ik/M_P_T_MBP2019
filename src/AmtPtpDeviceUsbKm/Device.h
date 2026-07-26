@@ -38,6 +38,17 @@ typedef struct _DEVICE_CONTEXT
     // Interrupt.c uses to pulse the synthetic right-click mouse report.
     BOOLEAN ForceTouchActive;
 
+    // Force-touch drag lockout (Ptpcore.c). Anchor position latched at
+    // the button-down edge; if a contact wanders past
+    // FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the anchor while the button
+    // stays held, ForceTouchDragLockout latches TRUE for the rest of the
+    // press - a hard-tap-then-drag (e.g. moving a window) must never
+    // trip a synthetic right-click mid-drag. Reset on button release.
+    BOOLEAN ForceTouchAnchorValid;
+    USHORT  ForceTouchAnchorX;
+    USHORT  ForceTouchAnchorY;
+    BOOLEAN ForceTouchDragLockout;
+
     // Scan time
     LARGE_INTEGER LastReportTime;
 
