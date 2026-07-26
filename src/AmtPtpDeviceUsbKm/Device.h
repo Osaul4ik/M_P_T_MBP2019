@@ -68,9 +68,9 @@ typedef struct _DEVICE_CONTEXT
     BOOLEAN ForceTouchDragLockout;
 
     // Click arbitration (Ptpcore.c) - see CLICK_ARBITRATION_STATE above.
-    // PrevPressure/StartQpc are only meaningful while State == PENDING.
+    // PeakPressure/StartQpc are only meaningful while State == PENDING.
     CLICK_ARBITRATION_STATE ClickArbitrationState;
-    USHORT                  ClickArbitrationPrevPressure;
+    USHORT                  ClickArbitrationPeakPressure;
     LONGLONG                ClickArbitrationStartQpc;
 
     // Scan time
