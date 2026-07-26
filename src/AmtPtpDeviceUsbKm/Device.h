@@ -32,6 +32,12 @@ typedef struct _DEVICE_CONTEXT
     // drives the forced-rebirth anti-jitter-snap workaround.
     BOOLEAN PrevButtonClicked;
 
+    // Force-touch latch (Ptpcore.c). TRUE while some contact's pressure
+    // is above FORCE_TOUCH_PRESSURE_THRESHOLD and the button is held;
+    // compared against the previous frame to derive the down/up edges
+    // Interrupt.c uses to pulse the synthetic right-click mouse report.
+    BOOLEAN ForceTouchActive;
+
     // Scan time
     LARGE_INTEGER LastReportTime;
 
