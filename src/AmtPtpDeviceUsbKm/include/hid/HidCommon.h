@@ -37,3 +37,16 @@
 
 #define BEGIN_COLLECTION 0xa1
 #define END_COLLECTION   0xc0
+
+// Force-touch -> synthetic right-click. This threshold operates on the
+// SAME raw TRACKPAD_FINGER.pressure ADC units used for the (currently
+// unused) BCM5974_PARAM.p {SN_PRESSURE, 0, 300} quality range in
+// AppleDefinition.h - i.e. the field is understood to range ~0-300.
+// >200 was chosen as a fixed, conservative fraction (~2/3) of that
+// range: comfortably above ordinary click-level pressure (the
+// mechanical/strain-gauge click trip itself happens well below the
+// sensor's saturation) while still reachable by a deliberate extra-hard
+// press. NOT calibrated against real hardware traces for this specific
+// panel - if it fires too early/late in testing, this is the single
+// knob to retune.
+#define FORCE_TOUCH_PRESSURE_THRESHOLD 200
