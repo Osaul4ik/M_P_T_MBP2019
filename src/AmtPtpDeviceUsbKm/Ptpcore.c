@@ -685,22 +685,20 @@ PTPCore_ProcessFrame(
     *OutButtonClickReport =
         (pCtx->ClickArbitrationState == CLICK_ARBITRATION_HARD_TAP);
 
-    // Force-touch: fixed pressure threshold, gated on the integrated
-    // button being held (a "harder press after the click" - matches
-    // the physical gesture of pushing further past the click trip) AND
-    // click arbitration not having already committed this press to an
-    // ordinary hard-tap click - once it has, force-touch is permanently
-    // disabled for the rest of the press so the two never both fire for
-    // one press. Deliberately NOT gated on the drag lockout here: that
-    // lockout only feeds the arbitration decision above (movement
-    // before the threshold was ever crossed means "hard tap, not force
-    // touch"). Once FORCE_TOUCH is latched, continuing to move the
-    // finger is a right-click-drag and must keep the synthetic
-    // right-click held, not release it.
-    BOOLEAN forceTouchNow = FALSE;
-    if (ButtonDown && pCtx->ClickArbitrationState != CLICK_ARBITRATION_HARD_TAP) {
-        forceTouchNow = framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD;
-    }
+    // Force-touch: once click arbitration has latched FORCE_TOUCH for
+    // this press, it stays engaged unconditionally until the button is
+    // released - it does NOT re-check pressure frame-to-frame anymore.
+    // Pressure naturally wobbles while the finger holds/drags (sensor
+    // noise, grip changes), and re-testing it here every frame caused a
+    // spurious re-trigger: a momentary dip back under the threshold
+    // dropped ForceTouchActive (sending a synthetic right-click-UP),
+    // then the next frame's recovery sent a right-click-DOWN again -
+    // a second, unwanted force-touch trigger mid-press. A real re-trigger
+    // must only happen after a genuine release (button up resets
+    // ClickArbitrationState to IDLE, so the next press starts PENDING
+    // and must cross the threshold again on its own).
+    BOOLEAN forceTouchNow =
+        ButtonDown && (pCtx->ClickArbitrationState == CLICK_ARBITRATION_FORCE_TOUCH);
 
 
     *OutForceTouchDownEdge = forceTouchNow && !pCtx->ForceTouchActive;
