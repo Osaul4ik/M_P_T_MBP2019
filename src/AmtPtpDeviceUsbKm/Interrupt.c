@@ -168,7 +168,10 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     // PTPCore orchestration
     PTP_CORE_FRAME coreFrame;
-    PTPCore_ProcessFrame(pCtx, &rawFrame, Now.QuadPart, buttonSnapshot, &coreFrame);
+    BOOLEAN forceTouchDownEdge = FALSE;
+    BOOLEAN forceTouchUpEdge   = FALSE;
+    PTPCore_ProcessFrame(pCtx, &rawFrame, Now.QuadPart, buttonSnapshot,
+                         &coreFrame, &forceTouchDownEdge, &forceTouchUpEdge);
 
     // Serialize to PTP_REPORT
     AmtSerializeCoreFrameToReport(&coreFrame, &Report);
@@ -188,6 +191,39 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     WdfRequestSetInformation(Request, sizeof(PTP_REPORT));
     WdfRequestComplete(Request, STATUS_SUCCESS);
+
+    // Force-touch -> synthetic right-click, delivered on the SEPARATE
+    // Mouse top-level collection (REPORTID_STANDARDMOUSE) - see
+    // AAPL_WELLSPRING_T2_FORCETOUCH_MOUSE_TLC. This never touches the
+    // PTP_REPORT/digitizer path above; it opportunistically claims a
+    // second pending IOCTL_HID_READ_REPORT request off the SAME manual
+    // InputQueue (mouhid.sys keeps its own read continuously queued
+    // there, same as the touch/digitizer client does). If none is
+    // available yet this pass, the edge is simply missed - not fatal,
+    // but worth knowing about if testing shows missed right-clicks:
+    // the fix would be a short retry/deferred-completion path rather
+    // than assuming a second request is always ready here.
+    if (forceTouchDownEdge || forceTouchUpEdge) {
+        WDFREQUEST mouseRequest;
+        Status = WdfIoQueueRetrieveNextRequest(pCtx->InputQueue, &mouseRequest);
+        if (NT_SUCCESS(Status)) {
+            WDFMEMORY mouseRequestMemory;
+            Status = WdfRequestRetrieveOutputMemory(mouseRequest, &mouseRequestMemory);
+            if (NT_SUCCESS(Status)) {
+                PTP_FORCETOUCH_MOUSE_REPORT mouseReport;
+                RtlZeroMemory(&mouseReport, sizeof(mouseReport));
+                mouseReport.ReportID = REPORTID_STANDARDMOUSE;
+                mouseReport.Button2  = forceTouchDownEdge ? 1 : 0; // 0 on the up edge
+
+                Status = WdfMemoryCopyFromBuffer(
+                    mouseRequestMemory, 0, (PVOID)&mouseReport, sizeof(mouseReport));
+                if (NT_SUCCESS(Status)) {
+                    WdfRequestSetInformation(mouseRequest, sizeof(mouseReport));
+                }
+            }
+            WdfRequestComplete(mouseRequest, Status);
+        }
+    }
 }
 
 BOOLEAN
