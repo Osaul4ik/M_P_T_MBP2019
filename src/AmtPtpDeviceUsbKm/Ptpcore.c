@@ -258,7 +258,31 @@ PTPCore_ProcessFrame(
     AmtGestureSessionUpdate(&pCtx->GestureSession, aliveCount);
     BOOLEAN gestureThisFrame = AmtGestureIsMultiFingerFrame(aliveCount);
 
-    
+    // BUG FIX (phantom UP from the bottom/edge hard cutoff): AmtMatchCorrespond
+    // never matches a PALM_LOCAL candidate to a pool entry (Match.c), so a
+    // contact that's still actively tracked and simply drags into the edge
+    // dead zone looks, to Phase A below, exactly like a genuine unmatched
+    // (lifted) contact - producing a real CONTACT_PHASE_UP while the finger
+    // is still down. Same failure class palmSuppressedFrame already exists
+    // to prevent for PALM_LARGE. Build the set of pool slots that have a
+    // PalmLocal candidate this frame (matched by LastSlotHint, same
+    // technique Match.c's tip-drop bridge already uses) so Phase A can
+    // freeze them instead of killing them.
+    BOOLEAN palmLocalFrozen[MAX_CONTACTS] = { 0 };
+    for (UCHAR ci = 0; ci < candidates.Count; ci++) {
+        if (!candidates.Candidates[ci].PalmLocal)
+            continue;
+
+        for (size_t p = 0; p < MAX_CONTACTS; p++) {
+            if (pCtx->ActiveContacts[p].State == CONTACT_ACTIVE &&
+                pCtx->ActiveContacts[p].LastSlotHint == candidates.Candidates[ci].SlotIndex)
+            {
+                palmLocalFrozen[p] = TRUE;
+                break;
+            }
+        }
+    }
+
     // Drain deferred lift-offs
     AmtCoreDrainOverflow(pCtx, OutResult);
 
@@ -268,21 +292,24 @@ PTPCore_ProcessFrame(
     for (UCHAR u = 0; u < matchResult.UnmatchedCount; u++) {
         size_t p = matchResult.UnmatchedPoolIndices[u];
 
-        if (palmSuppressedFrame) {
+        if (palmSuppressedFrame || palmLocalFrozen[p]) {
             // The raw frame still reports a contact here - this finger
             // never actually left the pad, it just got classified as
-            // palm this frame (or a prior frame, sticky PalmDetected).
-            // Do NOT kill it: that would emit a real CONTACT_PHASE_UP
-            // for a contact that's still physically down, and Windows'
-            // PTP stack reads a fast DOWN->UP with no real movement as
-            // a tap/double-tap. Instead freeze it in place - same
+            // palm (PALM_LARGE) or edge/bottom dead zone (PALM_LOCAL)
+            // this frame (or, for PALM_LARGE, a prior frame via sticky
+            // PalmDetected). Do NOT kill it: that would emit a real
+            // CONTACT_PHASE_UP for a contact that's still physically
+            // down, and Windows' PTP stack reads a fast DOWN->UP with no
+            // real movement as a tap/double-tap (or, mid-drag, as an
+            // unwanted drag-end). Instead freeze it in place - same
             // ContactID, same last-known position, TipSwitch=1 (still
             // "down" per protocol) but Confidence=0 so Windows discards
             // it for pointer/gesture purposes. Pool entry stays
             // CONTACT_ACTIVE untouched; it only gets a real UP once the
-            // raw frame genuinely reports zero contacts, at which point
-            // palmSuppressedFrame is FALSE again and this branch is
-            // skipped, falling through to the normal kill path below.
+            // raw frame genuinely reports zero contacts for this slot, at
+            // which point both palmSuppressedFrame and palmLocalFrozen[p]
+            // are FALSE again and this branch is skipped, falling through
+            // to the normal kill path below.
             AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
                                pCtx->ActiveContacts[p].ReportX,
                                pCtx->ActiveContacts[p].ReportY,
