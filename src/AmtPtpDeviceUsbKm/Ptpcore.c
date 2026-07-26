@@ -18,7 +18,7 @@
 // to either cross FORCE_TOUCH_PRESSURE_THRESHOLD or start receding
 // before giving up and committing it as an ordinary click. "Some time"
 // per the design note - tunable.
-#define CLICK_ARBITRATION_TIMEOUT_MS 80
+#define CLICK_ARBITRATION_TIMEOUT_MS 60
 
 // A press is considered to be receding once its pressure falls this many
 // raw units below the highest value seen so far this press (rather than
