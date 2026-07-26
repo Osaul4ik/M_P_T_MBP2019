@@ -90,6 +90,49 @@ C_ASSERT(1 < 2);  // USBMSG_TYPE5: um_switch_idx=1 < um_size=2
 #define BCM5974_WELLSPRING_MODE_READ_REQUEST_ID		1
 #define BCM5974_WELLSPRING_MODE_WRITE_REQUEST_ID	9
 
+/* ----------------------------------------------------------------------
+ * Haptic feedback (Taptic actuator) - SET_REPORT mechanism.
+ *
+ * NOT reverse-engineered by us. This is the exact byte-for-byte protocol
+ * used by two independent, real, working implementations:
+ *   - Linux: drivers/hid/hid-magicmouse.c, magicmouse_setup_feedback()
+ *   - Windows: vitoplantamura/MagicTrackpad2ForWindows,
+ *     AmtPtpDeviceUsbUm/Device.c, AmtPtpSetHapticFeedback()
+ * Both target the external Magic Trackpad 2 (USB_DEVICE_ID_APPLE_MAGICTRACKPAD2),
+ * NOT the internal T2-bridged trackpad this driver talks to. The T2 chip
+ * runs a close relative of the same Force-Touch/actuator firmware family,
+ * so this is a reasonable starting hypothesis (hence why it's worth
+ * trying), but the following are UNVERIFIED for MacBookPro16,1 and must
+ * be confirmed on real hardware:
+ *   - HAPTIC_INTERFACE_INDEX (2 on Magic Trackpad 2 - the actuator is a
+ *     separate USB interface from the trackpad/HID-multitouch one; the
+ *     internal T2 composite device may number it differently);
+ *   - whether REPORTID_HAPTIC_CLICK/RELEASE (0x22/0x23) are even valid
+ *     report IDs on this device at all;
+ *   - the FeedbackClick/FeedbackRelease 24-bit values are an opaque,
+ *     undocumented "feedback configuration" blob on BOTH reference
+ *     implementations above - nobody has published what each byte means
+ *     (intensity vs. duration vs. waveform id). Tuning "stronger" is
+ *     trial and error, not a documented formula.
+ * If the vibration doesn't fire at all, the first things to try are a
+ * different HAPTIC_INTERFACE_INDEX and, if that also fails, accept that
+ * the internal T2 trackpad may simply use a different actuator protocol
+ * than Magic Trackpad 2's.
+ * ---------------------------------------------------------------------- */
+#define HAPTIC_FEEDBACK_REQUEST_ID     9       /* HID SET_REPORT, same request # as BCM5974_WELLSPRING_MODE_WRITE_REQUEST_ID */
+#define HAPTIC_INTERFACE_INDEX         2       /* wIndex - UNVERIFIED for T2, see comment above */
+#define HAPTIC_REPORTID_CLICK          0x22    /* wValue = (HID_REPORT_TYPE_FEATURE << 8) | ReportId */
+#define HAPTIC_REPORTID_RELEASE        0x23
+#define HAPTIC_REPORT_TYPE_FEATURE     0x0300  /* HID Feature report, per USB HID class spec */
+
+/* Defaults straight from both reference implementations - same numeric
+ * defaults happen to differ slightly between the two (Linux module
+ * default is 0x060617/0x000014, the Windows fork's registry default is
+ * 0x08081E/0x020218); either is a safe starting point to confirm the
+ * actuator responds at all before tuning "stronger for force touch". */
+#define HAPTIC_FEEDBACK_CLICK_DEFAULT    0x08081EUL
+#define HAPTIC_FEEDBACK_RELEASE_DEFAULT  0x020218UL
+
 /* Trackpad finger data size, empirically at least ten fingers */
 #define MAX_FINGERS		16
 #define MAX_FINGER_ORIENTATION	16384
