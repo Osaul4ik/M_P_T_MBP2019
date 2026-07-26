@@ -154,6 +154,23 @@
 			USAGE, 0x31, /* Usage: Y */ \
 			LOGICAL_MINIMUM, 0x81, /* -127 */ \
 			LOGICAL_MAXIMUM, 0x7f, /* 127 */ \
+			/* AUDIT FIX (cursor teleport to bottom-right on force */ \
+			/* touch): Unit/Unit Exponent/Physical Min/Max are HID */ \
+			/* GLOBAL items - they persist across top-level */ \
+			/* collection boundaries, not just within one. The PTP */ \
+			/* TLC above leaves Unit = Time(Second), Unit Exponent */ \
+			/* = -4, and Physical Maximum = 0xffffffff in effect */ \
+			/* from its Scan Time field and never resets them before */ \
+			/* this (later) collection. Without an explicit reset */ \
+			/* here, X/Y silently inherited that huge bogus physical */ \
+			/* range, which is what drove the cursor to the extreme */ \
+			/* (bottom-right) logical position. Same reset already */ \
+			/* used at the end of AAPL_WELLSPRING_T2_PTP_FINGER_ */ \
+			/* COLLECTION_1/2 above, for the identical reason. */ \
+			PHYSICAL_MINIMUM, 0x00, \
+			PHYSICAL_MAXIMUM, 0x00, \
+			UNIT_EXPONENT, 0x00, \
+			UNIT, 0x00, \
 			REPORT_SIZE, 0x08, \
 			REPORT_COUNT, 0x02, \
 			INPUT, 0x06, /* Input: (Data, Var, Rel) - always sent as 0 */ \
