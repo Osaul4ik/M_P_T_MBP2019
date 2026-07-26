@@ -80,11 +80,25 @@ AmtPalmClassify(
     if (major > 130) {
         INT xRange   = DevInfo->x.max - DevInfo->x.min;
         INT yRange   = DevInfo->y.max - DevInfo->y.min;
-        INT edgePctX = xRange / 28;
-        INT edgePctY = yRange / 28;
 
-        if (NormX < edgePctX || NormX > (xRange - edgePctX) ||
-            NormY < edgePctY || NormY > (yRange - edgePctY))
+        // Per-side edge deadzone divisors (smaller divisor = wider zone).
+        // Top stays tight - legitimate taps/scroll gestures land close to
+        // the top edge often enough that widening it would cost real
+        // input. Left/right are widened (palm/side-of-hand contact is
+        // more likely there), and bottom is widened the most, since the
+        // heel of the hand rests closest to the bottom edge.
+        #define EDGE_DIVISOR_TOP     28
+        #define EDGE_DIVISOR_LEFT    12
+        #define EDGE_DIVISOR_RIGHT   12
+        #define EDGE_DIVISOR_BOTTOM   6
+
+        INT edgeTop    = yRange / EDGE_DIVISOR_TOP;
+        INT edgeLeft   = xRange / EDGE_DIVISOR_LEFT;
+        INT edgeRight  = xRange / EDGE_DIVISOR_RIGHT;
+        INT edgeBottom = yRange / EDGE_DIVISOR_BOTTOM;
+
+        if (NormX < edgeLeft || NormX > (xRange - edgeRight) ||
+            NormY < edgeTop  || NormY > (yRange - edgeBottom))
             score += 10;
     }
 
