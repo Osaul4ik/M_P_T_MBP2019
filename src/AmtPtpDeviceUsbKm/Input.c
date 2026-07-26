@@ -50,6 +50,8 @@ AmtInputParseFrame(
 
         INT major = AmtInputRawToInteger(f->touch_major);
         INT minor = AmtInputRawToInteger(f->touch_minor);
+        INT pressure = AmtInputRawToInteger(f->pressure);
+        if (pressure < 0) pressure = 0; // clamp - negative pressure is not meaningful
 
         // No contact at all - InputAdapter does not debounce this; a
         // downstream layer with track history may choose to bridge it.
@@ -69,6 +71,7 @@ AmtInputParseFrame(
         rc->Y         = (USHORT)ny;
         rc->Major     = (USHORT)major;
         rc->Minor     = (USHORT)minor;
+        rc->Pressure  = (USHORT)pressure;
         rc->Origin    = (UCHAR)f->origin;
         emitted++;
     }
