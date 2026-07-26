@@ -153,14 +153,20 @@ AmtContactExpireGrace(_Inout_ PACTIVE_CONTACT Pool, _In_ size_t index);
 
 // 2-pass deadzone evaluator. Pass 1: read-only check vs HystX/Y.
 // Pass 2 (in AmtContactUpdate): commits HystX/Y, then EMA blends.
+// ThresholdUnits <= 0 always passes (deadzone disabled).
 BOOLEAN
 AmtContactEvaluateDeadzone(
     _In_ const ACTIVE_CONTACT* Contact,
     _In_ USHORT                candX,
-    _In_ USHORT                candY
+    _In_ USHORT                candY,
+    _In_ INT                   ThresholdUnits
 );
 
 // Per-frame ACTIVE contact update (Phase C). Deadzone + EMA.
+// GestureActive (aliveCount>=2 this frame) selects a smaller deadzone
+// threshold so genuine multi-finger movement (2-finger scroll, etc.)
+// isn't gated as unevenly per-contact as solo movement - see
+// XY_DEADZONE_UNITS_GESTURE in ActiveContact.c for rationale.
 VOID
 AmtContactUpdate(
     _Inout_ PACTIVE_CONTACT Contact,
@@ -169,6 +175,7 @@ AmtContactUpdate(
     _In_    USHORT          slotHint,
     _In_    LONGLONG        nowQpc,
     _In_    BOOLEAN         aliveCountIsOne,
+    _In_    BOOLEAN         gestureActive,
     _Out_   USHORT*         OutX,
     _Out_   USHORT*         OutY
 );
