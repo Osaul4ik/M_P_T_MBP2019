@@ -258,6 +258,7 @@ AmtContactCommitSample(
     _In_    USHORT          candY,
     _In_    BOOLEAN         passedDeadzone,
     _In_    BOOLEAN         aliveCountIsOne,
+    _In_    BOOLEAN         gestureActive,
     _In_    BOOLEAN         commitIsRetapSeededFirstSample,
     _Out_   USHORT*         OutX,
     _Out_   USHORT*         OutY
@@ -272,9 +273,30 @@ AmtContactCommitSample(
         Contact->HystX = candX;
         Contact->HystY = candY;
 
+        // AUDIT (scroll speed + end-of-inertia glitch): EMA smoothing
+        // (SMOOTHING_ALPHA_NUM/DEN) blends 62.5% raw / 37.5% previous
+        // report every frame. During solo pointer movement that's a
+        // reasonable jitter filter. During 2(+)-finger movement it does
+        // two things Windows' own PTP scroll/inertia math doesn't
+        // expect: (1) it permanently damps the reported per-frame delta
+        // below the finger's real displacement, which reads as slower
+        // scrolling than the physical gesture; (2) after the finger
+        // decelerates and stops, the filter keeps asymptotically
+        // creeping toward the final raw position for a few more frames
+        // even though the finger is no longer moving - Windows samples
+        // the trailing frames before lift-off to seed inertia velocity,
+        // so this creep shows up as a brief, inconsistent "hitch" right
+        // at the transition into momentum scrolling instead of a clean
+        // stop. Reporting the true raw (deadzone-committed) position
+        // during gesture frames removes both artifacts - Windows' own
+        // stack already does its own filtering/velocity estimation on
+        // genuine digitizer input, which is what PTP expects it to
+        // receive; this doesn't add any scroll logic of our own, only
+        // stops hiding the real finger trajectory from it.
         BOOLEAN skipEma =
             (Contact->PendingFirstSample && !commitIsRetapSeededFirstSample) ||
-            (Contact->WasInGesture && aliveCountIsOne);
+            (Contact->WasInGesture && aliveCountIsOne) ||
+            gestureActive;
 
         if (skipEma) {
             repX = candX;
@@ -336,7 +358,7 @@ AmtContactUpdate(
     }
 
     AmtContactCommitSample(Contact, rawX, rawY, passed, aliveCountIsOne,
-                           retapSeededFirstSample, OutX, OutY);
+                           gestureActive, retapSeededFirstSample, OutX, OutY);
 
     Contact->LastSlotHint = slotHint;
     Contact->LastSeenQpc  = nowQpc;
