@@ -27,14 +27,14 @@
 #define PALM_MIN_MAJOR  80   // мінімальний major для підозри на долоню
 #define PALM_MIN_MINOR  40   // мінімальний minor для підозри на долоню
 
-// Thin hard cutoff right at the physical bottom edge - the strip where
-// the heel of the hand rests against the laptop's chassis when leaning
-// on it. No real finger ever deliberately lands this close to the
-// physical edge, so this slice is rejected unconditionally, regardless
-// of size/shape. Kept narrow on purpose (large divisor = thin strip) -
-// this is NOT the same as the wider, size-gated scored zone below,
-// which still lets real small touches through further up from the edge.
-#define BOTTOM_HARD_CUTOFF_DIVISOR 16
+// Hard cutoff at the physical bottom edge - unconditional dead zone,
+// rejected regardless of size/shape (unlike the wider, size-gated
+// scored zone below, which only affects large/palm-shaped contacts).
+// yRangeFull / DIVISOR = zone height. DIVISOR=17 -> ~5.88% of pad
+// height (~1/17). This is NOT the same mechanism as the size-gated
+// scored zone below, which still lets real small touches through
+// further up from the edge.
+#define BOTTOM_HARD_CUTOFF_DIVISOR 17
 
 static inline INT
 AmtPalmRawToInteger(_In_ USHORT x)
