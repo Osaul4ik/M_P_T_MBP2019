@@ -34,7 +34,17 @@
 // height (~1/17). This is NOT the same mechanism as the size-gated
 // scored zone below, which still lets real small touches through
 // further up from the edge.
-#define BOTTOM_HARD_CUTOFF_DIVISOR 17
+//
+// BUG FIX (dead zone was landing at the physical TOP edge instead of
+// the bottom): NormY==0 is the physical bottom of the pad (nearest the
+// click hinge / palm-rest area) and NormY==yRangeFull is the physical
+// top (nearest the keyboard) - see the Y-axis normalization comment in
+// Input.c (AmtInputParseFrame: nyRaw = DevInfo->y.max - raw_y). The
+// cutoff below must therefore trigger on SMALL NormY, not large NormY.
+// The previous `NormY > (yRangeFull - yRangeFull / DIVISOR)` fired on
+// the opposite (top) edge, killing legitimate touches near the
+// keyboard while leaving the real palm-rest edge completely open.
+#define BOTTOM_HARD_CUTOFF_DIVISOR 15
 
 static inline INT
 AmtPalmRawToInteger(_In_ USHORT x)
@@ -52,7 +62,7 @@ AmtPalmClassify(
 )
 {
     INT yRangeFull = DevInfo->y.max - DevInfo->y.min;
-    if (NormY > (yRangeFull - yRangeFull / BOTTOM_HARD_CUTOFF_DIVISOR))
+    if (NormY < (yRangeFull / BOTTOM_HARD_CUTOFF_DIVISOR))
         return PALM_LOCAL;
 
     INT major = AmtPalmRawToInteger(Major);
@@ -103,18 +113,28 @@ AmtPalmClassify(
         // transition band: only major>130 contacts get scored, so a
         // normal small fingertip passing through is never affected,
         // only wide/flat palm-shaped ones.
-        #define EDGE_DIVISOR_TOP     28
+        //
+        // BUG FIX: NormY grows from the physical BOTTOM (0) to the
+        // physical TOP (yRange) - see the comment on
+        // BOTTOM_HARD_CUTOFF_DIVISOR above. `NormY < edge*` therefore
+        // tests the bottom edge and `NormY > (yRange - edge*)` tests
+        // the top edge - the OPPOSITE of what the old EDGE_DIVISOR_TOP/
+        // EDGE_DIVISOR_BOTTOM names and values implied. Swapped the two
+        // values (not the comparisons) so the wide zone still lands on
+        // the physical bottom and the tight zone still lands on the
+        // physical top, matching the original intent described above.
+        #define EDGE_DIVISOR_TOP     6
         #define EDGE_DIVISOR_LEFT    12
         #define EDGE_DIVISOR_RIGHT   12
-        #define EDGE_DIVISOR_BOTTOM   6
+        #define EDGE_DIVISOR_BOTTOM  28
 
-        INT edgeTop    = yRange / EDGE_DIVISOR_TOP;
+        INT edgeBottom = yRange / EDGE_DIVISOR_BOTTOM;
         INT edgeLeft   = xRange / EDGE_DIVISOR_LEFT;
         INT edgeRight  = xRange / EDGE_DIVISOR_RIGHT;
-        INT edgeBottom = yRange / EDGE_DIVISOR_BOTTOM;
+        INT edgeTop    = yRange / EDGE_DIVISOR_TOP;
 
-        if (NormX < edgeLeft || NormX > (xRange - edgeRight) ||
-            NormY < edgeTop  || NormY > (yRange - edgeBottom))
+        if (NormX < edgeLeft   || NormX > (xRange - edgeRight) ||
+            NormY < edgeBottom || NormY > (yRange - edgeTop))
             score += 10;
     }
 
