@@ -37,10 +37,12 @@
 static inline USHORT
 AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal)
 {
+    // rawVal/prevVal are USHORT (>=0) and both SMOOTHING_ALPHA_* coefficients
+    // are positive, so blended is always >= 0 - no lower-bound clamp needed.
     INT blended = ((INT)rawVal * SMOOTHING_ALPHA_NUM +
                    (INT)prevVal * (SMOOTHING_ALPHA_DEN - SMOOTHING_ALPHA_NUM)) /
                   SMOOTHING_ALPHA_DEN;
-    return (USHORT)(blended < 0 ? 0 : blended);
+    return (USHORT)blended;
 }
 
 // Scales one axis of a gesture-frame delta by SCROLL_SCALE_NUM/DEN using a
@@ -61,7 +63,15 @@ AmtScaleScrollDelta(_In_ INT rawDelta, _Inout_ LONG* Rem)
 static inline ULONG
 AmtContactAssignId(_Inout_ ULONG* NextContactId)
 {
-    return ++(*NextContactId);
+    ULONG id = ++(*NextContactId);
+    if (id == 0) {
+        // Wrapped around ULONG_MAX -> 0. 0 is reserved, so skip it - this
+        // keeps the "never reused while warm" invariant true even in the
+        // (practically unreachable) case of billions of births with no
+        // D0Entry reset in between.
+        id = ++(*NextContactId);
+    }
+    return id;
 }
 
 VOID
@@ -342,8 +352,15 @@ AmtContactCommitSample(
                 LONG newX = (LONG)Contact->ReportX + AmtScaleScrollDelta(dx, &Contact->ScrollRemX);
                 LONG newY = (LONG)Contact->ReportY + AmtScaleScrollDelta(dy, &Contact->ScrollRemY);
 
-                repX = (USHORT)(newX < 0 ? 0 : newX);
-                repY = (USHORT)(newY < 0 ? 0 : newY);
+                // Clamp both ends before truncating to USHORT. The upper
+                // clamp can't be hit today (ReportX/Y plus the scaled
+                // scroll delta never reach 65535 given current coordinate
+                // ranges and MATCH_MAX_CONTINUATION_DELTA), but nothing
+                // enforced that - without this, a future change to either
+                // constant could silently wrap the reported position to a
+                // small value and teleport the cursor.
+                repX = (USHORT)(newX < 0 ? 0 : (newX > 0xFFFF ? 0xFFFF : newX));
+                repY = (USHORT)(newY < 0 ? 0 : (newY > 0xFFFF ? 0xFFFF : newY));
             } else {
                 // Not a scroll frame (first sample, or solo frame right
                 // after a gesture ends) - report the raw position as
