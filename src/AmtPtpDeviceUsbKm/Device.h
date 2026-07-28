@@ -68,16 +68,33 @@ typedef struct _DEVICE_CONTEXT
 
     // AUDIT FIX: force-touch synthetic right-click delivery (Interrupt.c)
     // opportunistically claims a SECOND pending IOCTL_HID_READ_REPORT
-    // request off InputQueue the moment a down/up edge fires. Previously,
-    // if no second request happened to be queued that exact pass, the
-    // edge was silently dropped - a real, reproducible way to lose a
-    // force-touch click depending on mouhid.sys's read cadence. These two
-    // fields let the edge survive to the next USB interrupt completion
-    // instead: PendingForceTouchEdgeValid latches "there's an undelivered
-    // edge", PendingForceTouchButton2State is the Button2 value (1=down,
-    // 0=up) it should carry once a request becomes available.
-    BOOLEAN PendingForceTouchEdgeValid;
-    BOOLEAN PendingForceTouchButton2State;
+    // request off InputQueue the moment a down/up edge fires. If no
+    // second request happened to be queued that exact pass, the edge
+    // used to be silently dropped - a real, reproducible way to lose a
+    // force-touch click depending on mouhid.sys's read cadence.
+    //
+    // AUDIT FIX #2: a single "last edge wins" latch (the previous design)
+    // only preserves the edge across ONE missed pass - if a second edge
+    // (the matching up, for a fast press-and-release) arrives before a
+    // mouse request becomes available, it overwrites the first and the
+    // pair collapses to "nothing happened" - Windows never sees Button2
+    // move at all, silently swallowing the whole click. A real FIFO fixes
+    // this: each edge is queued and delivered in order, one per available
+    // request per interrupt completion, so a fast down+up still reaches
+    // Windows as two reports (possibly a frame or two late) instead of
+    // cancelling out.
+    //
+    // Edges only ever fire on a genuine state change (Interrupt.c), so
+    // they strictly alternate down/up/down/up - capacity 4 (two full
+    // press-release cycles backed up) is a comfortable margin for any
+    // realistic mouhid.sys read cadence. On the vanishingly unlikely case
+    // the queue is completely full, the OLDEST pending edge is dropped to
+    // make room for the newest - a stale edge from several read-cycles
+    // ago is less relevant to the user than the most recent one.
+#define PENDING_FORCE_TOUCH_EDGE_CAPACITY 4
+    BOOLEAN PendingForceTouchEdgeQueue[PENDING_FORCE_TOUCH_EDGE_CAPACITY]; // each entry: Button2 state (1=down, 0=up)
+    UCHAR   PendingForceTouchEdgeHead;   // index of the oldest queued edge
+    UCHAR   PendingForceTouchEdgeCount;  // number of queued, undelivered edges
 
     // Click arbitration (Ptpcore.c) - see CLICK_ARBITRATION_STATE above.
     // PeakPressure/StartQpc are only meaningful while State == PENDING.
