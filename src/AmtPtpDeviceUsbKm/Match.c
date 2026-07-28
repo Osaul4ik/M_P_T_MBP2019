@@ -64,6 +64,20 @@ AmtMatchBuildCandidates(
     for (UCHAR i = 0; i < RawFrame->ContactCount; i++) {
         const RAW_CONTACT* rc = &RawFrame->Contacts[i];
 
+        // Birth-only suppression zone (bottom edge): a contact born
+        // this frame (Origin == 0 / identity break) inside the zone is
+        // ignored outright - never added as a candidate at all. This
+        // check is intentionally gated on Origin == 0 only: a contact
+        // that's already active and simply drags into this same area
+        // has Origin != 0 here and skips this branch entirely, so it
+        // keeps tracking normally regardless of position. Separate
+        // from AmtPalmClassify's shape-based rejection below, which is
+        // unaffected by this change.
+        if (rc->Origin == 0 &&
+            AmtPalmInBottomBirthZone(DevInfo, (INT)rc->Y)) {
+            continue;
+        }
+
         PALM_CLASS palm = AmtPalmClassify(rc->Major, rc->Minor, DevInfo,
                                           (INT)rc->X, (INT)rc->Y);
 
