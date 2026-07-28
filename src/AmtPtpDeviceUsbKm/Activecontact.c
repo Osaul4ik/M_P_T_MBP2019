@@ -251,6 +251,8 @@ AmtContactBirth(
     c->RetapSeeded        = FALSE; // plain birth - no seeded baseline to preserve
     c->ScrollRemX          = 0;
     c->ScrollRemY          = 0;
+    c->LastDeltaX          = 0;
+    c->LastDeltaY          = 0;
     c->LastSlotHint        = slotHint;
     c->LastSeenQpc         = 0; // set by first AmtContactUpdate call
     c->LastMajor           = 0;
@@ -289,6 +291,8 @@ AmtContactBirthWithRetapSmoothing(
     c->RetapSeeded        = TRUE; // preserve seed on first update
     c->ScrollRemX          = 0;
     c->ScrollRemY          = 0;
+    c->LastDeltaX          = 0;
+    c->LastDeltaY          = 0;
     c->LastSlotHint        = slotHint;
     c->LastSeenQpc         = 0;
     c->LastMajor           = 0;
@@ -551,6 +555,18 @@ AmtContactCommitSample(
             repY = AmtContactSmoothCoord(candY, Contact->ReportY, alphaNum);
         }
     }
+
+    // Record this frame's committed delta for PTPCore's gesture-last-
+    // finger kill deferral (see LastDeltaX/Y doc comment in
+    // ActiveContact.h) - MUST be computed against the OLD Contact->
+    // ReportX/Y, before it's overwritten below. INT math avoids USHORT
+    // wraparound on the subtraction; the result is clamped to SHORT
+    // range purely as a defensive bound (MATCH_MAX_CONTINUATION_DELTA
+    // already keeps realistic per-frame deltas far inside it).
+    INT deltaX = (INT)repX - (INT)Contact->ReportX;
+    INT deltaY = (INT)repY - (INT)Contact->ReportY;
+    Contact->LastDeltaX = (SHORT)(deltaX < -32768 ? -32768 : (deltaX > 32767 ? 32767 : deltaX));
+    Contact->LastDeltaY = (SHORT)(deltaY < -32768 ? -32768 : (deltaY > 32767 ? 32767 : deltaY));
 
     Contact->ReportX = repX;
     Contact->ReportY = repY;
