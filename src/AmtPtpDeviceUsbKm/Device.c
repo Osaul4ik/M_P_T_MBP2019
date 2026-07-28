@@ -150,7 +150,6 @@ AmtPtpEvtDeviceD0Entry(
     // Prevents stale ContactIDs from surviving sleep/wake cycles.
     // NextContactId=0 reserved; first birth pre-increments to 1.
     pDeviceContext->NextContactId        = 0;
-    AmtGestureSessionInit(&pDeviceContext->GestureSession);
     pDeviceContext->OverflowCount        = 0;
     pDeviceContext->PrevButtonClicked    = FALSE;
     pDeviceContext->ForceTouchActive     = FALSE;
