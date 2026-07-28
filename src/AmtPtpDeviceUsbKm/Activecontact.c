@@ -509,15 +509,34 @@ AmtContactCommitSample(
                 Contact->ScrollRemY = 0;
             }
 
-            if (Contact->WasInGesture && aliveCountIsOne) {
-                Contact->WasInGesture = FALSE;
-            }
         } else {
             Contact->ScrollRemX = 0;
             Contact->ScrollRemY = 0;
             repX = AmtContactSmoothCoord(candX, Contact->ReportX, alphaNum);
             repY = AmtContactSmoothCoord(candY, Contact->ReportY, alphaNum);
         }
+    }
+
+    // BUG FIX (intermittent double-tap failure): WasInGesture used to
+    // only get cleared inside the skipEma (fast/medium velocity) branch
+    // above. A solo finger that picked up a spurious taint earlier in
+    // its life (a one-frame sensor blip briefly reporting a second
+    // contact - noise, a ghost touch, a grazed palm edge) would then
+    // carry that taint all the way to lift-off if its final frames
+    // before lifting were slow or stationary (velocityIsSlow, or never
+    // passing the hysteresis deadzone) - both very common right before
+    // a deliberate tap, since people naturally slow down to place the
+    // finger precisely. A gesture-tainted lift is never recorded into
+    // RecentLifts (Phase A in Ptpcore.c), so the retap-smoothing that a
+    // following quick double-tap depends on silently didn't fire -
+    // explaining why the same movement-then-double-tap sequence worked
+    // most of the time but occasionally failed for no visible reason.
+    // Clearing here, unconditionally on aliveCountIsOne, decouples the
+    // taint's lifetime from which velocity/deadzone branch this exact
+    // frame happened to take - it only depends on "is this finger alone
+    // right now," which is what the taint is actually tracking.
+    if (Contact->WasInGesture && aliveCountIsOne) {
+        Contact->WasInGesture = FALSE;
     }
 
     Contact->ReportX = repX;
