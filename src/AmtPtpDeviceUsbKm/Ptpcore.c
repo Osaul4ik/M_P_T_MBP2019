@@ -666,7 +666,8 @@ PTPCore_ProcessFrame(
 
         USHORT repX, repY;
         AmtContactUpdate(&pCtx->ActiveContacts[p], cand->X, cand->Y,
-                         cand->SlotIndex, NowQpc,
+                         cand->Major, cand->Minor, cand->Pressure,
+                         cand->SlotIndex, NowQpc, pCtx->PerfFrequency.QuadPart,
                          (BOOLEAN)(aliveCount == 1), gestureThisFrame,
                          &repX, &repY);
 
