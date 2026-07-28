@@ -27,19 +27,14 @@
 #define PALM_MIN_MAJOR  80   // мінімальний major для підозри на долоню
 #define PALM_MIN_MINOR  40   // мінімальний minor для підозри на долоню
 
-// Hard cutoff at the physical bottom edge - unconditional dead zone,
-// rejected regardless of size/shape (unlike the wider, size-gated
-// scored zone below, which only affects large/palm-shaped contacts).
-// Zone height = yRangeFull * BOTTOM_HARD_CUTOFF_PERCENT / 100 (exact
-// percentage, not an approximate integer divisor - 30% requested).
-#define BOTTOM_HARD_CUTOFF_PERCENT 30
-
-// Direction is still NOT confirmed on hardware - the previous flip
-// (assuming large NormY = physical bottom) did not fix the reported
-// "dead zone at top" symptom, so that assumption is now in doubt too.
-// Flip ONLY this to 0 to test the opposite direction instead of
-// hunting through the comparisons below.
-#define PAD_BOTTOM_IS_HIGH_NORMY 1
+// Birth-only suppression zone at the physical bottom edge - separate
+// from the shape-based rejection below. Confirmed on real hardware:
+// NormY grows from the physical TOP (0) to the physical BOTTOM
+// (yRangeFull), so this zone is the top of the NormY range.
+// Zone height = yRangeFull * BIRTH_ZONE_PERCENT / 100 (exact
+// percentage). This must ONLY gate contacts being born this frame -
+// see AmtPalmInBottomBirthZone below and its call site in Match.c.
+#define BIRTH_ZONE_PERCENT 12
 
 static inline INT
 AmtPalmRawToInteger(_In_ USHORT x)
@@ -56,16 +51,6 @@ AmtPalmClassify(
     _In_ INT                          NormY
 )
 {
-    INT yRangeFull = DevInfo->y.max - DevInfo->y.min;
-    INT hardZone = yRangeFull * BOTTOM_HARD_CUTOFF_PERCENT / 100;
-#if PAD_BOTTOM_IS_HIGH_NORMY
-    if (NormY > (yRangeFull - hardZone))
-        return PALM_LOCAL;
-#else
-    if (NormY < hardZone)
-        return PALM_LOCAL;
-#endif
-
     INT major = AmtPalmRawToInteger(Major);
     INT minor = AmtPalmRawToInteger(Minor);
     
@@ -111,25 +96,17 @@ AmtPalmClassify(
         // real input. Left/right and bottom are widened - palm contact
         // is far more likely there.
         //
-        // Which physical edge is "top" vs "bottom" in NormY terms is
-        // controlled by PAD_BOTTOM_IS_HIGH_NORMY above - flip that one
-        // flag if hardware testing shows this zone is still on the
-        // wrong edge, rather than editing the values below.
-        #define EDGE_DIVISOR_NEAR_ZERO_END  28   // tight zone
-        #define EDGE_DIVISOR_LEFT           12
-        #define EDGE_DIVISOR_RIGHT          12
-        #define EDGE_DIVISOR_FAR_END        6    // wide zone
+        // Confirmed on real hardware: NormY grows from the physical
+        // TOP (0) to the physical BOTTOM (yRange).
+        #define EDGE_DIVISOR_TOP     28   // tight zone, near NormY=0
+        #define EDGE_DIVISOR_LEFT    12
+        #define EDGE_DIVISOR_RIGHT   12
+        #define EDGE_DIVISOR_BOTTOM  6    // wide zone, near NormY=yRange
 
-        INT edgeLeft  = xRange / EDGE_DIVISOR_LEFT;
-        INT edgeRight = xRange / EDGE_DIVISOR_RIGHT;
-        INT edgeNear  = yRange / EDGE_DIVISOR_NEAR_ZERO_END; // near NormY=0
-        INT edgeFar   = yRange / EDGE_DIVISOR_FAR_END;       // near NormY=yRange
-
-#if PAD_BOTTOM_IS_HIGH_NORMY
-        INT edgeTop = edgeNear, edgeBottom = edgeFar;
-#else
-        INT edgeTop = edgeFar, edgeBottom = edgeNear;
-#endif
+        INT edgeLeft   = xRange / EDGE_DIVISOR_LEFT;
+        INT edgeRight  = xRange / EDGE_DIVISOR_RIGHT;
+        INT edgeTop    = yRange / EDGE_DIVISOR_TOP;
+        INT edgeBottom = yRange / EDGE_DIVISOR_BOTTOM;
 
         if (NormX < edgeLeft || NormX > (xRange - edgeRight) ||
             NormY < edgeTop  || NormY > (yRange - edgeBottom))
@@ -137,4 +114,15 @@ AmtPalmClassify(
     }
 
     return (score >= PALM_SCORE_THRESH) ? PALM_LOCAL : PALM_NONE;
+}
+
+BOOLEAN
+AmtPalmInBottomBirthZone(
+    _In_ const struct BCM5974_CONFIG* DevInfo,
+    _In_ INT                          NormY
+)
+{
+    INT yRangeFull = DevInfo->y.max - DevInfo->y.min;
+    INT zone = yRangeFull * BIRTH_ZONE_PERCENT / 100;
+    return NormY > (yRangeFull - zone);
 }
