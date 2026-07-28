@@ -48,9 +48,10 @@ AmtPtpGetHidDescriptor(
 )
 {
 	NTSTATUS status = STATUS_SUCCESS;
-	PDEVICE_CONTEXT pContext = DeviceGetContext(Device);
 	size_t szCopy = 0;
 	WDFMEMORY requestMemory;
+
+	UNREFERENCED_PARAMETER(Device);
 
 	status = WdfRequestRetrieveOutputMemory(
 		Request,
@@ -61,48 +62,22 @@ AmtPtpGetHidDescriptor(
 		goto exit;
 	}
 
-	switch (pContext->DeviceDescriptor.idProduct) {
-		case USB_DEVICE_ID_APPLE_T2_7A:
-		case USB_DEVICE_ID_APPLE_T2_7B:
-		case USB_DEVICE_ID_APPLE_T2_7C:
-		case USB_DEVICE_ID_APPLE_T2_7D:
-		// MacBookPro16,1 (2019)
-		case USB_DEVICE_ID_APPLE_T2_16:
-		{
-			szCopy = AmtPtpT2DefaultHidDescriptor.bLength;
-			status = WdfMemoryCopyFromBuffer(
-				requestMemory,
-				0,
-				(PVOID) &AmtPtpT2DefaultHidDescriptor,
-				szCopy
-			);
+	// Every idProduct we support (named T2 variants and any unrecognized
+	// fallback) reports the same fixed HID descriptor - there is only one
+	// descriptor to hand back, so no per-product branch is needed here.
+	szCopy = AmtPtpT2DefaultHidDescriptor.bLength;
+	status = WdfMemoryCopyFromBuffer(
+		requestMemory,
+		0,
+		(PVOID) &AmtPtpT2DefaultHidDescriptor,
+		szCopy
+	);
 
-			if (!NT_SUCCESS(status)) {
-				goto exit;
-			}
+	if (!NT_SUCCESS(status)) {
+		goto exit;
+	}
 
-			WdfRequestSetInformation(Request,szCopy);
-			break;
-		}
-		default:
-		{
-
-			szCopy = AmtPtpT2DefaultHidDescriptor.bLength;
-			status = WdfMemoryCopyFromBuffer(
-				requestMemory,
-				0,
-				(PVOID)&AmtPtpT2DefaultHidDescriptor,
-				szCopy
-			);
-
-			if (!NT_SUCCESS(status)) {
-				goto exit;
-			}
-
-			WdfRequestSetInformation(Request, szCopy);
-			break;
-		}
-	};
+	WdfRequestSetInformation(Request, szCopy);
 
 exit:
 
@@ -151,9 +126,10 @@ AmtPtpGetReportDescriptor(
 )
 {
 	NTSTATUS status = STATUS_SUCCESS;
-	PDEVICE_CONTEXT pContext = DeviceGetContext(Device);
 	size_t szCopy = 0;
 	WDFMEMORY requestMemory;
+
+	UNREFERENCED_PARAMETER(Device);
 
 	status = WdfRequestRetrieveOutputMemory(
 		Request,
@@ -164,63 +140,26 @@ AmtPtpGetReportDescriptor(
 		goto exit;
 	}
 
-	switch (pContext->DeviceDescriptor.idProduct) {
-		case USB_DEVICE_ID_APPLE_T2_7A:
-		case USB_DEVICE_ID_APPLE_T2_7B:
-		case USB_DEVICE_ID_APPLE_T2_7C:
-		case USB_DEVICE_ID_APPLE_T2_7D:
-		// See AmtPtpGetHidDescriptor.
-		case USB_DEVICE_ID_APPLE_T2_16:
-		{
-
-			szCopy = AmtPtpT2DefaultHidDescriptor.DescriptorList[0].wReportLength;
-			if (szCopy == 0) {
-
-				status = STATUS_INVALID_DEVICE_STATE;
-				goto exit;
-			}
-
-			status = WdfMemoryCopyFromBuffer(
-				requestMemory,
-				0,
-				(PVOID) &AmtPtpT2ReportDescriptor,
-				szCopy
-			);
-
-			if (!NT_SUCCESS(status)) {
-
-				goto exit;
-			}
-
-			WdfRequestSetInformation(Request, szCopy);
-			break;
-		}
-		default:
-		{
-			
-			szCopy = AmtPtpT2DefaultHidDescriptor.DescriptorList[0].wReportLength;
-			if (szCopy == 0) {
-
-				status = STATUS_INVALID_DEVICE_STATE;
-				goto exit;
-			}
-
-			status = WdfMemoryCopyFromBuffer(
-				requestMemory,
-				0,
-				(PVOID)&AmtPtpT2ReportDescriptor,
-				szCopy
-			);
-
-			if (!NT_SUCCESS(status)) {
-
-				goto exit;
-			}
-
-			WdfRequestSetInformation(Request, szCopy);
-			break;
-		}
+	// Every idProduct we support reports the same fixed report descriptor -
+	// see AmtPtpGetHidDescriptor.
+	szCopy = AmtPtpT2DefaultHidDescriptor.DescriptorList[0].wReportLength;
+	if (szCopy == 0) {
+		status = STATUS_INVALID_DEVICE_STATE;
+		goto exit;
 	}
+
+	status = WdfMemoryCopyFromBuffer(
+		requestMemory,
+		0,
+		(PVOID) &AmtPtpT2ReportDescriptor,
+		szCopy
+	);
+
+	if (!NT_SUCCESS(status)) {
+		goto exit;
+	}
+
+	WdfRequestSetInformation(Request, szCopy);
 
 exit:
 
