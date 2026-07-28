@@ -486,14 +486,39 @@ PTPCore_ProcessFrame(
     // AmtContactUpdate (called per-candidate below) and the taint
     // assignment itself immediately mutate whichever contact was just
     // processed.
-    BOOLEAN candidateJustBorn[PTP_MAX_CONTACT_POINTS]   = { 0 };
-    BOOLEAN candidateWasTainted[PTP_MAX_CONTACT_POINTS] = { 0 };
+    //
+    // AUDIT FIX (rebind mistaken for birth in the taint pre-pass): Phase
+    // A.5 above forces LastSeenQpc=0 on a button-click rebind so Phase C
+    // reports DOWN instead of MOVE for the new ContactID (see the AUDIT
+    // FIX comment there) - that part is correct and must stay. But this
+    // pre-pass was ALSO using the very same (LastSeenQpc==0) test to
+    // decide whether the tail-overlap taint check below applies, so a
+    // rebind - an already-live, physically continuous finger that simply
+    // got a new ContactID - was indistinguishable here from a genuine
+    // brand-new touch. That routed a rebound contact through the
+    // conditional "inherit taint only from an untainted partner" logic
+    // instead of the unconditional "pre-existing contacts always get
+    // (re-)tainted on a gestureThisFrame frame" rule the comment below
+    // documents - so a finger that was already mid-gesture could lose
+    // its WasInGesture taint on the exact frame it got rebound (e.g. a
+    // button click fired mid multi-finger gesture), if its only "other"
+    // candidate this frame happened to already be tainted (the routine
+    // tail-overlap case this same check exists to filter for births).
+    // candidateIsTrueBirth separates the two: TRUE only for an actual
+    // Phase B pool allocation this frame, FALSE for a rebind (even
+    // though rebind also has LastSeenQpc==0). justBorn (DOWN vs MOVE,
+    // used further below) is intentionally left alone - unaffected by
+    // this fix.
+    BOOLEAN candidateJustBorn[PTP_MAX_CONTACT_POINTS]    = { 0 };
+    BOOLEAN candidateWasTainted[PTP_MAX_CONTACT_POINTS]  = { 0 };
+    BOOLEAN candidateIsTrueBirth[PTP_MAX_CONTACT_POINTS] = { 0 };
     for (UCHAR pc = 0; pc < candidates.Count; pc++) {
         if (candidates.Candidates[pc].PalmLocal) continue;
         size_t pp = matchResult.CorrespondingPoolIndex[pc];
         if (pp == MATCH_NO_CORRESPONDENCE) continue;
-        candidateJustBorn[pc]   = (pCtx->ActiveContacts[pp].LastSeenQpc == 0);
-        candidateWasTainted[pc] = pCtx->ActiveContacts[pp].WasInGesture;
+        candidateJustBorn[pc]    = (pCtx->ActiveContacts[pp].LastSeenQpc == 0);
+        candidateWasTainted[pc]  = pCtx->ActiveContacts[pp].WasInGesture;
+        candidateIsTrueBirth[pc] = candidateJustBorn[pc] && !rebindThisFrame[pp];
     }
 
     for (UCHAR ci = 0; ci < candidates.Count; ci++) {
@@ -521,31 +546,34 @@ PTPCore_ProcessFrame(
         // etc), because the driver never distinguished gesture size or
         // type - only raw finger count this frame.
         //
-        // Fix applies only to contacts born THIS frame (justBorn):
-        // inherit the taint only if ANOTHER live candidate this frame
-        // was NOT ALREADY tainted as of the start of this frame. An
-        // untainted co-alive partner (whether it's also a fresh birth,
-        // or an existing contact that simply hasn't joined a gesture
-        // yet) is the real signature of a genuine gesture start - and
-        // this correctly covers a multi-finger gesture whose fingers
-        // touch down a frame or two apart, not just the exact same
-        // frame (an earlier version of this fix required same-frame
-        // co-birth, which wrongly failed to taint the second finger of
-        // a staggered-start gesture that lifted again before its own
-        // next Phase C pass). A co-alive partner that was ALREADY
-        // tainted before this frame is, by construction, the tail of a
-        // separate, already-established gesture - that's the actual
-        // tail-overlap case, and must NOT cause the new birth to be
-        // tainted.
+        // Fix applies only to candidates that are a TRUE fresh pool
+        // birth this frame (candidateIsTrueBirth, NOT justBorn - see the
+        // AUDIT FIX comment on the pre-pass above for why a button-click
+        // rebind must NOT take this branch): inherit the taint only if
+        // ANOTHER live candidate this frame was NOT ALREADY tainted as
+        // of the start of this frame. An untainted co-alive partner
+        // (whether it's also a fresh birth, or an existing contact that
+        // simply hasn't joined a gesture yet) is the real signature of a
+        // genuine gesture start - and this correctly covers a
+        // multi-finger gesture whose fingers touch down a frame or two
+        // apart, not just the exact same frame (an earlier version of
+        // this fix required same-frame co-birth, which wrongly failed to
+        // taint the second finger of a staggered-start gesture that
+        // lifted again before its own next Phase C pass). A co-alive
+        // partner that was ALREADY tainted before this frame is, by
+        // construction, the tail of a separate, already-established
+        // gesture - that's the actual tail-overlap case, and must NOT
+        // cause the new birth to be tainted.
         //
-        // Pre-existing (non-justBorn) contacts are unaffected: they keep
-        // getting (re-)tainted on every gestureThisFrame frame exactly
-        // as before, since they are genuinely still part of whatever
-        // gesture they started in - this only changes what a BIRTH
-        // inherits.
+        // Pre-existing (non-true-birth) contacts are unaffected - this
+        // now correctly includes button-click rebinds, not just
+        // ordinary continuing contacts: they keep getting (re-)tainted
+        // on every gestureThisFrame frame exactly as before, since they
+        // are genuinely still part of whatever gesture they started in -
+        // this only changes what a BIRTH inherits.
         BOOLEAN shouldTaint = gestureThisFrame;
 
-        if (shouldTaint && justBorn) {
+        if (shouldTaint && candidateIsTrueBirth[ci]) {
             BOOLEAN otherCandidateUntainted = FALSE;
             for (UCHAR oc = 0; oc < candidates.Count; oc++) {
                 if (oc == ci || candidates.Candidates[oc].PalmLocal) continue;
@@ -609,7 +637,22 @@ PTPCore_ProcessFrame(
         pCtx->ForceTouchAnchorValid = FALSE;
         pCtx->ForceTouchDragLockout = FALSE;
     } else {
-        if (buttonClickEdge && RawFrame->ContactCount > 0) {
+        // AUDIT FIX: previously gated on (buttonClickEdge && ContactCount>0),
+        // so if the exact click-edge frame happened to report zero raw
+        // contacts - plausible on this hardware, since a mechanical click
+        // is already documented elsewhere in this file to momentarily
+        // flex the pad and shrink/drop the reported touch ellipse - the
+        // anchor was NEVER armed for the rest of that press (this branch
+        // only ever ran on the single buttonClickEdge frame). With no
+        // anchor, the drag-lockout distance check below never runs, so a
+        // press that turns into a drag could never be reclassified out of
+        // force-touch eligibility for that entire press. Arming on
+        // "!ForceTouchAnchorValid" instead of "buttonClickEdge" arms on
+        // the FIRST frame with contacts after button-down (whether that's
+        // the edge frame itself or a frame or two later), and - since
+        // ForceTouchAnchorValid then stays TRUE until release - still
+        // only ever arms once per press, at the earliest available data.
+        if (!pCtx->ForceTouchAnchorValid && RawFrame->ContactCount > 0) {
             pCtx->ForceTouchAnchorX     = RawFrame->Contacts[0].X;
             pCtx->ForceTouchAnchorY     = RawFrame->Contacts[0].Y;
             pCtx->ForceTouchAnchorValid = TRUE;
