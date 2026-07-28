@@ -171,10 +171,10 @@ AmtContactEvaluateDeadzone(
 );
 
 // Per-frame ACTIVE contact update (Phase C). Deadzone + EMA.
-// GestureActive (aliveCount>=2 this frame) selects a smaller deadzone
-// threshold so genuine multi-finger movement (2-finger scroll, etc.)
-// isn't gated as unevenly per-contact as solo movement - see
-// XY_DEADZONE_UNITS_GESTURE in ActiveContact.c for rationale.
+// GestureActive (aliveCount>=2 this frame) skips EMA smoothing so
+// genuine multi-finger movement (2-finger scroll, etc.) reports true
+// raw position instead of a damped one - see XY_DEADZONE_UNITS in
+// ActiveContact.c for the shared deadzone threshold's history.
 VOID
 AmtContactUpdate(
     _Inout_ PACTIVE_CONTACT Contact,
