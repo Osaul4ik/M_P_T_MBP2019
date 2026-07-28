@@ -5,8 +5,8 @@
 // tip-size debounce. This file keeps ONLY geometry decode + coordinate
 // normalization - the part that genuinely has no state. Palm
 // classification moved to Palm.c. Tip-size debounce moved into PTPCore
-// (Match.c L1.5 / Track.c), since it requires reading previous track
-// position - see PTPCore.h note #2 for why that can't live here.
+// (Match.c L1.5 / Activecontact.c), since it requires reading previous
+// track position - see PTPCore.h note #2 for why that can't live here.
 
 #include "Driver.h"
 #include "Input.h"
