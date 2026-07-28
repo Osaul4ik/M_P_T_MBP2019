@@ -1,5 +1,5 @@
 // PTPCore.h - Layer contract for the PTP touch stack.
-// Interrupt.c -> Input.c -> PTPCore.c (Match.c + ActiveContact.c + Gesture.c) -> PTP_REPORT.
+// Interrupt.c -> Input.c -> PTPCore.c (Match.c + ActiveContact.c) -> PTP_REPORT.
 
 #pragma once
 
