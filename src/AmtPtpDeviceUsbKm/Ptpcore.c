@@ -616,15 +616,35 @@ PTPCore_ProcessFrame(
         }
 
         if (pCtx->ForceTouchAnchorValid) {
+            // BUG FIX: track only the ONE finger nearest the anchor, not
+            // every raw contact. RawFrame->Contacts[] is packed in sensor
+            // scan order this frame, not by a stable per-finger slot - so
+            // testing ALL contacts against a single-finger anchor meant an
+            // unrelated second finger landing elsewhere on the pad (resting
+            // the hand, a stray touch) while the button was held could trip
+            // the lockout purely because IT was far from the anchor, even
+            // though the actual pressing finger never moved. Nearest-match
+            // each frame instead: only the contact closest to the anchor is
+            // compared against the threshold.
+            LONG bestDistSq = -1;
+            INT  bestDx = 0, bestDy = 0;
             for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
                 INT dx = (INT)RawFrame->Contacts[fi].X - (INT)pCtx->ForceTouchAnchorX;
                 INT dy = (INT)RawFrame->Contacts[fi].Y - (INT)pCtx->ForceTouchAnchorY;
-                if (dx < 0) dx = -dx;
-                if (dy < 0) dy = -dy;
-                if (dx > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE ||
-                    dy > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE) {
+                LONG distSq = (LONG)dx * dx + (LONG)dy * dy;
+                if (bestDistSq < 0 || distSq < bestDistSq) {
+                    bestDistSq = distSq;
+                    bestDx     = dx;
+                    bestDy     = dy;
+                }
+            }
+
+            if (bestDistSq >= 0) {
+                INT adx = (bestDx < 0) ? -bestDx : bestDx;
+                INT ady = (bestDy < 0) ? -bestDy : bestDy;
+                if (adx > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE ||
+                    ady > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE) {
                     pCtx->ForceTouchDragLockout = TRUE;
-                    break;
                 }
             }
         }
