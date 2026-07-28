@@ -3,22 +3,24 @@
 #include "Driver.h"
 #include "ActiveContact.h"
 
-#define XY_DEADZONE_UNITS          1  // solo movement: click/drag precision
-// AUDIT (2-finger scroll quality): the same 2-unit threshold, evaluated
-// independently per contact every frame, was also gating genuine
+// AUDIT (2-finger scroll quality, historical): a fixed-threshold deadzone,
+// evaluated independently per contact every frame, was also gating genuine
 // simultaneous 2(+)-finger movement (scroll). Two fingers scrolling
 // together rarely cross a fixed threshold in perfect lockstep frame to
 // frame - one finger's delta clears it while the other's doesn't,
 // producing an asymmetric stale-vs-updated report between the two
 // contacts and a visibly steppy/uneven scroll at slow, deliberate
-// speeds. A lower (not zero) threshold specifically while >=2 fingers
-// are concurrently down keeps genuinely stationary multi-finger holds
-// (e.g. a 2-finger tap-and-hold for right-click) still filtered against
-// single-unit sensor noise, while roughly doubling responsiveness for
-// real scroll motion. This only changes raw contact position fidelity -
-// Windows' own PTP stack still derives the scroll gesture itself from
-// these contacts, so this stays within the PTP contract.
-#define XY_DEADZONE_UNITS_GESTURE   1
+// speeds. The original fix introduced a second, lower-but-nonzero
+// threshold used only while >=2 fingers are concurrently down, keeping
+// genuinely stationary multi-finger holds (e.g. a 2-finger tap-and-hold
+// for right-click) still filtered against single-unit sensor noise.
+// XY_DEADZONE_UNITS has since been independently lowered to 1 (the
+// minimum nonzero integer unit) for solo click/drag precision, which
+// leaves no room below it for a distinct nonzero gesture threshold - so
+// there is now a single shared threshold for both solo and gesture
+// frames. If XY_DEADZONE_UNITS is ever raised again, revisit whether
+// gesture frames still need their own lower value.
+#define XY_DEADZONE_UNITS          1
 #define SMOOTHING_ALPHA_NUM  3
 #define SMOOTHING_ALPHA_DEN  8
 
@@ -414,8 +416,7 @@ AmtContactUpdate(
     BOOLEAN retapSeededFirstSample =
         Contact->PendingFirstSample && Contact->RetapSeeded;
 
-    INT deadzoneThreshold =
-        gestureActive ? XY_DEADZONE_UNITS_GESTURE : XY_DEADZONE_UNITS;
+    INT deadzoneThreshold = XY_DEADZONE_UNITS;
 
     if (Contact->PendingFirstSample) {
         if (retapSeededFirstSample) {
