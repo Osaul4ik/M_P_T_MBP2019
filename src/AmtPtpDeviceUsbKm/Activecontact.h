@@ -59,30 +59,6 @@ typedef struct _ACTIVE_CONTACT
     LONG ScrollRemX;
     LONG ScrollRemY;
 
-    // Debounce state for the slow-scroll scale switch (SCROLL_SCALE_*_SLOW
-    // in ActiveContact.c). ScrollSlowStreak counts consecutive gestureActive
-    // frames classified VELOCITY_SLOW; ScrollScaleSlow is the latched
-    // decision (TRUE once the streak reaches SCROLL_SLOW_ENTER_STREAK,
-    // cleared immediately on any non-slow frame). Deliberately NOT the same
-    // thing as the raw per-frame velocity bucket used for deadzone - see
-    // the AUDIT FIX comment in AmtContactCommitSample for why reusing that
-    // raw, unsmoothed bucket directly for scroll scale caused jitter/jerks.
-    // Both reset to 0/FALSE whenever gestureActive is FALSE, same as
-    // ScrollRemX/Y above - must not leak into an unrelated later scroll.
-    UCHAR   ScrollSlowStreak;
-    BOOLEAN ScrollScaleSlow;
-
-    // Last committed per-frame report delta (repX/Y this frame minus
-    // repX/Y last frame), clamped to SHORT range. Used ONLY by PTPCore's
-    // gesture-last-finger kill deferral (MIN_CONTACT_LIFETIME_FRAMES) to
-    // extrapolate one more frame of motion instead of re-reporting a
-    // frozen position when a fast flick's last finger lifts before
-    // FramesAlive reaches the floor - see the AUDIT FIX comment at that
-    // call site in PTPCore.c for why freezing there was killing inertia.
-    // Not identity/matching state; purely a velocity hint.
-    SHORT LastDeltaX;
-    SHORT LastDeltaY;
-
     // ---- Matching-hint fields. NOT identity. ----
     USHORT   LastSlotHint;    // hw slot matched to last frame; speeds up matching
     LONGLONG LastSeenQpc;     // QPC of last successful match; grace/retap timing
