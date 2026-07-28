@@ -59,6 +59,17 @@ typedef struct _ACTIVE_CONTACT
     LONG ScrollRemX;
     LONG ScrollRemY;
 
+    // Last committed per-frame report delta (repX/Y this frame minus
+    // repX/Y last frame), clamped to SHORT range. Used ONLY by PTPCore's
+    // gesture-last-finger kill deferral (MIN_CONTACT_LIFETIME_FRAMES) to
+    // extrapolate one more frame of motion instead of re-reporting a
+    // frozen position when a fast flick's last finger lifts before
+    // FramesAlive reaches the floor - see the AUDIT FIX comment at that
+    // call site in PTPCore.c for why freezing there was killing inertia.
+    // Not identity/matching state; purely a velocity hint.
+    SHORT LastDeltaX;
+    SHORT LastDeltaY;
+
     // ---- Matching-hint fields. NOT identity. ----
     USHORT   LastSlotHint;    // hw slot matched to last frame; speeds up matching
     LONGLONG LastSeenQpc;     // QPC of last successful match; grace/retap timing
