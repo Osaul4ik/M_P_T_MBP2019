@@ -55,9 +55,6 @@
     <ClInclude Include="Palm.h">
       <Filter>PTPCore</Filter>
     </ClInclude>
-    <ClInclude Include="Gesture.h">
-      <Filter>PTPCore</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Device.c">
@@ -88,9 +85,6 @@
       <Filter>PTPCore</Filter>
     </ClCompile>
     <ClCompile Include="Palm.c">
-      <Filter>PTPCore</Filter>
-    </ClCompile>
-    <ClCompile Include="Gesture.c">
       <Filter>PTPCore</Filter>
     </ClCompile>
   </ItemGroup>
