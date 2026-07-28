@@ -23,6 +23,32 @@ AmtMatchCandidateTip(_In_ USHORT major, _In_ USHORT minor)
     return (UCHAR)(((INT)major << 1) >= 200 || ((INT)minor << 1) >= 150);
 }
 
+// Third-tier matching tie-break (see AmtMatchCorrespond): when two
+// candidate/pool pairs are tied on both spatial cost (within
+// MATCH_TIE_EPSILON_SQ) and slot-hint match, prefer whichever pairing
+// keeps touch geometry/pressure most similar to what that pool entry
+// last reported. This is a plain Manhattan-style sum, not a weighted/
+// normalized model - Major/Minor/Pressure are different raw units, but
+// for a last-resort tie-break among candidates that are already
+// spatially near-identical, "closer on all three, unweighted" is a
+// reasonable cheap heuristic and avoids inventing per-axis weights with
+// no real-device data to justify them.
+static LONG
+AmtMatchShapeDistance(
+    _In_ const MATCH_CANDIDATE* Cand,
+    _In_ const ACTIVE_CONTACT*  Contact
+)
+{
+    INT dMajor = (INT)Cand->Major - (INT)Contact->LastMajor;
+    if (dMajor < 0) dMajor = -dMajor;
+    INT dMinor = (INT)Cand->Minor - (INT)Contact->LastMinor;
+    if (dMinor < 0) dMinor = -dMinor;
+    INT dPressure = (INT)Cand->Pressure - (INT)Contact->LastPressure;
+    if (dPressure < 0) dPressure = -dPressure;
+
+    return (LONG)dMajor + dMinor + dPressure;
+}
+
 VOID
 AmtMatchBuildCandidates(
     _In_  const RAW_FRAME*                        RawFrame,
@@ -51,6 +77,9 @@ AmtMatchBuildCandidates(
         RtlZeroMemory(&cand, sizeof(cand));
         cand.SlotIndex     = rc->SlotIndex;
         cand.IdentityBreak = (rc->Origin == 0);
+        cand.Major         = rc->Major;
+        cand.Minor         = rc->Minor;
+        cand.Pressure      = rc->Pressure;
 
         if (palm == PALM_LOCAL) {
             cand.PalmLocal = TRUE;
@@ -183,6 +212,7 @@ AmtMatchCorrespond(
         LONG    bestCost          = -1;
         UCHAR   bestIdx           = 0;
         BOOLEAN bestSlotHintMatch = FALSE;
+        LONG    bestShapeDist     = 0;
         BOOLEAN found             = FALSE;
 
         for (UCHAR k = 0; k < pairCount; k++) {
@@ -194,6 +224,8 @@ AmtMatchCorrespond(
                 bestCost          = pairs[k].cost;
                 bestIdx           = k;
                 bestSlotHintMatch = pairs[k].slotHintMatch;
+                bestShapeDist     = AmtMatchShapeDistance(
+                    &Candidates->Candidates[pairs[k].candIdx], &Pool[pairs[k].poolIdx]);
                 found             = TRUE;
                 continue;
             }
@@ -206,10 +238,24 @@ AmtMatchCorrespond(
                 bestCost          = pairs[k].cost;
                 bestIdx           = k;
                 bestSlotHintMatch = pairs[k].slotHintMatch;
+                bestShapeDist     = AmtMatchShapeDistance(
+                    &Candidates->Candidates[pairs[k].candIdx], &Pool[pairs[k].poolIdx]);
             } else if (withinEpsilon && pairs[k].slotHintMatch && !bestSlotHintMatch) {
                 bestCost          = pairs[k].cost;
                 bestIdx           = k;
                 bestSlotHintMatch = TRUE;
+                bestShapeDist     = AmtMatchShapeDistance(
+                    &Candidates->Candidates[pairs[k].candIdx], &Pool[pairs[k].poolIdx]);
+            } else if (withinEpsilon && pairs[k].slotHintMatch == bestSlotHintMatch) {
+                // Cost and slot-hint both tied - fall through to shape.
+                LONG kShapeDist = AmtMatchShapeDistance(
+                    &Candidates->Candidates[pairs[k].candIdx], &Pool[pairs[k].poolIdx]);
+                if (kShapeDist < bestShapeDist) {
+                    bestCost      = pairs[k].cost;
+                    bestIdx       = k;
+                    bestShapeDist = kShapeDist;
+                    // bestSlotHintMatch unchanged - already equal to pairs[k]'s.
+                }
             }
         }
 
