@@ -5,7 +5,6 @@
 #include "PTPCore.tmh"
 #include "ActiveContact.h"
 #include "Match.h"
-#include "Gesture.h"
 
 // Movement past this distance (normalized units - same coordinate space
 // as RETAP_MAX_DISTANCE in ActiveContact.h) from the button-down anchor
@@ -294,15 +293,18 @@ PTPCore_ProcessFrame(
                        NowQpc, pCtx->PerfFrequency.QuadPart,
                        &matchResult);
 
-    // Gesture session FSM
+    // Per-frame multi-finger check (feeds the taint gate below)
     UCHAR aliveCount = 0;
     for (UCHAR ci = 0; ci < candidates.Count; ci++) {
         if (!candidates.Candidates[ci].PalmLocal)
             aliveCount++;
     }
 
-    AmtGestureSessionUpdate(&pCtx->GestureSession, aliveCount);
-    BOOLEAN gestureThisFrame = AmtGestureIsMultiFingerFrame(aliveCount);
+    // Per-frame multi-finger taint gate: >=2 fingers concurrently down
+    // this exact frame (see removed Gesture.c/h - this one comparison
+    // was its entire remaining content once the dead session-sticky
+    // field was cut, so it's inlined here instead of kept as a module).
+    BOOLEAN gestureThisFrame = (aliveCount >= 2);
 
     // BUG FIX (phantom UP from the bottom/edge hard cutoff): AmtMatchCorrespond
     // never matches a PALM_LOCAL candidate to a pool entry (Match.c), so a
