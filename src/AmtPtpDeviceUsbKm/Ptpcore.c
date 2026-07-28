@@ -356,6 +356,30 @@ PTPCore_ProcessFrame(
             // which point both palmSuppressedFrame and palmLocalFrozen[p]
             // are FALSE again and this branch is skipped, falling through
             // to the normal kill path below.
+            //
+            // AUDIT FIX (stale LastSeenQpc -> spurious time-reject on
+            // dead-zone/palm exit): this branch intentionally skips
+            // AmtContactUpdate (deadzone/EMA must not run on a frozen
+            // contact), but AmtContactUpdate is also the ONLY place
+            // LastSeenQpc is ever refreshed (Activecontact.c). Left
+            // untouched, a contact frozen here for longer than
+            // MATCH_MAX_TIME_DELTA_100NS (Match.h, 150ms) - e.g. a palm
+            // resting on the lower edge, or a finger parked in the
+            // PALM_LOCAL dead zone - accumulates a stale LastSeenQpc even
+            // though it's still visibly present every single frame. The
+            // moment it re-qualifies as a normal candidate again (palm
+            // lifts, or the finger slides back into the live area),
+            // AmtMatchCorrespond's time-domain rejection (Match.c) sees
+            // "last seen >150ms ago" and rejects the otherwise-correct
+            // spatial match - killing this ContactID for real and
+            // birthing a brand-new one, for a finger that in fact never
+            // left the pad. Refresh LastSeenQpc directly (NOT via
+            // AmtContactUpdate, which would also run deadzone/EMA against
+            // a position this contact isn't actually reporting live) so
+            // "last seen" tracks "last visibly present," matching what
+            // this branch is actually claiming by staying CONTACT_ACTIVE.
+            pCtx->ActiveContacts[p].LastSeenQpc = NowQpc;
+
             AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
                                pCtx->ActiveContacts[p].ReportX,
                                pCtx->ActiveContacts[p].ReportY,
