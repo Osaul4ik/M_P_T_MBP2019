@@ -27,15 +27,6 @@
 #define PALM_MIN_MAJOR  80   // мінімальний major для підозри на долоню
 #define PALM_MIN_MINOR  40   // мінімальний minor для підозри на долоню
 
-// Birth-only suppression zone at the physical bottom edge - separate
-// from the shape-based rejection below. Confirmed on real hardware:
-// NormY grows from the physical TOP (0) to the physical BOTTOM
-// (yRangeFull), so this zone is the top of the NormY range.
-// Zone height = yRangeFull * BIRTH_ZONE_PERCENT / 100 (exact
-// percentage). This must ONLY gate contacts being born this frame -
-// see AmtPalmInBottomBirthZone below and its call site in Match.c.
-#define BIRTH_ZONE_PERCENT 12
-
 static inline INT
 AmtPalmRawToInteger(_In_ USHORT x)
 {
@@ -114,15 +105,4 @@ AmtPalmClassify(
     }
 
     return (score >= PALM_SCORE_THRESH) ? PALM_LOCAL : PALM_NONE;
-}
-
-BOOLEAN
-AmtPalmInBottomBirthZone(
-    _In_ const struct BCM5974_CONFIG* DevInfo,
-    _In_ INT                          NormY
-)
-{
-    INT yRangeFull = DevInfo->y.max - DevInfo->y.min;
-    INT zone = yRangeFull * BIRTH_ZONE_PERCENT / 100;
-    return NormY > (yRangeFull - zone);
 }
