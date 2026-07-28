@@ -3,7 +3,6 @@
 #include "public.h"
 #include <Hid.h>
 #include "ActiveContact.h"
-#include "Gesture.h"
 #include "PTPCore.h"
 
 EXTERN_C_START
@@ -103,10 +102,6 @@ typedef struct _DEVICE_CONTEXT
     // Monotonic ContactID counter - never reuses an ID while "warm".
     // Every lift-off advances it; reseeded at D0Entry.
     ULONG   NextContactId;
-
-    // GestureEngine session state (Gesture.h). ACTIVE_CONTACT.WasInGesture
-    // is SET FROM this by PTPCore.c, never the reverse.
-    GESTURE_SESSION GestureSession;
 
     // QPC frequency cached at D0Entry
     LARGE_INTEGER PerfFrequency;
