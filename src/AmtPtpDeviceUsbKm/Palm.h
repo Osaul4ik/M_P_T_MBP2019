@@ -5,7 +5,7 @@
 // file makes no session-level decisions (PalmDetected latch, whole-pad
 // blank persistence) - that orchestration stays where the rest of the
 // per-frame session state lives, since it is symmetrical with
-// GestureSessionActive (see Match.c/Interrupt.c). This file answers
+// GestureThisFrame (see Match.c/Interrupt.c/PTPCore.c). This file answers
 // exactly one question per finger: "does this single sample look like
 // a palm", nothing more - consistent with Phase 6 of the task spec
 // ("ONLY: suppress reporting; DO NOT affect identity/FSM/tracking").
