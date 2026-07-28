@@ -156,24 +156,6 @@ AmtPtpSetWellspringMode(
     _In_ BOOLEAN IsWellspringModeOn
 );
 
-// AmtPtpSetHapticFeedback - configures the actuator's click/release
-// waveform "intensity" profile via a HID SET_REPORT class request. This
-// is a PASSIVE_LEVEL, synchronous control transfer - never call this
-// from a completion routine/callback that may run at DISPATCH_LEVEL
-// (e.g. AmtPtpEvtUsbInterruptPipeReadComplete) without first marshaling
-// to PASSIVE_LEVEL via a WDFWORKITEM. See the long comment next to
-// HAPTIC_INTERFACE_INDEX in AppleDefinition.h - this protocol is ported
-// from Magic Trackpad 2 (external) and is UNVERIFIED on this internal T2
-// hardware; failure here is non-fatal (best-effort) by design, same as
-// AmtPtpSetWellspringMode's callers already treat it.
-_IRQL_requires_(PASSIVE_LEVEL)
-NTSTATUS
-AmtPtpSetHapticFeedback(
-    _In_ PDEVICE_CONTEXT DeviceContext,
-    _In_ ULONG           FeedbackClick,
-    _In_ ULONG           FeedbackRelease
-);
-
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AmtPtpGetHidDescriptor(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
 
