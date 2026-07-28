@@ -278,8 +278,26 @@ AmtMatchCorrespond(
             timeReject = (NowQpc < Pool[p].LastSeenQpc) || (deltaTicks > maxTicks);
         }
 
+        // BUG FIX (lost continuation on a rejected best-cost pair): this
+        // used to set candClaimed[ci] = TRUE here, which permanently
+        // burned the CANDIDATE, not just this one pair. pairUsed[bestIdx]
+        // above already makes sure this exact (candidate,pool) pair is
+        // never picked again - that's sufficient. Leaving candClaimed[ci]
+        // FALSE lets the outer greedy loop reconsider this same candidate
+        // against a DIFFERENT, still-unclaimed pool entry on a later
+        // pick, which is the whole point of doing this by ascending cost:
+        // the cheapest pairing can be implausible (a stale/out-of-window
+        // pool entry, or a spurious spatial jump) while a slightly more
+        // expensive, still-legitimate pairing exists for the very same
+        // physical finger. Previously, whichever pair happened to sort
+        // first ate the candidate outright, forcing a spurious lift+rebirth
+        // (new ContactID) for a finger that was still on the pad -
+        // visible as a broken drag, an interrupted multi-finger gesture,
+        // or a finger that drops out of a tap/double-tap sequence Windows
+        // was tracking by ContactID. poolClaimed[p] is intentionally left
+        // untouched either way - a rejected pool entry stays available for
+        // a different candidate to match.
         if (spatialReject || timeReject) {
-            candClaimed[ci] = TRUE;
             continue;
         }
 
