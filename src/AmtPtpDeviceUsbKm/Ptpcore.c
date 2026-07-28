@@ -146,6 +146,36 @@ AmtCoreEmitContact(
     // one in-frame report plus one full overflow queue).
 }
 
+// AUDIT FIX (duplicate ContactID within one report - overflow x Phase C
+// across a frame boundary): a queued Phase C DOWN/MOVE overflow entry
+// (see AmtCoreEmitContact above) belongs to a contact that is, by
+// construction, still CONTACT_ACTIVE - it only ever lands in the
+// overflow queue because the frame ran out of room, never because the
+// contact died. Phase A/NewIdentity/A.5 UP overflow entries are safe to
+// drain unconditionally because the underlying pool slot is always
+// killed/freed in the very same frame that queued them - by the next
+// frame its ContactID no longer exists in the pool, so nothing else
+// will ever report it again. A Phase C DOWN/MOVE entry has no such
+// guarantee: the physical finger never left the pad, so if it's still
+// matched next frame, Phase C further down in THIS SAME function call
+// will independently produce a brand-new, current-position report for
+// that exact ContactID - draining the stale one first would put two
+// entries carrying the same ContactID into one OutResult, tripping
+// AmtReportCheckInvariants (Interrupt.c, DBG builds) and handing
+// Windows an ambiguous report in retail. See AmtPoolHoldsContactID.
+static BOOLEAN
+AmtPoolHoldsContactID(
+    _In_reads_(MAX_CONTACTS) const ACTIVE_CONTACT* Pool,
+    _In_                     ULONG                  ContactID
+)
+{
+    for (size_t p = 0; p < MAX_CONTACTS; p++) {
+        if (Pool[p].State == CONTACT_ACTIVE && Pool[p].ContactID == ContactID)
+            return TRUE;
+    }
+    return FALSE;
+}
+
 // Drain deferred reports from previous frame(s).
 static VOID
 AmtCoreDrainOverflow(
@@ -153,36 +183,52 @@ AmtCoreDrainOverflow(
     _Inout_ PTP_CORE_FRAME* OutResult
 )
 {
-    UCHAR k = 0;
-    for (; k < pCtx->OverflowCount && OutResult->ContactCount < PTP_MAX_CONTACT_POINTS; k++) {
-        PPTP_CORE_CONTACT outC = &OutResult->Contacts[OutResult->ContactCount];
-        outC->ContactID   = pCtx->OverflowContactID[k];
-        outC->X           = pCtx->OverflowX[k];
-        outC->Y           = pCtx->OverflowY[k];
-        outC->Phase       = pCtx->OverflowPhase[k];
-        outC->Confident   = pCtx->OverflowConfident[k];
-        outC->PalmSuspect = FALSE;
-        OutResult->ContactCount++;
+    // Compacted write cursor: entries not resolved this call (still no
+    // room, not yet superseded) get shifted down to keep the queue
+    // dense. keep <= k at all times, so writing Overflow*[keep] before
+    // reading Overflow*[k] on a later iteration never clobbers unread
+    // data - safe without a temp/RtlMoveMemory batch.
+    UCHAR keep = 0;
+
+    for (UCHAR k = 0; k < pCtx->OverflowCount; k++) {
+        ULONG id = pCtx->OverflowContactID[k];
+
+        if (AmtPoolHoldsContactID(pCtx->ActiveContacts, id)) {
+            // Superseded: this ContactID is still alive in the pool, so
+            // Phase A or Phase C is guaranteed to emit a fresh, correctly
+            // timestamped report for it later this very frame. Drop the
+            // stale queued one outright rather than drain it - draining
+            // would duplicate the ContactID in OutResult (see comment
+            // above); dropping just means the finger's position for the
+            // frame that originally overflowed is superseded by the
+            // very next frame's report instead of being shown a frame
+            // late, which is what should happen anyway.
+            continue;
+        }
+
+        if (OutResult->ContactCount < PTP_MAX_CONTACT_POINTS) {
+            PPTP_CORE_CONTACT outC = &OutResult->Contacts[OutResult->ContactCount];
+            outC->ContactID   = pCtx->OverflowContactID[k];
+            outC->X           = pCtx->OverflowX[k];
+            outC->Y           = pCtx->OverflowY[k];
+            outC->Phase       = pCtx->OverflowPhase[k];
+            outC->Confident   = pCtx->OverflowConfident[k];
+            outC->PalmSuspect = FALSE;
+            OutResult->ContactCount++;
+            continue;
+        }
+
+        // Orphaned (ContactID no longer live) but still no room this
+        // frame either - keep it queued for a later frame.
+        pCtx->OverflowContactID[keep] = pCtx->OverflowContactID[k];
+        pCtx->OverflowX[keep]         = pCtx->OverflowX[k];
+        pCtx->OverflowY[keep]         = pCtx->OverflowY[k];
+        pCtx->OverflowPhase[keep]     = pCtx->OverflowPhase[k];
+        pCtx->OverflowConfident[keep] = pCtx->OverflowConfident[k];
+        keep++;
     }
 
-    // AUDIT FIX: entries beyond what fit this frame used to be discarded
-    // outright (OverflowCount was unconditionally zeroed below regardless
-    // of k). Not reachable today - DrainOverflow runs against a freshly
-    // zeroed OutResult before anything else touches it, and OverflowCount
-    // is itself capped at PTP_MAX_CONTACT_POINTS, so k always reaches
-    // OverflowCount before the capacity check can fail. Compacting the
-    // (currently always-empty) tail down to index 0 instead of an
-    // unconditional reset costs nothing and keeps this function correct
-    // by construction rather than by coincidence of today's call order.
-    UCHAR remaining = (UCHAR)(pCtx->OverflowCount - k);
-    if (remaining > 0) {
-        RtlMoveMemory(pCtx->OverflowContactID, &pCtx->OverflowContactID[k], remaining * sizeof(ULONG));
-        RtlMoveMemory(pCtx->OverflowX,         &pCtx->OverflowX[k],         remaining * sizeof(USHORT));
-        RtlMoveMemory(pCtx->OverflowY,         &pCtx->OverflowY[k],         remaining * sizeof(USHORT));
-        RtlMoveMemory(pCtx->OverflowPhase,     &pCtx->OverflowPhase[k],     remaining * sizeof(CONTACT_PHASE));
-        RtlMoveMemory(pCtx->OverflowConfident, &pCtx->OverflowConfident[k], remaining * sizeof(BOOLEAN));
-    }
-    pCtx->OverflowCount = remaining;
+    pCtx->OverflowCount = keep;
 }
 
 // PTPCore_ProcessFrame
