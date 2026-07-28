@@ -63,7 +63,7 @@ typedef enum _CONTACT_VELOCITY_BUCKET
 // blends toward a stale previous value or "catches up" over multiple
 // frames, so it does not reintroduce the brake-before-stop artifact the
 // EMA skip above was written to fix.
-#define SCROLL_SCALE_NUM  7
+#define SCROLL_SCALE_NUM  8
 #define SCROLL_SCALE_DEN  10
 
 static inline USHORT
