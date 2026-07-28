@@ -14,8 +14,6 @@ The USB implementation for **MacBook Pro 16,1 (2019)** is considered feature-com
 
 The driver has been extensively tested on this device and is optimized specifically for its trackpad.
 
-Support for other Apple T2 devices may be incomplete or require additional tuning.
-
 ---
 
 # Features
@@ -40,9 +38,17 @@ Support for other Apple T2 devices may be incomplete or require additional tunin
 
 * Apple MacBook Pro 16,1 (2019, T2)
 
-### Experimental
+### ?
 
-* Other USB Apple trackpads supported by the original project work, but are not actively maintained or tested.
+* Other T2 Devices
+
+### Other MacBooks Non T2
+
+* Other Apple trackpads supported by the original project work, but are not actively maintained or tested.
+
+### Magic TrackPad 2
+
+* Use https://github.com/vitoplantamura/MagicTrackpad2ForWindows
 
 ---
 
