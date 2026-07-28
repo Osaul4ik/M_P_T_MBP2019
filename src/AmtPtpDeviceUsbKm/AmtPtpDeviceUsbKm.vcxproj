@@ -30,7 +30,6 @@
     <ClCompile Include="ActiveContact.c" />
     <ClCompile Include="Device.c" />
     <ClCompile Include="Driver.c" />
-    <ClCompile Include="Gesture.c" />
     <ClCompile Include="Hid.c" />
     <ClCompile Include="Input.c" />
     <ClCompile Include="Interrupt.c" />
@@ -43,7 +42,6 @@
     <ClInclude Include="ActiveContact.h" />
     <ClInclude Include="Device.h" />
     <ClInclude Include="Driver.h" />
-    <ClInclude Include="Gesture.h" />
     <ClInclude Include="Input.h" />
     <ClInclude Include="Match.h" />
     <ClInclude Include="Palm.h" />
