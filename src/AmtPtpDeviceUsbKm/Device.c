@@ -155,11 +155,12 @@ AmtPtpEvtDeviceD0Entry(
     pDeviceContext->ForceTouchActive     = FALSE;
     pDeviceContext->ForceTouchAnchorValid = FALSE;
     pDeviceContext->ForceTouchDragLockout = FALSE;
-    // A pending, undelivered force-touch edge from a previous power
-    // session is meaningless once the button state has been reset above -
-    // deliver it now would risk a bogus right-click on the very first
-    // frame after resume. Drop it, not carry it forward.
-    pDeviceContext->PendingForceTouchEdgeValid = FALSE;
+    // Any pending, undelivered force-touch edges from a previous power
+    // session are meaningless once the button state has been reset above -
+    // delivering them now would risk a bogus right-click sequence on the
+    // very first frames after resume. Drop them, not carry them forward.
+    pDeviceContext->PendingForceTouchEdgeHead  = 0;
+    pDeviceContext->PendingForceTouchEdgeCount = 0;
     pDeviceContext->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
     AmtContactPoolInit(pDeviceContext->ActiveContacts);
 
