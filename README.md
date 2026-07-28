@@ -1,42 +1,105 @@
-# Windows Precision Touchpad Implementation for Apple MacBook Pro 2019 16'
+# WellspringPTP
 
-# About Fork
-This build is primarily developed and tuned for personal use on MacBook Pro 2019 16".
-It reflects behavior and fixes based on testing on this specific hardware, and may be broken or not fully optimized for other devices.
+**Windows Precision Touchpad driver for Apple MacBook trackpads.**
 
-# Install Note: 
-* Uninstall old touchpad driver
-* Install new
-  
-Requires Windows running in Test Mode (driver signature enforcement disabled).
+WellspringPTP is a Windows Precision Touchpad driver focused on delivering a native, responsive and reliable experience on Apple MacBook hardware.
 
-## Also Uninstallation (extremely important for reinstallation `Trackpad++` and such)
+The project started as a fork of mac-precision-touchpad and has since been extensively reworked with numerous improvements and new features.
 
-See also [here](https://magicutilities.net/magic-trackpad/help/mac-precision-touchpad-driver-installed).
+---
 
-1. Go to device manager
-2. Find the "Apple Precision Touch Device", "Apple Multi-touch Trackpad HID filter" and "Apple Multi-touch Auxiliary Services"
-3. Right click "remove the device" and also check "uninstall driver"
-4. Rescan devices
+# Current Status
 
-## Roadmap
+The USB implementation for **MacBook Pro 16,1 (2019)** is considered feature-complete and is now primarily in the tuning and stabilization phase.
 
-- [x] Add palm detection for MBP2019 (usbkm)
-- [x] Fix scroll for MBP2019 (usbkm)
-- [x] Fix cursor jump after gestures (usbkm)
-- [ ] Add palm detection for MBA 2015 (usbum)
-- [ ] Fix ghost tap for MBA 2015 (usbum)
-- [x] Adjust palm detection & scroll sensivity (Little More) (usbkm)
-- [x] Code review (usbkm)
-- [x] Optimization (usbkm)
-- [ ] Sign?
+The driver has been extensively tested on this device and is optimized specifically for its trackpad.
 
-## Main Project
-[mac-precision-touchpad](https://github.com/imbushuo/mac-precision-touchpad)
+Support for other Apple T2 devices may be incomplete or require additional tuning.
 
- 
-## License
+---
 
-- USB driver is licensed under [GPLv2](LICENSE-GPL.md).
-- SPI driver is licensed under [MIT](LICENSE-MIT.md).
+# Features
 
+* Windows Precision Touchpad support
+* Native multi-touch gestures
+* Reworked contact matching pipeline
+* Stable Contact ID management
+* Improved cursor stability
+* Enhanced palm rejection
+* Overflow packet handling
+* Force Touch for open context menu (Next release)
+* Low-latency input processing
+* Optimized scrolling behavior
+* Production-oriented architecture focused on correctness and maintainability
+
+---
+
+# Supported Devices
+
+### Fully supported
+
+* Apple MacBook Pro 16,1 (2019, T2)
+
+### Experimental
+
+* Other USB Apple trackpads supported by the original project work, but are not actively maintained or tested.
+
+---
+
+# Installation
+
+1. Install the WellspringPTP driver.
+2. Reboot if required.
+
+> **Note**
+>
+> The driver currently requires Windows Test Mode because it is not digitally signed.
+
+---
+
+# Driver Removal
+This step is important before installing another Apple touchpad driver (Trackpad++, Magic Utilities, etc.).
+
+1. Open **Device Manager**.
+2. Find touchpad driver in HID section
+3. Enable **Delete the driver software for this device**.
+4. Scan for hardware changes or reboot. (Use Alt key in Device Manager and arrows)
+
+---
+
+# Development Status
+
+## USBKM Driver (MacBook Pro 16,1)
+
+* ✅ Contact lifecycle redesign
+* ✅ Stable contact matching
+* ✅ Palm rejection
+* ✅ Gesture stability improvements
+* ✅ Scroll improvements
+* ✅ Cursor jump fixes
+* ✅ Force Touch implementation
+* ❌  Driver optimization
+* ❌  Code audit 
+
+---
+
+# Other Drivers
+
+The repository also contains additional driver implementations inherited from the original project.
+
+These components are currently included largely unchanged and have not received the same level of redesign, testing, or optimization as the USBKM implementation for the MacBook Pro 16,1.
+
+Only the USBKM driver is actively developed and maintained within this project.
+
+# Credits
+
+This project is based on the excellent work of the original **mac-precision-touchpad** project by imbushuo.
+
+While the original project provided the foundation, the USB implementation has undergone substantial architectural redesign and behavior changes focused on MacBook Pro 16,1.
+
+---
+
+# License
+
+* USB driver — GPL v2
+* SPI driver — MIT
