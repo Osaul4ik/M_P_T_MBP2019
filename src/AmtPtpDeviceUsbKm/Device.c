@@ -84,7 +84,6 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
     UNREFERENCED_PARAMETER(ResourceListTranslated);
     PAGED_CODE();
 
-    status         = STATUS_SUCCESS;
     pDeviceContext = DeviceGetContext(Device);
 
     if (pDeviceContext->UsbDevice == NULL) {
@@ -157,6 +156,11 @@ AmtPtpEvtDeviceD0Entry(
     pDeviceContext->ForceTouchActive     = FALSE;
     pDeviceContext->ForceTouchAnchorValid = FALSE;
     pDeviceContext->ForceTouchDragLockout = FALSE;
+    // A pending, undelivered force-touch edge from a previous power
+    // session is meaningless once the button state has been reset above -
+    // deliver it now would risk a bogus right-click on the very first
+    // frame after resume. Drop it, not carry it forward.
+    pDeviceContext->PendingForceTouchEdgeValid = FALSE;
     pDeviceContext->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
     AmtContactPoolInit(pDeviceContext->ActiveContacts);
 
@@ -164,10 +168,13 @@ AmtPtpEvtDeviceD0Entry(
     // hints from a previous power session.
     RtlZeroMemory(&pDeviceContext->RecentLifts, sizeof(pDeviceContext->RecentLifts));
 
-    status = AmtPtpSetWellspringMode(pDeviceContext, TRUE);
-    if (!NT_SUCCESS(status)) {
-        status = STATUS_SUCCESS;
-    }
+    // Wellspring-mode failure here is intentionally non-fatal - status is
+    // deliberately NOT propagated, only the WdfIoTargetStart result below
+    // is (this matches the pre-existing behavior; the standalone
+    // "status = STATUS_SUCCESS" reset previously here was redundant, since
+    // status is unconditionally overwritten by the next assignment either
+    // way).
+    (VOID)AmtPtpSetWellspringMode(pDeviceContext, TRUE);
 
     status = WdfIoTargetStart(
         WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe));
