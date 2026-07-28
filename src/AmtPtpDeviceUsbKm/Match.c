@@ -49,27 +49,6 @@ AmtMatchShapeDistance(
     return (LONG)dMajor + dMinor + dPressure;
 }
 
-// Is this hardware slot already claimed by a live, actively-tracked
-// pool contact? If yes, the raw contact reporting on it this frame is
-// a continuing touch (already born), not a fresh one - regardless of
-// what the firmware's Origin field happens to say. Origin==0 is only
-// ever exercised elsewhere in this driver when a spatial correspondence
-// already exists (rebind case) - it was never proven correct for the
-// very first touch on an empty pad, so the birth-zone gate below does
-// not rely on it.
-static BOOLEAN
-AmtSlotHasActiveContact(
-    _In_reads_(MAX_CONTACTS) const ACTIVE_CONTACT* Pool,
-    _In_ USHORT                                    SlotIndex
-)
-{
-    for (size_t p = 0; p < MAX_CONTACTS; p++) {
-        if (Pool[p].State == CONTACT_ACTIVE && Pool[p].LastSlotHint == SlotIndex)
-            return TRUE;
-    }
-    return FALSE;
-}
-
 VOID
 AmtMatchBuildCandidates(
     _In_  const RAW_FRAME*                        RawFrame,
@@ -84,28 +63,6 @@ AmtMatchBuildCandidates(
 
     for (UCHAR i = 0; i < RawFrame->ContactCount; i++) {
         const RAW_CONTACT* rc = &RawFrame->Contacts[i];
-
-        // Birth-only suppression zone (bottom edge): a raw contact whose
-        // hardware slot has NO existing active pool entry is being born
-        // this frame - if it's inside the zone, ignore it outright,
-        // never add it as a candidate at all. A contact whose slot
-        // already has an active pool entry (already tracked, e.g.
-        // dragging) skips this branch entirely regardless of position.
-        // Separate from AmtPalmClassify's shape-based rejection below,
-        // which is unaffected by this change.
-        BOOLEAN slotAlreadyActive = AmtSlotHasActiveContact(Pool, rc->SlotIndex);
-        BOOLEAN inZone = AmtPalmInBottomBirthZone(DevInfo, (INT)rc->Y);
-
-        // TEMP DIAGNOSTIC - remove once confirmed on hardware. Filter
-        // DbgView on "BirthZone".
-        KdPrint((
-            "BirthZone: slot=%u Origin=%u Y=%u slotActive=%u inZone=%u -> %s\n",
-            rc->SlotIndex, rc->Origin, rc->Y, slotAlreadyActive, inZone,
-            (!slotAlreadyActive && inZone) ? "SUPPRESSED" : "passed through"));
-
-        if (!slotAlreadyActive && inZone) {
-            continue;
-        }
 
         PALM_CLASS palm = AmtPalmClassify(rc->Major, rc->Minor, DevInfo,
                                           (INT)rc->X, (INT)rc->Y);
