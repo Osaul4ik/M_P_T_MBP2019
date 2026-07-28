@@ -399,8 +399,39 @@ PTPCore_ProcessFrame(
                 // Defer one frame for gesture recognizer.
                 pCtx->ActiveContacts[p].FramesAlive++;
 
+                // BUG FIX (inertia killed by deferred-frame freeze): this
+                // used to re-report the contact at its unchanged
+                // ReportX/Y - i.e. zero delta - for this extra frame.
+                // That's fine for a slow/stationary lift, but a fast,
+                // SHORT flick (the whole 2-finger gesture lasting under
+                // MIN_CONTACT_LIFETIME_FRAMES sensor frames, which a
+                // quick repeated-flick scroll hits often) was still
+                // moving fast when the finger actually left the pad.
+                // Reporting a sudden zero-motion frame right before the
+                // real UP tells Windows' PTP recognizer the flick
+                // decelerated to a stop at the very last instant, which
+                // suppresses/undersizes the exit velocity it computes
+                // for inertial scrolling - visible as inertia randomly
+                // failing to kick in on fast repeated swipes. Extrapolate
+                // one step forward using LastDeltaX/Y (this contact's
+                // own last committed per-frame delta - see ActiveContact.h)
+                // instead, so the deferred frame keeps reporting the same
+                // motion the finger actually had, preserving the exit
+                // velocity signal. Clamped to USHORT range same as the
+                // scroll-scale path above (Activecontact.c) for the same
+                // reason - defensive only, not expected to be hit.
+                LONG extrapX = (LONG)pCtx->ActiveContacts[p].ReportX +
+                               pCtx->ActiveContacts[p].LastDeltaX;
+                LONG extrapY = (LONG)pCtx->ActiveContacts[p].ReportY +
+                               pCtx->ActiveContacts[p].LastDeltaY;
+                USHORT reportX = (USHORT)(extrapX < 0 ? 0 : (extrapX > 0xFFFF ? 0xFFFF : extrapX));
+                USHORT reportY = (USHORT)(extrapY < 0 ? 0 : (extrapY > 0xFFFF ? 0xFFFF : extrapY));
+
+                pCtx->ActiveContacts[p].ReportX = reportX;
+                pCtx->ActiveContacts[p].ReportY = reportY;
+
                 AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
-                                   pCtx->ActiveContacts[p].ReportX, pCtx->ActiveContacts[p].ReportY,
+                                   reportX, reportY,
                                    CONTACT_PHASE_MOVE, TRUE);
                 continue; // no lift-off this frame
             }
