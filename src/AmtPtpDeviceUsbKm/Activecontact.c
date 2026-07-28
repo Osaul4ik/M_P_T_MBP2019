@@ -44,8 +44,15 @@ typedef enum _CONTACT_VELOCITY_BUCKET
 
 #define SMOOTHING_ALPHA_NUM  3
 #define SMOOTHING_ALPHA_DEN  8
-#define SMOOTHING_ALPHA_NUM_SLOW  2  // more smoothing at rest
-#define SMOOTHING_ALPHA_NUM_FAST  6  // less smoothing, more responsive
+// AUDIT (adaptive EMA rework - see AmtContactCommitSample): this used to
+// be 2 (25% raw / 75% previous report) - heavy enough that even slow,
+// deliberate cursor movement visibly lagged/sprang behind the finger
+// ("jelly cursor"), which is exactly the speed regime this bucket now
+// governs (EMA is skipped entirely at MEDIUM/FAST - see below). Raised to
+// 6 (75% raw): still pulls in enough of the previous report to smooth out
+// sub-deadzone-adjacent sensor tremor during fine, near-stationary
+// pointing, but no longer produces perceptible trailing lag.
+#define SMOOTHING_ALPHA_NUM_SLOW  6  // light smoothing only, near-stationary
 
 // Scroll delta scale: reports ~70% of the raw per-frame delta during
 // gestureActive frames (SMOOTHING_ALPHA_* has nothing to do with this -
@@ -129,13 +136,22 @@ AmtContactDeadzoneForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity)
     }
 }
 
+// AUDIT: FAST's own alpha branch is gone (was SMOOTHING_ALPHA_NUM_FAST) -
+// AmtContactCommitSample now only ever runs the EMA blend at VELOCITY_SLOW
+// (ordinary movement) or VELOCITY_UNKNOWN (the retap-seeded first sample,
+// which is always classified UNKNOWN - see AmtContactClassifyVelocity's
+// DtQpcTicks<=0 guard). MEDIUM/FAST movement always skips EMA and reports
+// raw, so an alpha value for them would never be read - this function
+// still classifies them (for the default case, same value as UNKNOWN) in
+// case a future caller needs it, but there's no dedicated FAST constant
+// to keep in sync anymore.
 static inline INT
 AmtContactAlphaForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity)
 {
     switch (Velocity) {
     case VELOCITY_SLOW: return SMOOTHING_ALPHA_NUM_SLOW;
-    case VELOCITY_FAST: return SMOOTHING_ALPHA_NUM_FAST;
     case VELOCITY_MEDIUM:
+    case VELOCITY_FAST:
     case VELOCITY_UNKNOWN:
     default:             return SMOOTHING_ALPHA_NUM;
     }
@@ -392,7 +408,9 @@ AmtContactEvaluateDeadzone(
     return (dx >= ThresholdUnits) || (dy >= ThresholdUnits);
 }
 
-// RetapSeeded birth: run EMA normally against seeded baseline.
+// RetapSeeded birth: run EMA normally against seeded baseline. Ordinary
+// solo movement also now runs EMA, but ONLY while VelocityIsSlow - see the
+// AUDIT comment on skipEma below for why.
 static inline VOID
 AmtContactCommitSample(
     _Inout_ PACTIVE_CONTACT Contact,
@@ -401,6 +419,7 @@ AmtContactCommitSample(
     _In_    BOOLEAN         passedDeadzone,
     _In_    BOOLEAN         aliveCountIsOne,
     _In_    BOOLEAN         gestureActive,
+    _In_    BOOLEAN         velocityIsSlow,
     _In_    INT             alphaNum,
     _In_    BOOLEAN         commitIsRetapSeededFirstSample,
     _Out_   USHORT*         OutX,
@@ -416,30 +435,42 @@ AmtContactCommitSample(
         Contact->HystX = candX;
         Contact->HystY = candY;
 
-        // AUDIT (scroll speed + end-of-inertia glitch): EMA smoothing
-        // (SMOOTHING_ALPHA_NUM/DEN) blends 62.5% raw / 37.5% previous
-        // report every frame. During solo pointer movement that's a
-        // reasonable jitter filter. During 2(+)-finger movement it does
-        // two things Windows' own PTP scroll/inertia math doesn't
-        // expect: (1) it permanently damps the reported per-frame delta
-        // below the finger's real displacement, which reads as slower
-        // scrolling than the physical gesture; (2) after the finger
-        // decelerates and stops, the filter keeps asymptotically
-        // creeping toward the final raw position for a few more frames
-        // even though the finger is no longer moving - Windows samples
-        // the trailing frames before lift-off to seed inertia velocity,
-        // so this creep shows up as a brief, inconsistent "hitch" right
-        // at the transition into momentum scrolling instead of a clean
-        // stop. Reporting the true raw (deadzone-committed) position
-        // during gesture frames removes both artifacts - Windows' own
-        // stack already does its own filtering/velocity estimation on
-        // genuine digitizer input, which is what PTP expects it to
-        // receive; this doesn't add any scroll logic of our own, only
-        // stops hiding the real finger trajectory from it.
+        // AUDIT (scroll speed + end-of-inertia glitch, generalized to solo
+        // pointer movement - "jelly cursor" fix, then made adaptive again):
+        // EMA smoothing (SMOOTHING_ALPHA_NUM*/DEN) blends a fraction of raw
+        // with the previous report every frame. Running it on EVERY solo
+        // movement frame (the original design) made the cursor feel
+        // laggy/springy ("jelly"): the reported position exponentially
+        // chases the real finger position instead of tracking it, most
+        // noticeably during ordinary slow/medium deliberate movement. The
+        // fix isn't to delete EMA outright, though - it's still the right
+        // tool for smoothing genuine sensor tremor during slow, fine
+        // pointing (placing the cursor precisely), where a *little* lag is
+        // imperceptible because the finger itself is barely moving, and
+        // the alternative (raw) can look shaky at that speed. It's simply
+        // the wrong tool once the finger is moving at any real speed - at
+        // MEDIUM/FAST the lag becomes very perceptible while the raw
+        // signal is already smooth enough (fast motion naturally averages
+        // out single-sample sensor noise), so those speeds skip straight
+        // to raw. This is the same trade the 2+-finger scroll fix below
+        // made permanently (raw always, since scroll speed varies too
+        // widely for one alpha to suit) - solo movement instead varies the
+        // decision per frame by measured velocity, which is what
+        // "adaptive" means here in practice: smoothing exactly where it
+        // helps (slow/near-stationary), none where it would just add lag
+        // (medium/fast).
+        //
+        // EMA also always applies for the retap-seeded first sample
+        // (commitIsRetapSeededFirstSample) regardless of velocity -
+        // AmtContactBirthWithRetapSmoothing deliberately seeds ReportX/Y to
+        // the OLD lift position so a slightly-imprecise re-tap eases toward
+        // the new position instead of jumping the cursor; that transition
+        // is always classified VELOCITY_UNKNOWN (no prior timestamp yet -
+        // see AmtContactClassifyVelocity), so it needs its own explicit
+        // carve-out here rather than falling out of the velocity check.
         BOOLEAN skipEma =
-            (Contact->PendingFirstSample && !commitIsRetapSeededFirstSample) ||
-            (Contact->WasInGesture && aliveCountIsOne) ||
-            gestureActive;
+            gestureActive ||
+            (!commitIsRetapSeededFirstSample && !velocityIsSlow);
 
         if (skipEma) {
             if (gestureActive) {
@@ -465,9 +496,11 @@ AmtContactCommitSample(
                 repX = (USHORT)(newX < 0 ? 0 : (newX > 0xFFFF ? 0xFFFF : newX));
                 repY = (USHORT)(newY < 0 ? 0 : (newY > 0xFFFF ? 0xFFFF : newY));
             } else {
-                // Not a scroll frame (first sample, or solo frame right
-                // after a gesture ends) - report the raw position as
-                // before, and drop any leftover scroll remainder so it
+                // Not a scroll frame - this is ordinary movement at
+                // MEDIUM/FAST velocity (see skipEma above; SLOW instead
+                // falls to the EMA branch below), plus any genuinely-fresh
+                // first sample. Report the raw deadzone-committed position
+                // directly, and drop any leftover scroll remainder so it
                 // can't leak into a later, unrelated scroll gesture.
                 repX = candX;
                 repY = candY;
@@ -547,7 +580,8 @@ AmtContactUpdate(
     }
 
     AmtContactCommitSample(Contact, rawX, rawY, passed, aliveCountIsOne,
-                           gestureActive, alphaNum, retapSeededFirstSample,
+                           gestureActive, (BOOLEAN)(velocity == VELOCITY_SLOW),
+                           alphaNum, retapSeededFirstSample,
                            OutX, OutY);
 
     Contact->LastSlotHint = slotHint;
