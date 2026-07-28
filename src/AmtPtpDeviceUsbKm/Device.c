@@ -283,10 +283,13 @@ AmtPtpSetWellspringMode(
     WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(
         &sendOptions, WDF_REL_TIMEOUT_IN_SEC(WELLSPRING_CONTROL_TRANSFER_TIMEOUT_SEC));
 
-    if (DeviceContext->DeviceInfo->tp_type == TYPE3) {
-        DeviceContext->IsWellspringModeOn = IsWellspringModeOn;
-        return STATUS_SUCCESS;
-    }
+    // NOTE: every entry in Bcm5974ConfigTable (fallback + all T2 variants,
+    // including the confirmed 16" 0x0340) is built via DATAFORMAT(TYPE4) -
+    // none use TYPE3. A prior TYPE3 early-return here ("T2 devices skip
+    // the mode-switch") was therefore dead code: it never matched any
+    // configured device, so every real device already executes the
+    // read/modify/write sequence below. Removed rather than left in to
+    // avoid implying a code path exists that doesn't.
 
     NT_ASSERT(DeviceContext->DeviceInfo->um_size <= sizeof(buffer));
 
