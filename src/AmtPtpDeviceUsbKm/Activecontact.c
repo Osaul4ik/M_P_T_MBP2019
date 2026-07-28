@@ -66,6 +66,19 @@ typedef enum _CONTACT_VELOCITY_BUCKET
 #define SCROLL_SCALE_NUM  8
 #define SCROLL_SCALE_DEN  10
 
+// Slow-scroll variant: applied instead of SCROLL_SCALE_NUM/DEN above ONLY
+// on gesture frames where the moving contact's velocity classifies as
+// VELOCITY_SLOW (reuses the same AmtContactClassifyVelocity bucket/
+// threshold that already governs solo-pointer deadzone/EMA - see
+// VELOCITY_SLOW_UNITS_PER_SEC). Fast/medium 2-finger scroll is
+// deliberately left untouched at SCROLL_SCALE_NUM/DEN (8/10): the
+// complaint this fixes is specifically that slow, deliberate scrolling
+// felt faster than the finger motion suggested, not that scrolling in
+// general is too fast. 14/25 = 0.56, i.e. 0.8 * 0.7 - ~30% slower than
+// the existing 0.8x factor, applied only in the slow-velocity bucket.
+#define SCROLL_SCALE_NUM_SLOW  14
+#define SCROLL_SCALE_DEN_SLOW  25
+
 static inline USHORT
 AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal, _In_ INT alphaNum)
 {
@@ -157,17 +170,26 @@ AmtContactAlphaForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity)
     }
 }
 
-// Scales one axis of a gesture-frame delta by SCROLL_SCALE_NUM/DEN using a
-// carried remainder (Bresenham-style error term), so slow, deliberate
-// scroll motion (e.g. dx=1 unit/frame) still moves the cursor instead of
-// being zeroed out by integer truncation (1 * 7 / 10 == 0 without this).
-// *Rem must be reset to 0 by the caller whenever gestureActive is FALSE.
+// Scales one axis of a gesture-frame delta by ScaleNum/ScaleDen (caller
+// picks SCROLL_SCALE_NUM/DEN or the _SLOW variant per-frame, see
+// AmtContactCommitSample) using a carried remainder (Bresenham-style
+// error term), so slow, deliberate scroll motion (e.g. dx=1 unit/frame)
+// still moves the cursor instead of being zeroed out by integer
+// truncation (1 * 7 / 10 == 0 without this). *Rem must be reset to 0 by
+// the caller whenever gestureActive is FALSE. *Rem is carried in the
+// units of whichever ScaleDen was in effect when it was last written; a
+// frame-to-frame switch between the normal and _SLOW scale (velocity
+// crossing the SLOW threshold mid-scroll) reuses the stale remainder
+// as-is against the new denominator rather than rescaling it, which can
+// bias the very next frame's rounding by at most one unit - negligible
+// and self-correcting within a couple of frames, not worth the extra
+// bookkeeping to avoid.
 static inline SHORT
-AmtScaleScrollDelta(_In_ INT rawDelta, _Inout_ LONG* Rem)
+AmtScaleScrollDelta(_In_ INT rawDelta, _Inout_ LONG* Rem, _In_ INT ScaleNum, _In_ INT ScaleDen)
 {
-    INT numerator = rawDelta * SCROLL_SCALE_NUM + *Rem;
-    INT scaled    = numerator / SCROLL_SCALE_DEN;       // truncates toward 0
-    *Rem = numerator - scaled * SCROLL_SCALE_DEN;        // exact remainder
+    INT numerator = rawDelta * ScaleNum + *Rem;
+    INT scaled    = numerator / ScaleDen;       // truncates toward 0
+    *Rem = numerator - scaled * ScaleDen;        // exact remainder
     return (SHORT)scaled;
 }
 
@@ -474,17 +496,27 @@ AmtContactCommitSample(
 
         if (skipEma) {
             if (gestureActive) {
-                // Scroll frame: report ReportX/Y + 70% of the raw delta,
-                // not the raw position itself. Baseline for the *next*
-                // frame's delta is this scaled result (Contact->ReportX/Y
-                // below), so scaling never compounds across frames - only
-                // the current frame's motion is reduced, same as the raw
-                // path was doing before this change, just at 70% rate.
+                // Scroll frame: report ReportX/Y + a fraction of the raw
+                // delta, not the raw position itself. Baseline for the
+                // *next* frame's delta is this scaled result
+                // (Contact->ReportX/Y below), so scaling never compounds
+                // across frames - only the current frame's motion is
+                // reduced. Which fraction depends on how fast this
+                // contact is currently moving: velocityIsSlow (computed
+                // by the caller from the same VELOCITY_SLOW bucket used
+                // for solo-pointer deadzone/EMA) selects the gentler
+                // SCROLL_SCALE_*_SLOW factor so slow, deliberate 2-finger
+                // scrolling isn't reported faster than the finger is
+                // actually moving; anything MEDIUM/FAST keeps the
+                // original SCROLL_SCALE_NUM/DEN (8/10) rate unchanged.
                 INT dx = (INT)candX - (INT)Contact->ReportX;
                 INT dy = (INT)candY - (INT)Contact->ReportY;
 
-                LONG newX = (LONG)Contact->ReportX + AmtScaleScrollDelta(dx, &Contact->ScrollRemX);
-                LONG newY = (LONG)Contact->ReportY + AmtScaleScrollDelta(dy, &Contact->ScrollRemY);
+                INT scrollScaleNum = velocityIsSlow ? SCROLL_SCALE_NUM_SLOW : SCROLL_SCALE_NUM;
+                INT scrollScaleDen = velocityIsSlow ? SCROLL_SCALE_DEN_SLOW : SCROLL_SCALE_DEN;
+
+                LONG newX = (LONG)Contact->ReportX + AmtScaleScrollDelta(dx, &Contact->ScrollRemX, scrollScaleNum, scrollScaleDen);
+                LONG newY = (LONG)Contact->ReportY + AmtScaleScrollDelta(dy, &Contact->ScrollRemY, scrollScaleNum, scrollScaleDen);
 
                 // Clamp both ends before truncating to USHORT. The upper
                 // clamp can't be hit today (ReportX/Y plus the scaled
