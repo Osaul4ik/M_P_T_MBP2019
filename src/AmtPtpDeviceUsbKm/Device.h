@@ -67,6 +67,19 @@ typedef struct _DEVICE_CONTEXT
     USHORT  ForceTouchAnchorY;
     BOOLEAN ForceTouchDragLockout;
 
+    // AUDIT FIX: force-touch synthetic right-click delivery (Interrupt.c)
+    // opportunistically claims a SECOND pending IOCTL_HID_READ_REPORT
+    // request off InputQueue the moment a down/up edge fires. Previously,
+    // if no second request happened to be queued that exact pass, the
+    // edge was silently dropped - a real, reproducible way to lose a
+    // force-touch click depending on mouhid.sys's read cadence. These two
+    // fields let the edge survive to the next USB interrupt completion
+    // instead: PendingForceTouchEdgeValid latches "there's an undelivered
+    // edge", PendingForceTouchButton2State is the Button2 value (1=down,
+    // 0=up) it should carry once a request becomes available.
+    BOOLEAN PendingForceTouchEdgeValid;
+    BOOLEAN PendingForceTouchButton2State;
+
     // Click arbitration (Ptpcore.c) - see CLICK_ARBITRATION_STATE above.
     // PeakPressure/StartQpc are only meaningful while State == PENDING.
     CLICK_ARBITRATION_STATE ClickArbitrationState;
