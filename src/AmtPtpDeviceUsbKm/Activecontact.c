@@ -11,18 +11,41 @@
 // producing an asymmetric stale-vs-updated report between the two
 // contacts and a visibly steppy/uneven scroll at slow, deliberate
 // speeds. The original fix introduced a second, lower-but-nonzero
-// threshold used only while >=2 fingers are concurrently down, keeping
-// genuinely stationary multi-finger holds (e.g. a 2-finger tap-and-hold
-// for right-click) still filtered against single-unit sensor noise.
-// XY_DEADZONE_UNITS has since been independently lowered to 1 (the
-// minimum nonzero integer unit) for solo click/drag precision, which
-// leaves no room below it for a distinct nonzero gesture threshold - so
-// there is now a single shared threshold for both solo and gesture
-// frames. If XY_DEADZONE_UNITS is ever raised again, revisit whether
-// gesture frames still need their own lower value.
-#define XY_DEADZONE_UNITS          1
+// threshold used only while >=2 fingers are concurrently down. That
+// approach was superseded by velocity-adaptive filtering below, which
+// solves the same problem more directly (a genuinely stationary hold is
+// filtered because it's slow, not because it's solo-vs-gesture) and
+// also fixes the click/drag-precision case the old fixed threshold
+// couldn't reach without going all the way to zero.
+#define XY_DEADZONE_UNITS          1  // fallback: VELOCITY_UNKNOWN/MEDIUM
+#define XY_DEADZONE_UNITS_SLOW     2  // near-stationary: filter sensor noise
+#define XY_DEADZONE_UNITS_FAST     0  // fast motion: no deadzone lag
+
+// Velocity thresholds (normalized device units/sec, Chebyshev distance -
+// see AmtContactClassifyVelocity) that select the deadzone threshold and
+// solo-movement EMA alpha below. These are an initial estimate based on
+// the existing coordinate-range constants elsewhere in this file (e.g.
+// RETAP_MAX_DISTANCE), NOT calibrated against real hardware motion
+// traces - revisit if real-device testing shows the buckets are mistimed.
+#define VELOCITY_SLOW_UNITS_PER_SEC   50
+#define VELOCITY_FAST_UNITS_PER_SEC   400
+
+typedef enum _CONTACT_VELOCITY_BUCKET
+{
+    VELOCITY_UNKNOWN = 0,  // no reliable previous sample/timestamp to
+                            // measure against - falls back to the
+                            // original fixed threshold/alpha, unchanged
+                            // from behavior before this file's adaptive
+                            // filtering was added.
+    VELOCITY_SLOW,
+    VELOCITY_MEDIUM,
+    VELOCITY_FAST,
+} CONTACT_VELOCITY_BUCKET;
+
 #define SMOOTHING_ALPHA_NUM  3
 #define SMOOTHING_ALPHA_DEN  8
+#define SMOOTHING_ALPHA_NUM_SLOW  2  // more smoothing at rest
+#define SMOOTHING_ALPHA_NUM_FAST  6  // less smoothing, more responsive
 
 // Scroll delta scale: reports ~70% of the raw per-frame delta during
 // gestureActive frames (SMOOTHING_ALPHA_* has nothing to do with this -
@@ -37,14 +60,85 @@
 #define SCROLL_SCALE_DEN  10
 
 static inline USHORT
-AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal)
+AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal, _In_ INT alphaNum)
 {
-    // rawVal/prevVal are USHORT (>=0) and both SMOOTHING_ALPHA_* coefficients
-    // are positive, so blended is always >= 0 - no lower-bound clamp needed.
-    INT blended = ((INT)rawVal * SMOOTHING_ALPHA_NUM +
-                   (INT)prevVal * (SMOOTHING_ALPHA_DEN - SMOOTHING_ALPHA_NUM)) /
+    // rawVal/prevVal are USHORT (>=0) and alphaNum is one of the positive
+    // SMOOTHING_ALPHA_NUM_* constants (always < SMOOTHING_ALPHA_DEN), so
+    // blended is always >= 0 - no lower-bound clamp needed.
+    INT blended = ((INT)rawVal * alphaNum +
+                   (INT)prevVal * (SMOOTHING_ALPHA_DEN - alphaNum)) /
                   SMOOTHING_ALPHA_DEN;
     return (USHORT)blended;
+}
+
+// Classifies how fast a contact is moving, in normalized device units/sec,
+// by comparing the incoming raw sample against the contact's last
+// committed Hyst baseline (the same baseline AmtContactEvaluateDeadzone
+// tests against) over the elapsed QPC time since the contact was last
+// updated. Distance is Chebyshev (max(|dx|,|dy|)) to match the per-axis
+// OR-based deadzone test below rather than adding a sqrt for Euclidean
+// distance, which kernel mode code avoids (no FPU without explicit
+// save/restore).
+//
+// Returns VELOCITY_UNKNOWN - and callers should treat that as "use the
+// original fixed threshold/alpha" - whenever elapsed time or the clock
+// frequency isn't usable: DtQpcTicks <= 0 covers both a genuinely
+// nonpositive/zero delta AND the deliberate 0 a caller passes for "no
+// previous timestamp" (first sample after birth, where LastSeenQpc == 0).
+static CONTACT_VELOCITY_BUCKET
+AmtContactClassifyVelocity(
+    _In_ USHORT   rawX,
+    _In_ USHORT   rawY,
+    _In_ USHORT   prevX,
+    _In_ USHORT   prevY,
+    _In_ LONGLONG DtQpcTicks,
+    _In_ LONGLONG PerfFrequencyHz
+)
+{
+    if (DtQpcTicks <= 0 || PerfFrequencyHz <= 0) {
+        return VELOCITY_UNKNOWN;
+    }
+
+    INT dx = (INT)rawX - (INT)prevX;
+    if (dx < 0) dx = -dx;
+    INT dy = (INT)rawY - (INT)prevY;
+    if (dy < 0) dy = -dy;
+    INT distance = (dx > dy) ? dx : dy;
+
+    // unitsPerSec = distance * PerfFrequencyHz / DtQpcTicks, multiplying
+    // before dividing for integer precision. distance is USHORT-range and
+    // PerfFrequencyHz is a QPC frequency (platform-typical range, well
+    // under LONGLONG headroom), so this doesn't overflow for realistic
+    // values.
+    LONGLONG unitsPerSec = ((LONGLONG)distance * PerfFrequencyHz) / DtQpcTicks;
+
+    if (unitsPerSec <= VELOCITY_SLOW_UNITS_PER_SEC) return VELOCITY_SLOW;
+    if (unitsPerSec >= VELOCITY_FAST_UNITS_PER_SEC) return VELOCITY_FAST;
+    return VELOCITY_MEDIUM;
+}
+
+static inline INT
+AmtContactDeadzoneForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity)
+{
+    switch (Velocity) {
+    case VELOCITY_SLOW: return XY_DEADZONE_UNITS_SLOW;
+    case VELOCITY_FAST: return XY_DEADZONE_UNITS_FAST;
+    case VELOCITY_MEDIUM:
+    case VELOCITY_UNKNOWN:
+    default:             return XY_DEADZONE_UNITS;
+    }
+}
+
+static inline INT
+AmtContactAlphaForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity)
+{
+    switch (Velocity) {
+    case VELOCITY_SLOW: return SMOOTHING_ALPHA_NUM_SLOW;
+    case VELOCITY_FAST: return SMOOTHING_ALPHA_NUM_FAST;
+    case VELOCITY_MEDIUM:
+    case VELOCITY_UNKNOWN:
+    default:             return SMOOTHING_ALPHA_NUM;
+    }
 }
 
 // Scales one axis of a gesture-frame delta by SCROLL_SCALE_NUM/DEN using a
@@ -121,6 +215,9 @@ AmtContactBirth(
     c->ScrollRemY          = 0;
     c->LastSlotHint        = slotHint;
     c->LastSeenQpc         = 0; // set by first AmtContactUpdate call
+    c->LastMajor           = 0;
+    c->LastMinor           = 0;
+    c->LastPressure        = 0;
     c->FramesAlive         = 1; // birth frame counts as 1
 }
 
@@ -156,6 +253,9 @@ AmtContactBirthWithRetapSmoothing(
     c->ScrollRemY          = 0;
     c->LastSlotHint        = slotHint;
     c->LastSeenQpc         = 0;
+    c->LastMajor           = 0;
+    c->LastMinor           = 0;
+    c->LastPressure        = 0;
     c->FramesAlive         = 1;
 }
 
@@ -301,6 +401,7 @@ AmtContactCommitSample(
     _In_    BOOLEAN         passedDeadzone,
     _In_    BOOLEAN         aliveCountIsOne,
     _In_    BOOLEAN         gestureActive,
+    _In_    INT             alphaNum,
     _In_    BOOLEAN         commitIsRetapSeededFirstSample,
     _Out_   USHORT*         OutX,
     _Out_   USHORT*         OutY
@@ -381,8 +482,8 @@ AmtContactCommitSample(
         } else {
             Contact->ScrollRemX = 0;
             Contact->ScrollRemY = 0;
-            repX = AmtContactSmoothCoord(candX, Contact->ReportX);
-            repY = AmtContactSmoothCoord(candY, Contact->ReportY);
+            repX = AmtContactSmoothCoord(candX, Contact->ReportX, alphaNum);
+            repY = AmtContactSmoothCoord(candY, Contact->ReportY, alphaNum);
         }
     }
 
@@ -400,8 +501,12 @@ AmtContactUpdate(
     _Inout_ PACTIVE_CONTACT Contact,
     _In_    USHORT          rawX,
     _In_    USHORT          rawY,
+    _In_    USHORT          major,
+    _In_    USHORT          minor,
+    _In_    USHORT          pressure,
     _In_    USHORT          slotHint,
     _In_    LONGLONG        nowQpc,
+    _In_    LONGLONG        PerfFrequencyHz,
     _In_    BOOLEAN         aliveCountIsOne,
     _In_    BOOLEAN         gestureActive,
     _Out_   USHORT*         OutX,
@@ -416,7 +521,17 @@ AmtContactUpdate(
     BOOLEAN retapSeededFirstSample =
         Contact->PendingFirstSample && Contact->RetapSeeded;
 
-    INT deadzoneThreshold = XY_DEADZONE_UNITS;
+    // LastSeenQpc is still last frame's value here - AmtContactUpdate
+    // overwrites it further down, after this read. 0 means "no previous
+    // sample" (fresh birth, retap-seeded or not) and is handled by
+    // AmtContactClassifyVelocity via the DtQpcTicks<=0 guard below.
+    LONGLONG prevQpc  = Contact->LastSeenQpc;
+    LONGLONG dtTicks  = (prevQpc == 0) ? 0 : (nowQpc - prevQpc);
+    CONTACT_VELOCITY_BUCKET velocity = AmtContactClassifyVelocity(
+        rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz);
+
+    INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity);
+    INT alphaNum          = AmtContactAlphaForVelocity(velocity);
 
     if (Contact->PendingFirstSample) {
         if (retapSeededFirstSample) {
@@ -432,10 +547,14 @@ AmtContactUpdate(
     }
 
     AmtContactCommitSample(Contact, rawX, rawY, passed, aliveCountIsOne,
-                           gestureActive, retapSeededFirstSample, OutX, OutY);
+                           gestureActive, alphaNum, retapSeededFirstSample,
+                           OutX, OutY);
 
     Contact->LastSlotHint = slotHint;
     Contact->LastSeenQpc  = nowQpc;
+    Contact->LastMajor    = major;
+    Contact->LastMinor    = minor;
+    Contact->LastPressure = pressure;
 
     if (Contact->FramesAlive < 255)
         Contact->FramesAlive++;
