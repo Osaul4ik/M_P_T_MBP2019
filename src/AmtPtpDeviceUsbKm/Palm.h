@@ -29,17 +29,4 @@ AmtPalmClassify(
     _In_ INT                          NormY
 );
 
-// Birth-only suppression zone at the physical bottom edge (near the
-// click hinge / palm-rest area). Distinct from AmtPalmClassify: this
-// says nothing about shape and must ONLY be consulted for a contact
-// that is genuinely new (no existing active pool entry on its hardware
-// slot - see AmtSlotHasActiveContact in Match.c). A contact already
-// active and dragging through this same region must NOT be suppressed
-// - the caller is responsible for only calling this on true births.
-BOOLEAN
-AmtPalmInBottomBirthZone(
-    _In_ const struct BCM5974_CONFIG* DevInfo,
-    _In_ INT                          NormY
-);
-
 EXTERN_C_END
