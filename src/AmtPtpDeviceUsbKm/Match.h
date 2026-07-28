@@ -14,6 +14,9 @@ typedef struct _MATCH_CANDIDATE
     USHORT  SlotIndex;      // hw slot - HINT only
     USHORT  X;
     USHORT  Y;
+    USHORT  Major;          // touch_major, raw - matching tie-break only
+    USHORT  Minor;          // touch_minor, raw - matching tie-break only
+    USHORT  Pressure;       // raw ADC units - matching tie-break only
     BOOLEAN PalmLocal;       // excluded from matching/reporting
     BOOLEAN IdentityBreak;   // firmware origin==0 signal
     UCHAR   TipDropApplied;  // non-zero when X/Y is stale (debounce bridge)
@@ -56,7 +59,10 @@ AmtMatchBuildCandidates(
 // Max time gap for same-ContactID continuation (150ms).
 #define MATCH_MAX_TIME_DELTA_100NS (150LL * 10000LL)
 
-// Cost-based correspondence. Greedy min-cost, N,M<=5. Rejected on spatial/time gap or IdentityBreak.
+// Cost-based correspondence. Greedy min-cost, N,M<=5. Rejected on spatial/
+// time gap or IdentityBreak. Ties within MATCH_TIE_EPSILON_SQ break first
+// on LastSlotHint match, then (if that's also tied) on touch geometry/
+// pressure similarity - see MATCH_SHAPE_TIE_EPSILON in Match.c.
 VOID
 AmtMatchCorrespond(
     _In_  const MATCH_CANDIDATE_SET*               Candidates,
