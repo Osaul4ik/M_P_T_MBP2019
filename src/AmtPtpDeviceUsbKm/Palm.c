@@ -30,21 +30,21 @@
 // Hard cutoff at the physical bottom edge - unconditional dead zone,
 // rejected regardless of size/shape (unlike the wider, size-gated
 // scored zone below, which only affects large/palm-shaped contacts).
-// yRangeFull / DIVISOR = zone height. DIVISOR=17 -> ~5.88% of pad
-// height (~1/17). This is NOT the same mechanism as the size-gated
-// scored zone below, which still lets real small touches through
-// further up from the edge.
+// yRangeFull / DIVISOR = zone height. DIVISOR=10 -> 10% of pad height
+// (was DIVISOR=15 -> 6.67%; widened by ~3.3 percentage points per
+// request). This is NOT the same mechanism as the size-gated scored
+// zone below, which still lets real small touches through further up
+// from the edge.
 //
-// BUG FIX (dead zone was landing at the physical TOP edge instead of
-// the bottom): NormY==0 is the physical bottom of the pad (nearest the
-// click hinge / palm-rest area) and NormY==yRangeFull is the physical
-// top (nearest the keyboard) - see the Y-axis normalization comment in
-// Input.c (AmtInputParseFrame: nyRaw = DevInfo->y.max - raw_y). The
-// cutoff below must therefore trigger on SMALL NormY, not large NormY.
-// The previous `NormY > (yRangeFull - yRangeFull / DIVISOR)` fired on
-// the opposite (top) edge, killing legitimate touches near the
-// keyboard while leaving the real palm-rest edge completely open.
-#define BOTTOM_HARD_CUTOFF_DIVISOR 15
+// NormY==0 is the physical TOP of the pad (nearest the keyboard) and
+// NormY==yRangeFull is the physical BOTTOM (nearest the click hinge /
+// palm-rest area) - confirmed on real hardware. The cutoff below must
+// therefore trigger on LARGE NormY, not small NormY. (A prior commit,
+// 8d9e2e5, had this backwards - it inverted the comparison based on
+// an incorrect assumption about which end of the NormY range is which
+// physical edge, which moved the dead zone to the top of the pad.
+// That inversion is reverted here.)
+#define BOTTOM_HARD_CUTOFF_DIVISOR 10
 
 static inline INT
 AmtPalmRawToInteger(_In_ USHORT x)
@@ -62,7 +62,7 @@ AmtPalmClassify(
 )
 {
     INT yRangeFull = DevInfo->y.max - DevInfo->y.min;
-    if (NormY < (yRangeFull / BOTTOM_HARD_CUTOFF_DIVISOR))
+    if (NormY > (yRangeFull - yRangeFull / BOTTOM_HARD_CUTOFF_DIVISOR))
         return PALM_LOCAL;
 
     INT major = AmtPalmRawToInteger(Major);
@@ -114,27 +114,24 @@ AmtPalmClassify(
         // normal small fingertip passing through is never affected,
         // only wide/flat palm-shaped ones.
         //
-        // BUG FIX: NormY grows from the physical BOTTOM (0) to the
-        // physical TOP (yRange) - see the comment on
-        // BOTTOM_HARD_CUTOFF_DIVISOR above. `NormY < edge*` therefore
-        // tests the bottom edge and `NormY > (yRange - edge*)` tests
-        // the top edge - the OPPOSITE of what the old EDGE_DIVISOR_TOP/
-        // EDGE_DIVISOR_BOTTOM names and values implied. Swapped the two
-        // values (not the comparisons) so the wide zone still lands on
-        // the physical bottom and the tight zone still lands on the
-        // physical top, matching the original intent described above.
-        #define EDGE_DIVISOR_TOP     6
+        // NormY grows from the physical TOP (0) to the physical BOTTOM
+        // (yRange) - see the note on BOTTOM_HARD_CUTOFF_DIVISOR above.
+        // `NormY < edge*` therefore tests the top edge and
+        // `NormY > (yRange - edge*)` tests the bottom edge. The wide
+        // (more sensitive) zone belongs on the physical bottom, the
+        // tight zone on the physical top.
+        #define EDGE_DIVISOR_TOP     28
         #define EDGE_DIVISOR_LEFT    12
         #define EDGE_DIVISOR_RIGHT   12
-        #define EDGE_DIVISOR_BOTTOM  28
+        #define EDGE_DIVISOR_BOTTOM  6
 
         INT edgeBottom = yRange / EDGE_DIVISOR_BOTTOM;
         INT edgeLeft   = xRange / EDGE_DIVISOR_LEFT;
         INT edgeRight  = xRange / EDGE_DIVISOR_RIGHT;
         INT edgeTop    = yRange / EDGE_DIVISOR_TOP;
 
-        if (NormX < edgeLeft   || NormX > (xRange - edgeRight) ||
-            NormY < edgeBottom || NormY > (yRange - edgeTop))
+        if (NormX < edgeLeft || NormX > (xRange - edgeRight) ||
+            NormY < edgeTop  || NormY > (yRange - edgeBottom))
             score += 10;
     }
 
