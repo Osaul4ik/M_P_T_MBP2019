@@ -63,6 +63,14 @@ typedef struct _ACTIVE_CONTACT
     USHORT   LastSlotHint;    // hw slot matched to last frame; speeds up matching
     LONGLONG LastSeenQpc;     // QPC of last successful match; grace/retap timing
 
+    // Last raw touch geometry/pressure, used ONLY as a matching tie-break
+    // (AmtMatchShapeDistance in Match.c) when two candidates are equally
+    // close spatially AND tied on slot-hint - never read for identity,
+    // FSM, or reporting. 0 until the first AmtContactUpdate call.
+    USHORT   LastMajor;
+    USHORT   LastMinor;
+    USHORT   LastPressure;
+
     // Gesture-last-finger deferral counter. NOT identity/matching hint.
     UCHAR FramesAlive;
 } ACTIVE_CONTACT, *PACTIVE_CONTACT;
@@ -175,13 +183,29 @@ AmtContactEvaluateDeadzone(
 // genuine multi-finger movement (2-finger scroll, etc.) reports true
 // raw position instead of a damped one - see XY_DEADZONE_UNITS in
 // ActiveContact.c for the shared deadzone threshold's history.
+//
+// Deadzone threshold and solo-movement EMA alpha are both velocity-
+// adaptive (see AmtContactClassifyVelocity in ActiveContact.c): a
+// contact sitting nearly still gets more filtering (higher deadzone,
+// more smoothing) to suppress sensor noise, and one moving fast gets
+// less (down to zero deadzone) so it doesn't lag behind the real
+// finger. PerfFrequencyHz is QPC ticks/sec (DEVICE_CONTEXT.PerfFrequency)
+// - needed to convert the raw/HystX,Y delta into units/sec. Velocity is
+// classified as VELOCITY_UNKNOWN (falls back to the original fixed
+// threshold/alpha, unchanged from prior behavior) whenever there's no
+// reliable previous timestamp to measure against - first sample after
+// birth, or PerfFrequencyHz <= 0.
 VOID
 AmtContactUpdate(
     _Inout_ PACTIVE_CONTACT Contact,
     _In_    USHORT          rawX,
     _In_    USHORT          rawY,
+    _In_    USHORT          major,
+    _In_    USHORT          minor,
+    _In_    USHORT          pressure,
     _In_    USHORT          slotHint,
     _In_    LONGLONG        nowQpc,
+    _In_    LONGLONG        PerfFrequencyHz,
     _In_    BOOLEAN         aliveCountIsOne,
     _In_    BOOLEAN         gestureActive,
     _Out_   USHORT*         OutX,
