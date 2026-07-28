@@ -66,29 +66,6 @@ typedef enum _CONTACT_VELOCITY_BUCKET
 #define SCROLL_SCALE_NUM  8
 #define SCROLL_SCALE_DEN  10
 
-// Slow-scroll variant: applied instead of SCROLL_SCALE_NUM/DEN above ONLY
-// once a gesture's velocity has been CONSISTENTLY slow for several
-// frames in a row - see ScrollSlowStreak/ScrollScaleSlow in
-// ActiveContact.h and the AUDIT FIX comment on AmtContactCommitSample's
-// scroll branch below for why this is debounced instead of switching on
-// the raw per-frame VELOCITY_SLOW classification directly. Fast/medium
-// 2-finger scroll is deliberately left at SCROLL_SCALE_NUM/DEN (8/10):
-// the complaint this fixes is specifically that slow, deliberate
-// scrolling felt faster than the finger motion suggested, not that
-// scrolling in general is too fast. 14/25 = 0.56, i.e. 0.8 * 0.7 - ~30%
-// slower than the existing 0.8x factor, applied only once genuinely slow.
-#define SCROLL_SCALE_NUM_SLOW  14
-#define SCROLL_SCALE_DEN_SLOW  25
-
-// Consecutive VELOCITY_SLOW gesture frames required before the scroll
-// scale switches down to SCROLL_SCALE_*_SLOW. Exiting back to the normal
-// rate is NOT debounced - a single non-slow frame exits immediately (see
-// AmtContactCommitSample) - because the goal is only to avoid reacting
-// to single-frame sensor noise/jitter on the way IN to a genuinely slow,
-// deliberate scroll; snapping back to normal speed the instant the user
-// actually speeds up should feel immediate, not laggy.
-#define SCROLL_SLOW_ENTER_STREAK  3
-
 static inline USHORT
 AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal, _In_ INT alphaNum)
 {
@@ -180,26 +157,17 @@ AmtContactAlphaForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity)
     }
 }
 
-// Scales one axis of a gesture-frame delta by ScaleNum/ScaleDen (caller
-// picks SCROLL_SCALE_NUM/DEN or the _SLOW variant per-frame, see
-// AmtContactCommitSample) using a carried remainder (Bresenham-style
-// error term), so slow, deliberate scroll motion (e.g. dx=1 unit/frame)
-// still moves the cursor instead of being zeroed out by integer
-// truncation (1 * 7 / 10 == 0 without this). *Rem must be reset to 0 by
-// the caller whenever gestureActive is FALSE. *Rem is carried in the
-// units of whichever ScaleDen was in effect when it was last written; a
-// frame-to-frame switch between the normal and _SLOW scale (velocity
-// crossing the SLOW threshold mid-scroll) reuses the stale remainder
-// as-is against the new denominator rather than rescaling it, which can
-// bias the very next frame's rounding by at most one unit - negligible
-// and self-correcting within a couple of frames, not worth the extra
-// bookkeeping to avoid.
+// Scales one axis of a gesture-frame delta by SCROLL_SCALE_NUM/DEN using a
+// carried remainder (Bresenham-style error term), so slow, deliberate
+// scroll motion (e.g. dx=1 unit/frame) still moves the cursor instead of
+// being zeroed out by integer truncation (1 * 7 / 10 == 0 without this).
+// *Rem must be reset to 0 by the caller whenever gestureActive is FALSE.
 static inline SHORT
-AmtScaleScrollDelta(_In_ INT rawDelta, _Inout_ LONG* Rem, _In_ INT ScaleNum, _In_ INT ScaleDen)
+AmtScaleScrollDelta(_In_ INT rawDelta, _Inout_ LONG* Rem)
 {
-    INT numerator = rawDelta * ScaleNum + *Rem;
-    INT scaled    = numerator / ScaleDen;       // truncates toward 0
-    *Rem = numerator - scaled * ScaleDen;        // exact remainder
+    INT numerator = rawDelta * SCROLL_SCALE_NUM + *Rem;
+    INT scaled    = numerator / SCROLL_SCALE_DEN;       // truncates toward 0
+    *Rem = numerator - scaled * SCROLL_SCALE_DEN;        // exact remainder
     return (SHORT)scaled;
 }
 
@@ -261,10 +229,6 @@ AmtContactBirth(
     c->RetapSeeded        = FALSE; // plain birth - no seeded baseline to preserve
     c->ScrollRemX          = 0;
     c->ScrollRemY          = 0;
-    c->ScrollSlowStreak    = 0;
-    c->ScrollScaleSlow     = FALSE;
-    c->LastDeltaX          = 0;
-    c->LastDeltaY          = 0;
     c->LastSlotHint        = slotHint;
     c->LastSeenQpc         = 0; // set by first AmtContactUpdate call
     c->LastMajor           = 0;
@@ -303,10 +267,6 @@ AmtContactBirthWithRetapSmoothing(
     c->RetapSeeded        = TRUE; // preserve seed on first update
     c->ScrollRemX          = 0;
     c->ScrollRemY          = 0;
-    c->ScrollSlowStreak    = 0;
-    c->ScrollScaleSlow     = FALSE;
-    c->LastDeltaX          = 0;
-    c->LastDeltaY          = 0;
     c->LastSlotHint        = slotHint;
     c->LastSeenQpc         = 0;
     c->LastMajor           = 0;
@@ -514,56 +474,17 @@ AmtContactCommitSample(
 
         if (skipEma) {
             if (gestureActive) {
-                // Scroll frame: report ReportX/Y + a fraction of the raw
-                // delta, not the raw position itself. Baseline for the
-                // *next* frame's delta is this scaled result
-                // (Contact->ReportX/Y below), so scaling never compounds
-                // across frames - only the current frame's motion is
-                // reduced.
-                //
-                // AUDIT FIX (scale switching on raw per-frame velocity
-                // caused jerks, both at slow AND fast overall scroll
-                // speed): this originally switched straight off
-                // velocityIsSlow (the same AmtContactClassifyVelocity
-                // bucket used for solo-pointer deadzone/EMA). That bucket
-                // is a single-frame, unsmoothed instantaneous measurement
-                // - it already flickers between SLOW/MEDIUM/FAST on
-                // ordinary sensor sampling jitter even during objectively
-                // steady motion, which deadzone tolerates fine (it only
-                // ever adds a LITTLE extra filtering at SLOW). Reusing it
-                // to flip the scroll SCALE too compounds that flicker
-                // into a visible speed jump every time the bucket
-                // flickers - including transiently during otherwise-fast
-                // flicks (e.g. the accel/decel edges), which is why fast
-                // scrolling got jerky too, not just slow. Fixed by
-                // decoupling scroll-scale selection from the raw bucket
-                // entirely: ScrollScaleSlow (ActiveContact.h) only
-                // switches to the slow rate after SCROLL_SLOW_ENTER_STREAK
-                // consecutive VELOCITY_SLOW frames (debounced entry -
-                // ordinary sensor jitter can't fake a multi-frame streak),
-                // and switches back to the normal rate on the very next
-                // non-slow frame (undebounced exit - speeding back up
-                // should feel instant, not laggy). Deadzone itself is
-                // completely untouched by this - still driven by the raw
-                // per-frame bucket exactly as before.
-                if (velocityIsSlow) {
-                    if (Contact->ScrollSlowStreak < 255) Contact->ScrollSlowStreak++;
-                    if (Contact->ScrollSlowStreak >= SCROLL_SLOW_ENTER_STREAK) {
-                        Contact->ScrollScaleSlow = TRUE;
-                    }
-                } else {
-                    Contact->ScrollSlowStreak = 0;
-                    Contact->ScrollScaleSlow  = FALSE;
-                }
-
+                // Scroll frame: report ReportX/Y + 70% of the raw delta,
+                // not the raw position itself. Baseline for the *next*
+                // frame's delta is this scaled result (Contact->ReportX/Y
+                // below), so scaling never compounds across frames - only
+                // the current frame's motion is reduced, same as the raw
+                // path was doing before this change, just at 70% rate.
                 INT dx = (INT)candX - (INT)Contact->ReportX;
                 INT dy = (INT)candY - (INT)Contact->ReportY;
 
-                INT scrollScaleNum = Contact->ScrollScaleSlow ? SCROLL_SCALE_NUM_SLOW : SCROLL_SCALE_NUM;
-                INT scrollScaleDen = Contact->ScrollScaleSlow ? SCROLL_SCALE_DEN_SLOW : SCROLL_SCALE_DEN;
-
-                LONG newX = (LONG)Contact->ReportX + AmtScaleScrollDelta(dx, &Contact->ScrollRemX, scrollScaleNum, scrollScaleDen);
-                LONG newY = (LONG)Contact->ReportY + AmtScaleScrollDelta(dy, &Contact->ScrollRemY, scrollScaleNum, scrollScaleDen);
+                LONG newX = (LONG)Contact->ReportX + AmtScaleScrollDelta(dx, &Contact->ScrollRemX);
+                LONG newY = (LONG)Contact->ReportY + AmtScaleScrollDelta(dy, &Contact->ScrollRemY);
 
                 // Clamp both ends before truncating to USHORT. The upper
                 // clamp can't be hit today (ReportX/Y plus the scaled
@@ -579,42 +500,25 @@ AmtContactCommitSample(
                 // MEDIUM/FAST velocity (see skipEma above; SLOW instead
                 // falls to the EMA branch below), plus any genuinely-fresh
                 // first sample. Report the raw deadzone-committed position
-                // directly, and drop any leftover scroll remainder/streak
-                // so nothing can leak into a later, unrelated scroll
-                // gesture.
+                // directly, and drop any leftover scroll remainder so it
+                // can't leak into a later, unrelated scroll gesture.
                 repX = candX;
                 repY = candY;
 
-                Contact->ScrollRemX       = 0;
-                Contact->ScrollRemY       = 0;
-                Contact->ScrollSlowStreak = 0;
-                Contact->ScrollScaleSlow  = FALSE;
+                Contact->ScrollRemX = 0;
+                Contact->ScrollRemY = 0;
             }
 
             if (Contact->WasInGesture && aliveCountIsOne) {
                 Contact->WasInGesture = FALSE;
             }
         } else {
-            Contact->ScrollRemX       = 0;
-            Contact->ScrollRemY       = 0;
-            Contact->ScrollSlowStreak = 0;
-            Contact->ScrollScaleSlow  = FALSE;
+            Contact->ScrollRemX = 0;
+            Contact->ScrollRemY = 0;
             repX = AmtContactSmoothCoord(candX, Contact->ReportX, alphaNum);
             repY = AmtContactSmoothCoord(candY, Contact->ReportY, alphaNum);
         }
     }
-
-    // Record this frame's committed delta for PTPCore's gesture-last-
-    // finger kill deferral (see LastDeltaX/Y doc comment in
-    // ActiveContact.h) - MUST be computed against the OLD Contact->
-    // ReportX/Y, before it's overwritten below. INT math avoids USHORT
-    // wraparound on the subtraction; the result is clamped to SHORT
-    // range purely as a defensive bound (MATCH_MAX_CONTINUATION_DELTA
-    // already keeps realistic per-frame deltas far inside it).
-    INT deltaX = (INT)repX - (INT)Contact->ReportX;
-    INT deltaY = (INT)repY - (INT)Contact->ReportY;
-    Contact->LastDeltaX = (SHORT)(deltaX < -32768 ? -32768 : (deltaX > 32767 ? 32767 : deltaX));
-    Contact->LastDeltaY = (SHORT)(deltaY < -32768 ? -32768 : (deltaY > 32767 ? 32767 : deltaY));
 
     Contact->ReportX = repX;
     Contact->ReportY = repY;
@@ -659,27 +563,7 @@ AmtContactUpdate(
     CONTACT_VELOCITY_BUCKET velocity = AmtContactClassifyVelocity(
         rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz);
 
-    // AUDIT FIX (steppy/jerky scroll, both slow and fast): the deadzone
-    // threshold below used to apply unconditionally, including on
-    // gestureActive (2-finger scroll) frames. Deadzone exists to filter
-    // SENSOR NOISE during ordinary single-finger pointing - it's not
-    // needed for scroll, which is already gated on genuine, corroborated
-    // 2-finger correspondence (Match.c) and has its own dedicated
-    // smoothing/speed control (SCROLL_SCALE_NUM/DEN and the debounced
-    // _SLOW variant, in AmtContactCommitSample below). Stacking a
-    // nonzero deadzone (1 unit at MEDIUM, 2 at SLOW - only FAST was ever
-    // 0) on top of that meant any scroll frame not classified FAST held
-    // its position outright whenever the raw per-frame delta fell under
-    // the threshold, then reported the accumulated delta all at once the
-    // moment it finally cleared - a visible hold-then-catch-up stutter.
-    // Real 2-finger scroll rarely reaches the FAST bucket (its 400
-    // units/sec threshold is tuned for cursor movement), so this hit
-    // ordinary scrolling far more than the "fast motion" carve-out
-    // suggested. Bypassing deadzone entirely while gestureActive - always
-    // report the real raw per-frame position, same as FAST already did -
-    // removes the stutter and leaves solo-pointer deadzone completely
-    // unchanged.
-    INT deadzoneThreshold = gestureActive ? 0 : AmtContactDeadzoneForVelocity(velocity);
+    INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity);
     INT alphaNum          = AmtContactAlphaForVelocity(velocity);
 
     if (Contact->PendingFirstSample) {
