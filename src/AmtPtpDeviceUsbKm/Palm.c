@@ -30,21 +30,16 @@
 // Hard cutoff at the physical bottom edge - unconditional dead zone,
 // rejected regardless of size/shape (unlike the wider, size-gated
 // scored zone below, which only affects large/palm-shaped contacts).
-// yRangeFull / DIVISOR = zone height. DIVISOR=10 -> 10% of pad height
-// (was DIVISOR=15 -> 6.67%; widened by ~3.3 percentage points per
-// request). This is NOT the same mechanism as the size-gated scored
-// zone below, which still lets real small touches through further up
-// from the edge.
-//
-// NormY==0 is the physical TOP of the pad (nearest the keyboard) and
-// NormY==yRangeFull is the physical BOTTOM (nearest the click hinge /
-// palm-rest area) - confirmed on real hardware. The cutoff below must
-// therefore trigger on LARGE NormY, not small NormY. (A prior commit,
-// 8d9e2e5, had this backwards - it inverted the comparison based on
-// an incorrect assumption about which end of the NormY range is which
-// physical edge, which moved the dead zone to the top of the pad.
-// That inversion is reverted here.)
-#define BOTTOM_HARD_CUTOFF_DIVISOR 10
+// Zone height = yRangeFull * BOTTOM_HARD_CUTOFF_PERCENT / 100 (exact
+// percentage, not an approximate integer divisor - 30% requested).
+#define BOTTOM_HARD_CUTOFF_PERCENT 30
+
+// Direction is still NOT confirmed on hardware - the previous flip
+// (assuming large NormY = physical bottom) did not fix the reported
+// "dead zone at top" symptom, so that assumption is now in doubt too.
+// Flip ONLY this to 0 to test the opposite direction instead of
+// hunting through the comparisons below.
+#define PAD_BOTTOM_IS_HIGH_NORMY 1
 
 static inline INT
 AmtPalmRawToInteger(_In_ USHORT x)
@@ -62,8 +57,14 @@ AmtPalmClassify(
 )
 {
     INT yRangeFull = DevInfo->y.max - DevInfo->y.min;
-    if (NormY > (yRangeFull - yRangeFull / BOTTOM_HARD_CUTOFF_DIVISOR))
+    INT hardZone = yRangeFull * BOTTOM_HARD_CUTOFF_PERCENT / 100;
+#if PAD_BOTTOM_IS_HIGH_NORMY
+    if (NormY > (yRangeFull - hardZone))
         return PALM_LOCAL;
+#else
+    if (NormY < hardZone)
+        return PALM_LOCAL;
+#endif
 
     INT major = AmtPalmRawToInteger(Major);
     INT minor = AmtPalmRawToInteger(Minor);
@@ -108,27 +109,27 @@ AmtPalmClassify(
         // Top stays tight - legitimate taps/scroll gestures land close
         // to the top edge often enough that widening it would cost
         // real input. Left/right and bottom are widened - palm contact
-        // is far more likely there. Bottom's zone here is wider than
-        // the thin hard cutoff above it - this is the size-gated
-        // transition band: only major>130 contacts get scored, so a
-        // normal small fingertip passing through is never affected,
-        // only wide/flat palm-shaped ones.
+        // is far more likely there.
         //
-        // NormY grows from the physical TOP (0) to the physical BOTTOM
-        // (yRange) - see the note on BOTTOM_HARD_CUTOFF_DIVISOR above.
-        // `NormY < edge*` therefore tests the top edge and
-        // `NormY > (yRange - edge*)` tests the bottom edge. The wide
-        // (more sensitive) zone belongs on the physical bottom, the
-        // tight zone on the physical top.
-        #define EDGE_DIVISOR_TOP     28
-        #define EDGE_DIVISOR_LEFT    12
-        #define EDGE_DIVISOR_RIGHT   12
-        #define EDGE_DIVISOR_BOTTOM  6
+        // Which physical edge is "top" vs "bottom" in NormY terms is
+        // controlled by PAD_BOTTOM_IS_HIGH_NORMY above - flip that one
+        // flag if hardware testing shows this zone is still on the
+        // wrong edge, rather than editing the values below.
+        #define EDGE_DIVISOR_NEAR_ZERO_END  28   // tight zone
+        #define EDGE_DIVISOR_LEFT           12
+        #define EDGE_DIVISOR_RIGHT          12
+        #define EDGE_DIVISOR_FAR_END        6    // wide zone
 
-        INT edgeBottom = yRange / EDGE_DIVISOR_BOTTOM;
-        INT edgeLeft   = xRange / EDGE_DIVISOR_LEFT;
-        INT edgeRight  = xRange / EDGE_DIVISOR_RIGHT;
-        INT edgeTop    = yRange / EDGE_DIVISOR_TOP;
+        INT edgeLeft  = xRange / EDGE_DIVISOR_LEFT;
+        INT edgeRight = xRange / EDGE_DIVISOR_RIGHT;
+        INT edgeNear  = yRange / EDGE_DIVISOR_NEAR_ZERO_END; // near NormY=0
+        INT edgeFar   = yRange / EDGE_DIVISOR_FAR_END;       // near NormY=yRange
+
+#if PAD_BOTTOM_IS_HIGH_NORMY
+        INT edgeTop = edgeNear, edgeBottom = edgeFar;
+#else
+        INT edgeTop = edgeFar, edgeBottom = edgeNear;
+#endif
 
         if (NormX < edgeLeft || NormX > (xRange - edgeRight) ||
             NormY < edgeTop  || NormY > (yRange - edgeBottom))
