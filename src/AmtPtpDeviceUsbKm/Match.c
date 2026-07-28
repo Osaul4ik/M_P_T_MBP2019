@@ -17,10 +17,6 @@
 // Stationary deadzone for debounce bridge. Real coords if moving.
 #define TIP_DROP_STATIONARY_DELTA       3
 
-// Never auto-drop below-tip contacts with a valid anchor (fixes phantom
-// DOWN/UP cycle on sustained soft touches). Counter only prevents wrap.
-#define TIP_DROP_COUNT_MAX 255
-
 static UCHAR
 AmtMatchCandidateTip(_In_ USHORT major, _In_ USHORT minor)
 {
