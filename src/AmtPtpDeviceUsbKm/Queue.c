@@ -120,7 +120,6 @@ AmtPtpDispatchReadReportRequests(
     NTSTATUS status;
     PDEVICE_CONTEXT pDevContext;
 
-    status = STATUS_SUCCESS;
     pDevContext = DeviceGetContext(Device);
 
     status = WdfRequestForwardToIoQueue(
