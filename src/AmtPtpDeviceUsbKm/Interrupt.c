@@ -46,6 +46,36 @@ AmtSerializeCoreFrameToReport(
     Report->ContactCount = n;
 }
 
+// Push a new force-touch edge onto the tail of the pending-edge FIFO
+// (Device.h: PendingForceTouchEdgeQueue). Edges only ever fire on a real
+// down/up state change (PTPCore_ProcessFrame), so they arrive strictly
+// alternating - the capacity-4 margin means this overflow path is not
+// expected to be hit in practice. If it somehow is (an extremely slow
+// mouhid.sys read cadence backing up several full press/release cycles),
+// the OLDEST queued edge is dropped to make room: a several-cycles-stale
+// edge is less useful to the user than the newest one, and dropping from
+// the head keeps the queue's ordering-by-recency invariant intact for
+// everything already queued.
+static VOID
+AmtForceTouchEdgeEnqueue(
+    _Inout_ PDEVICE_CONTEXT pCtx,
+    _In_    BOOLEAN         Button2State
+)
+{
+    if (pCtx->PendingForceTouchEdgeCount == PENDING_FORCE_TOUCH_EDGE_CAPACITY) {
+        pCtx->PendingForceTouchEdgeHead = (UCHAR)
+            ((pCtx->PendingForceTouchEdgeHead + 1) % PENDING_FORCE_TOUCH_EDGE_CAPACITY);
+        pCtx->PendingForceTouchEdgeCount--;
+    }
+
+    UCHAR tail = (UCHAR)
+        ((pCtx->PendingForceTouchEdgeHead + pCtx->PendingForceTouchEdgeCount)
+         % PENDING_FORCE_TOUCH_EDGE_CAPACITY);
+
+    pCtx->PendingForceTouchEdgeQueue[tail] = Button2State;
+    pCtx->PendingForceTouchEdgeCount++;
+}
+
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS
 AmtPtpConfigContReaderForInterruptEndPoint(_In_ PDEVICE_CONTEXT DeviceContext)
@@ -217,32 +247,31 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // InputQueue (mouhid.sys keeps its own read continuously queued
     // there, same as the touch/digitizer client does).
     //
-    // AUDIT FIX: previously, if no second request was available this
+    // AUDIT FIX #1: previously, if no second request was available this
     // exact pass, the edge was dropped outright - a reproducible way to
     // lose a force-touch click depending on mouhid.sys's read cadence.
-    // Now an undelivered edge latches into PendingForceTouchEdgeValid and
-    // is retried on the NEXT interrupt completion (there's always another
-    // one coming while the finger is still down/up, since the touch
-    // report itself keeps arriving), instead of being lost.
     //
-    // If THIS frame also produces a fresh edge while a previous one is
-    // still undelivered, the fresh edge supersedes the stale one - the
-    // button state has changed again before Windows ever saw the old
-    // value, so delivering the stale value now would be out of order
-    // (e.g. a stale DOWN arriving after the physical release). Only the
-    // single most recent edge is ever pending at a time.
-    BOOLEAN haveEdgeToSend = pCtx->PendingForceTouchEdgeValid ||
-                             forceTouchDownEdge || forceTouchUpEdge;
+    // AUDIT FIX #2: the very first fix latched only the SINGLE most
+    // recent undelivered edge ("fresh edge supersedes the stale one").
+    // That loses the click just as surely when the finger presses hard
+    // and releases fast enough that BOTH the down and the up edge arrive
+    // before a mouse request is ever available: the up simply overwrites
+    // the down in the latch, and Windows never sees Button2 move at all -
+    // the whole force-touch click silently vanishes. Edges are now queued
+    // (PendingForceTouchEdgeQueue, Device.h) and delivered strictly in
+    // order, one per available mouse request per interrupt completion, so
+    // a fast down+up still reaches Windows as two reports - possibly a
+    // frame or two late - instead of cancelling out.
+    if (forceTouchDownEdge) {
+        AmtForceTouchEdgeEnqueue(pCtx, TRUE);
+    }
+    if (forceTouchUpEdge) {
+        AmtForceTouchEdgeEnqueue(pCtx, FALSE);
+    }
 
-    if (haveEdgeToSend) {
-        BOOLEAN edgeButton2State;
-        if (forceTouchDownEdge) {
-            edgeButton2State = TRUE;
-        } else if (forceTouchUpEdge) {
-            edgeButton2State = FALSE;
-        } else {
-            edgeButton2State = pCtx->PendingForceTouchButton2State;
-        }
+    if (pCtx->PendingForceTouchEdgeCount > 0) {
+        BOOLEAN edgeButton2State =
+            pCtx->PendingForceTouchEdgeQueue[pCtx->PendingForceTouchEdgeHead];
 
         WDFREQUEST mouseRequest;
         Status = WdfIoQueueRetrieveNextRequest(pCtx->InputQueue, &mouseRequest);
@@ -262,14 +291,16 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
                 }
             }
             WdfRequestComplete(mouseRequest, Status);
-            pCtx->PendingForceTouchEdgeValid = FALSE;
-        } else {
-            // Still no second request available - keep it pending and
-            // retry on the next interrupt completion rather than
-            // dropping it.
-            pCtx->PendingForceTouchEdgeValid    = TRUE;
-            pCtx->PendingForceTouchButton2State = edgeButton2State;
+
+            // Delivered (or at least handed to Windows - matches prior
+            // behavior of completing the request either way): pop it off
+            // the head of the queue.
+            pCtx->PendingForceTouchEdgeHead =
+                (UCHAR)((pCtx->PendingForceTouchEdgeHead + 1) % PENDING_FORCE_TOUCH_EDGE_CAPACITY);
+            pCtx->PendingForceTouchEdgeCount--;
         }
+        // else: still no second request available this pass - leave the
+        // queue untouched and retry on the next interrupt completion.
     }
 }
 
