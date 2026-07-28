@@ -659,7 +659,27 @@ AmtContactUpdate(
     CONTACT_VELOCITY_BUCKET velocity = AmtContactClassifyVelocity(
         rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz);
 
-    INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity);
+    // AUDIT FIX (steppy/jerky scroll, both slow and fast): the deadzone
+    // threshold below used to apply unconditionally, including on
+    // gestureActive (2-finger scroll) frames. Deadzone exists to filter
+    // SENSOR NOISE during ordinary single-finger pointing - it's not
+    // needed for scroll, which is already gated on genuine, corroborated
+    // 2-finger correspondence (Match.c) and has its own dedicated
+    // smoothing/speed control (SCROLL_SCALE_NUM/DEN and the debounced
+    // _SLOW variant, in AmtContactCommitSample below). Stacking a
+    // nonzero deadzone (1 unit at MEDIUM, 2 at SLOW - only FAST was ever
+    // 0) on top of that meant any scroll frame not classified FAST held
+    // its position outright whenever the raw per-frame delta fell under
+    // the threshold, then reported the accumulated delta all at once the
+    // moment it finally cleared - a visible hold-then-catch-up stutter.
+    // Real 2-finger scroll rarely reaches the FAST bucket (its 400
+    // units/sec threshold is tuned for cursor movement), so this hit
+    // ordinary scrolling far more than the "fast motion" carve-out
+    // suggested. Bypassing deadzone entirely while gestureActive - always
+    // report the real raw per-frame position, same as FAST already did -
+    // removes the stutter and leaves solo-pointer deadzone completely
+    // unchanged.
+    INT deadzoneThreshold = gestureActive ? 0 : AmtContactDeadzoneForVelocity(velocity);
     INT alphaNum          = AmtContactAlphaForVelocity(velocity);
 
     if (Contact->PendingFirstSample) {
