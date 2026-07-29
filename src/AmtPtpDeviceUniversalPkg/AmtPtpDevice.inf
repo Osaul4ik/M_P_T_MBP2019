@@ -8,7 +8,7 @@ Class = HIDClass
 ClassGuid = {745a17a0-74d3-11d0-b6fe-00a0c90f57da}
 Provider = %ManufacturerName%
 CatalogFile = AmtPtpDevice.cat
-DriverVer =
+DriverVer = 07/29/2026,1.0.0.0
 PnpLockdown = 1
 
 [DestinationDirs]
@@ -159,6 +159,14 @@ AddReg=AmtPtpDeviceUsbKm_AddReg
 [AmtPtpDeviceUsbKm_AddReg]
 HKR,,FriendlyName,,%AmtPtpDeviceUsbKm.DeviceDesc%
 HKR,,"LowerFilters",0x00010008,"AmtPtpDeviceUsbKm"
+; AUDIT FIX (latency): USB selective suspend is off by default in Windows,
+; but a per-device "Device Parameters\SelectiveSuspendEnabled" value can
+; still be flipped on - by the Power Management tab in Device Manager, by
+; power-plan USB settings, or by a future OS default. Each selective-suspend
+; resume adds real wake-up latency to the first touch/click after any idle
+; gap. Pin it to 0 explicitly at install time so the trackpad never depends
+; on that default holding.
+HKR,,"SelectiveSuspendEnabled",0x00010001,0
 
 ; -------------- AmtPtpDeviceUsbKm driver install sections
 [AmtPtpDeviceUsbKm_Service_Inst]
@@ -247,7 +255,7 @@ KmdfLibraryVersion = $KMDFVERSION$
 [Strings]
 REG_MULTI_SZ = 0x00010000
 SPSVCINST_ASSOCSERVICE = 0x00000002
-ManufacturerName = "Bingxing Wang"
+ManufacturerName = "Osaul4ik"
 ClassName = "Universal Serial Bus devices"
 DiskName = "AmtPtpDeviceUsbKm Installation Disk"
 AmtPtpDeviceUsbKm.DeviceDesc = "Apple USB Precision Touchpad Device (Kernel-mode)"
