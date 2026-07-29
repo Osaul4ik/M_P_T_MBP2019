@@ -247,6 +247,7 @@ AmtContactBirth(
     c->VelocityX           = 0; // no prior sample yet - see AmtContactUpdate
     c->VelocityY           = 0;
     c->FramesAlive         = 1; // birth frame counts as 1
+    c->GestureCandidateFrames = 0;
 }
 
 // Seeds EMA baseline to lift position so cursor doesn't jump on re-tap.
@@ -287,6 +288,7 @@ AmtContactBirthWithRetapSmoothing(
     c->VelocityX           = 0; // no prior sample yet - see AmtContactUpdate
     c->VelocityY           = 0;
     c->FramesAlive         = 1;
+    c->GestureCandidateFrames = 0;
 }
 
 BOOLEAN
@@ -551,6 +553,7 @@ AmtContactCommitSample(
     // right now," which is what the taint is actually tracking.
     if (Contact->WasInGesture && aliveCountIsOne) {
         Contact->WasInGesture = FALSE;
+        Contact->GestureCandidateFrames = 0;
     }
 
     Contact->ReportX = repX;

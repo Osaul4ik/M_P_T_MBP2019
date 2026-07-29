@@ -85,6 +85,21 @@ typedef struct _ACTIVE_CONTACT
 
     // Gesture-last-finger deferral counter. NOT identity/matching hint.
     UCHAR FramesAlive;
+
+    // BUG FIX (single-frame noise falsely tainting a solo tap as gesture):
+    // counts CONSECUTIVE frames this contact has qualified for WasInGesture
+    // taint (see Ptpcore.c Phase C) but hasn't been committed yet. A real
+    // multi-finger gesture holds aliveCount>=2 for many frames; a sensor
+    // noise blip/ghost touch (the same class of glitch already described
+    // in AmtContactCommitSample's WasInGesture AUDIT comment) typically
+    // lasts exactly one raw frame. Requiring GESTURE_TAINT_DEBOUNCE_FRAMES
+    // consecutive qualifying frames before WasInGesture actually latches
+    // filters the single-frame case without perceptibly delaying real
+    // gesture recognition. Reset to 0 whenever a frame doesn't qualify, and
+    // whenever WasInGesture itself gets cleared (aliveCountIsOne in
+    // AmtContactCommitSample) - a stale count must not let one later noisy
+    // frame instantly re-taint a contact that's plainly back to solo.
+    UCHAR GestureCandidateFrames;
 } ACTIVE_CONTACT, *PACTIVE_CONTACT;
 
 #define MAX_CONTACTS PTP_MAX_CONTACT_POINTS  // pool capacity, not slot count

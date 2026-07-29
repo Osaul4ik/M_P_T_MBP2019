@@ -25,6 +25,15 @@
 // the AUDIT note above the arbitration block below. Tunable.
 #define CLICK_ARBITRATION_GRACE_MS 60
 
+// BUG FIX (single-frame noise falsely tainting a solo tap/double-tap as
+// gesture): see GestureCandidateFrames in ActiveContact.h. Number of
+// CONSECUTIVE qualifying frames (gestureThisFrame, post tail-overlap
+// filtering below) required before WasInGesture actually latches. 2 is
+// the minimum that filters a one-frame blip while still tainting a real
+// 2(+)-finger gesture on its 2nd live frame - imperceptible for gestures,
+// which run for many frames, but decisive for a single noisy sample.
+#define GESTURE_TAINT_DEBOUNCE_FRAMES 2
+
 // Recent-lift ring buffer (slot-independent retap memory)
 
 VOID
@@ -768,8 +777,23 @@ PTPCore_ProcessFrame(
             shouldTaint = otherCandidateUntainted;
         }
 
-        if (shouldTaint) {
-            pCtx->ActiveContacts[p].WasInGesture = TRUE;
+        // BUG FIX (single-frame noise taint): don't latch WasInGesture off
+        // one qualifying frame alone - see GESTURE_TAINT_DEBOUNCE_FRAMES.
+        // Only touches contacts not already tainted; an already-tainted
+        // contact keeps re-qualifying every gestureThisFrame frame same as
+        // before (no behavior change for an established gesture).
+        if (!pCtx->ActiveContacts[p].WasInGesture) {
+            if (shouldTaint) {
+                if (pCtx->ActiveContacts[p].GestureCandidateFrames < 255)
+                    pCtx->ActiveContacts[p].GestureCandidateFrames++;
+                if (pCtx->ActiveContacts[p].GestureCandidateFrames >=
+                    GESTURE_TAINT_DEBOUNCE_FRAMES)
+                {
+                    pCtx->ActiveContacts[p].WasInGesture = TRUE;
+                }
+            } else {
+                pCtx->ActiveContacts[p].GestureCandidateFrames = 0;
+            }
         }
 
         USHORT repX, repY;
