@@ -819,7 +819,24 @@ PTPCore_ProcessFrame(
             pCtx->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
         }
     } else {
-        if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_IDLE) {
+        // BUG FIX: gate the fresh-press reset on buttonClickEdge (the
+        // authoritative rising-edge signal computed above, tracked via
+        // PrevButtonClicked every frame) rather than on
+        // ClickArbitrationState still reading IDLE. The two are usually
+        // the same thing, but not guaranteed: the IDLE reset above only
+        // runs on a frame where ButtonDown is FALSE, so a release
+        // immediately followed by a re-press with no intervening
+        // not-down frame in between (two presses landing in the same, or
+        // adjacent, USB interrupt completions) would leave a stale
+        // FORCE_TOUCH or HARD_TAP state sitting in ClickArbitrationState
+        // from the PREVIOUS press when this new one begins. Without this
+        // fix, that stale state would either resume being treated as
+        // still-decided (dropping the entire new press - no click, no
+        // force touch, nothing reported for it) rather than starting a
+        // fresh PENDING decision. buttonClickEdge doesn't have this gap:
+        // it's derived from PrevButtonClicked, which is unconditionally
+        // updated every single frame regardless of ButtonDown's value.
+        if (buttonClickEdge) {
             pCtx->ClickArbitrationState           = CLICK_ARBITRATION_PENDING;
             pCtx->ClickArbitrationPressureCrossed = FALSE;
             pCtx->ClickArbitrationStartQpc        = NowQpc;
@@ -852,19 +869,36 @@ PTPCore_ProcessFrame(
     *OutButtonClickReport =
         (pCtx->ClickArbitrationState == CLICK_ARBITRATION_HARD_TAP);
 
-    // Force-touch is now a one-frame resolution pulse, not a held state:
-    // ClickArbitrationState only ever becomes FORCE_TOUCH for the single
-    // frame that resolves it (the release branch above), then reverts to
-    // IDLE the very next frame (the "else" arm above, since state is no
-    // longer PENDING). So forceTouchNow simply mirrors that one frame -
-    // no ButtonDown gate needed, since by construction this frame IS the
-    // release, and the transition out of FORCE_TOUCH next frame produces
-    // the matching up-edge one frame later, same as Interrupt.c already
-    // expects (down edge, then up edge, delivered as two reports).
-    BOOLEAN forceTouchNow =
+    // Force-touch is a discrete pulse now, not a held state - and it is
+    // emitted as a complete down+up PAIR on the exact same frame that
+    // resolves a press to FORCE_TOUCH (release, see the branch above).
+    //
+    // BUG FIX: an earlier version of this spread the pulse across two
+    // frames - DownEdge on the resolution frame, UpEdge deferred to
+    // whatever PTPCore_ProcessFrame call happened to come next (via
+    // ForceTouchActive latch/diff, the same pattern the old held-state
+    // design used). That's fine while the pad is still active, but by
+    // definition this resolution only happens at release, typically with
+    // no finger on the pad and the button no longer down - there is no
+    // guarantee another USB interrupt completion arrives promptly enough
+    // (or at all, before the pad goes idle) to carry that deferred
+    // UpEdge. Interrupt.c also drops a completion outright if no HID
+    // read request happens to be queued at that moment
+    // (WdfIoQueueRetrieveNextRequest failing at the top of the handler),
+    // which is an extra way a lone "next frame" up-edge could simply
+    // never arrive. Net effect: Button2 could get stuck reported as held
+    // down in Windows until the pad happened to see more activity.
+    // Emitting both edges together removes the dependency on any future
+    // frame entirely - PendingForceTouchEdgeQueue in Interrupt.c already
+    // enqueues DownEdge and UpEdge as independent booleans and was
+    // already built to carry a down+up pair through to mouhid.sys in
+    // order even when both fire close together, so this needs no changes
+    // on that side. ForceTouchActive is unused by this path now (nothing
+    // is ever "held") - kept FALSE at all times.
+    BOOLEAN forceTouchPulse =
         (pCtx->ClickArbitrationState == CLICK_ARBITRATION_FORCE_TOUCH);
 
-    *OutForceTouchDownEdge = forceTouchNow && !pCtx->ForceTouchActive;
-    *OutForceTouchUpEdge   = !forceTouchNow && pCtx->ForceTouchActive;
-    pCtx->ForceTouchActive = forceTouchNow;
+    *OutForceTouchDownEdge = forceTouchPulse;
+    *OutForceTouchUpEdge   = forceTouchPulse;
+    pCtx->ForceTouchActive = FALSE;
 }
