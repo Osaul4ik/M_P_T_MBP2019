@@ -71,6 +71,18 @@ typedef struct _ACTIVE_CONTACT
     USHORT   LastMinor;
     USHORT   LastPressure;
 
+    // Per-axis velocity, normalized device units/sec, signed. Updated by
+    // AmtContactUpdate from the delta between the previous and new
+    // ReportX/Y over the elapsed QPC time (same dt source as
+    // AmtContactClassifyVelocity). Used ONLY as a matching-cost input
+    // (dead-reckoned position prediction, see AmtMatchCorrespond in
+    // Match.c) - never identity, FSM, or reporting. 0 whenever there is
+    // no reliable previous sample (birth, or a gap too large/negative to
+    // trust), which makes prediction transparently fall back to the last
+    // reported position - see AmtContactUpdate.
+    LONG     VelocityX;
+    LONG     VelocityY;
+
     // Gesture-last-finger deferral counter. NOT identity/matching hint.
     UCHAR FramesAlive;
 } ACTIVE_CONTACT, *PACTIVE_CONTACT;
