@@ -332,6 +332,52 @@ PTPCore_ProcessFrame(
     // Drain deferred lift-offs
     AmtCoreDrainOverflow(pCtx, OutResult);
 
+    // BUG FIX (fast multi-finger tap misread as single-tap/extra-tap):
+    // real fingers almost never touch down in the exact same raw frame -
+    // there's typically a 1-3 frame stagger between births even for a
+    // single deliberate N-finger tap. The Phase A defer/grace check below
+    // used to gate purely on EACH contact's own FramesAlive vs
+    // MIN_CONTACT_LIFETIME_FRAMES. For a FAST tap (total contact
+    // lifetime under that threshold for at least one finger - the common
+    // case, since a fast tap is short by definition), the finger that
+    // was born earlier reaches the threshold and gets a real
+    // CONTACT_PHASE_UP sooner than a later-born partner still stuck in
+    // the defer branch reporting CONTACT_PHASE_MOVE ("still down"). That
+    // artificially spreads the two lift-off reports across different
+    // frames - purely a driver timing artifact, not physical reality -
+    // which is enough for Windows' PTP tap-arity classifier to
+    // occasionally miscount the gesture (reads it as a lone soft tap, or
+    // as extra separate taps once combined with retap/recent-lift
+    // bookkeeping).
+    //
+    // Fix: when a whole gesture releases at once (aliveCount == 0 this
+    // frame - see below), don't gate each contact's defer decision on its
+    // OWN FramesAlive. Compute the MINIMUM FramesAlive across every
+    // still-tainted (WasInGesture) contact that's unmatched this exact
+    // frame (i.e. the whole group lifting together) and gate all of them
+    // on that shared value instead. This makes every member of the group
+    // cross the MIN_CONTACT_LIFETIME_FRAMES gate on the SAME frame,
+    // regardless of how staggered their individual births were, so their
+    // CONTACT_PHASE_UP reports land together too.
+    UCHAR gestureGroupMinFramesAlive = 0xFF;
+    if (aliveCount == 0) {
+        for (UCHAR ug = 0; ug < matchResult.UnmatchedCount; ug++) {
+            size_t pg = matchResult.UnmatchedPoolIndices[ug];
+            // Skip contacts that are frozen (palm/dead-zone) this frame -
+            // they don't actually lift here (see the palmSuppressedFrame
+            // / palmLocalFrozen branch below), so they aren't part of
+            // this gesture's release-together group and must not drag
+            // the shared minimum down.
+            if (palmSuppressedFrame || palmLocalFrozen[pg])
+                continue;
+            if (pCtx->ActiveContacts[pg].WasInGesture &&
+                pCtx->ActiveContacts[pg].FramesAlive < gestureGroupMinFramesAlive)
+            {
+                gestureGroupMinFramesAlive = pCtx->ActiveContacts[pg].FramesAlive;
+            }
+        }
+    }
+
     // Phase A (lift): unmatched pool entries lift.
     // Gesture-tainted: defer kill on last finger; solo: kill immediately.
 
@@ -391,7 +437,16 @@ PTPCore_ProcessFrame(
 
         if (pCtx->ActiveContacts[p].WasInGesture) {
             // Gesture-tainted: defer if fresh and last finger.
-            if (pCtx->ActiveContacts[p].FramesAlive < MIN_CONTACT_LIFETIME_FRAMES
+            //
+            // AUDIT FIX (staggered-birth tap release skew): gate on the
+            // whole gesture group's shared minimum FramesAlive
+            // (gestureGroupMinFramesAlive, computed above), NOT this
+            // contact's own FramesAlive - see the comment above the
+            // computation for why. Every tainted contact unmatched this
+            // frame shares the same gate value, so they defer (or don't)
+            // in lockstep instead of drifting apart by however many
+            // frames their births happened to be staggered.
+            if (gestureGroupMinFramesAlive < MIN_CONTACT_LIFETIME_FRAMES
                 && aliveCount == 0)
             {
                 // Defer one frame for gesture recognizer.
