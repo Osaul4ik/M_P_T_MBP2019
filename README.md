@@ -96,6 +96,4 @@ While the original project provided the foundation, the USB implementation has u
 ---
 
 # License
-
 * USB driver — GPL v2
-* SPI driver — MIT
