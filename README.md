@@ -54,11 +54,11 @@ The driver has been extensively tested on this device and is optimized specifica
 
 # Installation
 
+1. Run InstallCert.bat as Admin
 1. Install the WellspringPTP driver.
 2. Reboot if required.
 
 > **Note**
->
 > The driver currently requires Windows Test Mode because it is not digitally signed.
 
 ---
@@ -74,8 +74,7 @@ This step is important before installing another Apple touchpad driver (Trackpad
 ---
 
 # Development Status
-
-## USBKM Driver (MacBook Pro 16,1)
+# USBKM Driver (MacBook Pro 16,1)
 
 * ✅ Contact lifecycle redesign
 * ✅ Stable contact matching
@@ -85,17 +84,8 @@ This step is important before installing another Apple touchpad driver (Trackpad
 * ✅ Cursor jump fixes
 * ✅ Force Touch implementation
 * ❌  Driver optimization
-* ❌  Code audit 
-
----
-
-# Other Drivers
-
-The repository also contains additional driver implementations inherited from the original project.
-
-These components are currently included largely unchanged and have not received the same level of redesign, testing, or optimization as the USBKM implementation for the MacBook Pro 16,1.
-
-Only the USBKM driver is actively developed and maintained within this project.
+* ❌  Code audit
+  
 
 # Credits
 
