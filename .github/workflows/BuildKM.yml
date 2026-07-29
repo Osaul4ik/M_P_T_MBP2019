@@ -1,4 +1,4 @@
-name: BuildKMTest
+name: BuildKM
 
 on:
   push:
