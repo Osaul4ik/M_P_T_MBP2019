@@ -82,36 +82,6 @@ jobs:
       shell: pwsh
 
 
-    # =====================================================================
-    # НОВЕ: проставляємо обчислену дату й версію в рядок DriverVer у .inf
-    # ще до компіляції (сам .sys це не зачіпає, але так .inf одразу готовий
-    # для подальшого пакування/підпису без окремого кроку редагування).
-    # =====================================================================
-    - name: Stamp INF with current date/version
-      run: |
-        $ErrorActionPreference = "Stop"
-        $infPath = "$env:PROJECT_DIR\$env:DRIVER_NAME.inf"
-
-        if (-not (Test-Path $infPath)) {
-          Write-Error "INF file not found: $infPath"
-          exit 1
-        }
-
-        Write-Host "==> Updating DriverVer in $infPath"
-        $content = Get-Content -Path $infPath -Raw
-        $newLine = "DriverVer   = $env:DRIVER_DATE,$env:DRIVER_VERSION"
-        $updated = $content -replace 'DriverVer\s*=\s*[^\r\n]+', $newLine
-
-        if ($updated -eq $content) {
-          Write-Error "Could not find a DriverVer line to replace in $infPath."
-          exit 1
-        }
-
-        Set-Content -Path $infPath -Value $updated -Encoding ASCII
-        Write-Host "OK: DriverVer = $env:DRIVER_DATE,$env:DRIVER_VERSION"
-      shell: pwsh
-
-
     - name: Build USB KM Driver
       run: |
         msbuild src/AmtPtpDeviceUsbKm/AmtPtpDeviceUsbKm.vcxproj `
@@ -157,6 +127,73 @@ jobs:
         Add-Content -Path $env:GITHUB_ENV -Value "SYS_PATH=$packageDir\$env:DRIVER_NAME.sys"
         Add-Content -Path $env:GITHUB_ENV -Value "INF_PATH=$packageDir\$env:DRIVER_NAME.inf"
         Add-Content -Path $env:GITHUB_ENV -Value "CAT_PATH=$packageDir\$env:DRIVER_NAME.cat"
+      shell: pwsh
+
+
+    # =====================================================================
+    # НОВЕ: автопошук StampInf.exe (той самий інструмент, яким VS Driver
+    # Package build target стампує .inf: підставляє $ARCH$ -> amd64,
+    # $KMDFVERSION$ -> реальну версію KMDF, і дату/версію в DriverVer).
+    # Наш AmtPtpDeviceUsbKm.vcxproj не має вбудованого Package-кроку
+    # (<Inf Include=... /> відсутній), тому робимо це вручну - саме так,
+    # як це робив оригінальний AmtPtpDeviceUniversalPkg.vcxproj "за старою
+    # схемою збірки".
+    # =====================================================================
+    - name: Locate StampInf.exe
+      run: |
+        $ErrorActionPreference = "Stop"
+        Write-Host "==> Searching for StampInf.exe under Windows Kits..."
+
+        $roots = @(
+          "C:\Program Files (x86)\Windows Kits\10\bin",
+          "C:\Program Files\Windows Kits\10\bin"
+        )
+
+        $candidates = foreach ($root in $roots) {
+          if (Test-Path $root) {
+            Get-ChildItem -Path $root -Filter "StampInf.exe" -Recurse -ErrorAction SilentlyContinue
+          }
+        }
+
+        if (-not $candidates) {
+          Write-Error "StampInf.exe was not found on this runner. Make sure the Windows SDK/WDK is installed."
+          exit 1
+        }
+
+        $tool = $candidates | Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+        if (-not $tool) {
+          $tool = $candidates | Sort-Object FullName -Descending | Select-Object -First 1
+        }
+
+        Write-Host "OK: found StampInf.exe -> $($tool.FullName)"
+        Add-Content -Path $env:GITHUB_ENV -Value "STAMPINF_PATH=$($tool.FullName)"
+      shell: pwsh
+
+
+    # =====================================================================
+    # НОВЕ: стампуємо staged .inf у package/ - підставляємо архітектуру
+    # (amd64), дату й версію (обчислені раніше) та версію KMDF (1.33 -
+    # відповідає WDK 10.0.26100.x, який використовується для збірки).
+    # Це і виправляє помилку Inf2Cat "does not have NTAMD64 decorated
+    # model sections": до стампування секція називалась буквально
+    # [Standard.NT$ARCH$], після - [Standard.NTamd64].
+    # =====================================================================
+    - name: Stamp INF (architecture / date / version / KMDF)
+      run: |
+        $ErrorActionPreference = "Stop"
+        $infPath = (Resolve-Path $env:INF_PATH).Path
+
+        Write-Host "==> Stamping $infPath"
+        & "$env:STAMPINF_PATH" -f "$infPath" -a amd64 -d "$env:DRIVER_DATE" -v "$env:DRIVER_VERSION" -k 1.33
+
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "StampInf exited with error code $LASTEXITCODE."
+          exit 1
+        }
+
+        Write-Host "==> Stamped INF contents:"
+        Get-Content -Path $infPath | Select-String -Pattern 'DriverVer|NTamd64|KmdfLibraryVersion'
+        Write-Host "OK: INF stamped."
       shell: pwsh
 
 
