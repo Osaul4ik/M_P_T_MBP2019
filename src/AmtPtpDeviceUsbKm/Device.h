@@ -100,10 +100,12 @@ typedef struct _DEVICE_CONTEXT
     // Click arbitration (Ptpcore.c) - see CLICK_ARBITRATION_STATE above.
     // PressureCrossed latches TRUE the first frame this press's pressure
     // exceeds FORCE_TOUCH_PRESSURE_THRESHOLD; reset to FALSE at each new
-    // button-down. Only meaningful while State == PENDING - read once, at
-    // release, to decide FORCE_TOUCH vs HARD_TAP.
+    // button-down. StartQpc is the button-down timestamp, used only to
+    // clock CLICK_ARBITRATION_GRACE_MS while PressureCrossed is still
+    // FALSE. Both only meaningful while State == PENDING.
     CLICK_ARBITRATION_STATE ClickArbitrationState;
     BOOLEAN                 ClickArbitrationPressureCrossed;
+    LONGLONG                ClickArbitrationStartQpc;
 
     // Scan time
     LARGE_INTEGER LastReportTime;
