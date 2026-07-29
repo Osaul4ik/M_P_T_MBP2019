@@ -596,7 +596,30 @@ AmtContactUpdate(
     CONTACT_VELOCITY_BUCKET velocity = AmtContactClassifyVelocity(
         rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz);
 
-    INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity);
+    // BUG FIX (intermittent multi-finger swipe reversal drop): deadzone
+    // used to be selected purely from this contact's own per-frame
+    // velocity bucket, with no gestureActive override - unlike skipEma
+    // below, which already special-cases gestureActive regardless of
+    // velocity. During a multi-finger swipe (e.g. 3-finger left-then-
+    // right), real fingers don't reverse direction in perfect lockstep:
+    // at the moment of the turn, whichever finger's instantaneous
+    // velocity happens to pass through near-zero in THIS frame gets
+    // classified VELOCITY_SLOW and picks up the strictest threshold
+    // (XY_DEADZONE_UNITS_SLOW), freezing its reported position for 1-2
+    // frames while the other fingers - already past their own turning
+    // point - keep moving. That produces a transient position mismatch
+    // between fingers of the same gesture right at the direction
+    // change, which is exactly when Windows' multi-finger swipe
+    // recognizer is most sensitive to the group moving coherently -
+    // so the reversal is occasionally dropped/not recognized. Fix:
+    // while a gesture is active, always use the FAST (zero) deadzone,
+    // the same way EMA is unconditionally skipped for gesture frames -
+    // deadzone lag has no legitimate purpose during a gesture (unlike
+    // solo pointer placement, where the SLOW bucket filters real
+    // sensor tremor), so there's no tradeoff to make here per-finger.
+    INT deadzoneThreshold = gestureActive
+        ? XY_DEADZONE_UNITS_FAST
+        : AmtContactDeadzoneForVelocity(velocity);
     INT alphaNum          = AmtContactAlphaForVelocity(velocity);
 
     // Prediction input (see Match.c's dead-reckoned matching cost): the
