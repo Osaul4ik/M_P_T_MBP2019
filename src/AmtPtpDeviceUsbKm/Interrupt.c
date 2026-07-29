@@ -172,13 +172,34 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     RtlZeroMemory(&Report, sizeof(PTP_REPORT));
     Report.ReportID = REPORTID_MULTITOUCH;
 
+    // Captured under StateLock below, delivered after it's released.
+    WDFREQUEST mouseRequest     = NULL;
+    BOOLEAN    haveMouseEdge    = FALSE;
+    BOOLEAN    edgeButton2State = FALSE;
+
     // AUDIT FIX (data race): everything from here down either reads or
     // mutates shared DEVICE_CONTEXT state (LastReportTime, the whole
     // PTPCore contact pool via PTPCore_ProcessFrame, and the force-touch
     // edge queue further below) - see the StateLock comment in Device.h
     // for why this is necessary even though completions look sequential
-    // on paper. Held across the WDF calls in this region too (manual,
-    // non-power-managed queue - safe at DISPATCH_LEVEL).
+    // on paper.
+    //
+    // AUDIT FIX (lock-hold-time reduction): this used to also stay held
+    // across WdfMemoryCopyFromBuffer/WdfRequestComplete for BOTH the touch
+    // report and the force-touch mouse report. WdfRequestComplete walks
+    // the completed IRP back up the whole stack (HIDCLASS, mouhid.sys, any
+    // upper filters) - its duration is not bounded by this driver, so
+    // running it under a DISPATCH_LEVEL spinlock on every single USB
+    // interrupt completion needlessly extended how long this CPU spends at
+    // raised IRQL, on the hot path, for every scan. The lock below now
+    // covers ONLY the DEVICE_CONTEXT reads/writes: timing, PTPCore's
+    // contact pool, and the force-touch edge FIFO push + gated pop
+    // (WdfIoQueueRetrieveNextRequest for the second/mouse request stays
+    // inside the lock - it's a bounded, purely-internal queue dequeue, not
+    // a completion callout, and whether it succeeds gates the pop, so the
+    // two must stay atomic together - see AUDIT FIX #1/#2 below). Once the
+    // lock is released, Report/mouseRequest/edgeButton2State are plain
+    // local state - delivering them doesn't need pCtx anymore.
     WdfSpinLockAcquire(pCtx->StateLock);
 
     KeQueryPerformanceCounter(&Now);
@@ -250,19 +271,6 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         Report.IsButtonClicked = TRUE;
     }
 
-    AmtReportCheckInvariants(&Report);
-
-    Status = WdfMemoryCopyFromBuffer(
-        RequestMemory, 0, (PVOID)&Report, sizeof(PTP_REPORT));
-    if (!NT_SUCCESS(Status)) {
-        WdfSpinLockRelease(pCtx->StateLock);
-        WdfRequestComplete(Request, Status);
-        return;
-    }
-
-    WdfRequestSetInformation(Request, sizeof(PTP_REPORT));
-    WdfRequestComplete(Request, STATUS_SUCCESS);
-
     // Force-touch -> synthetic right-click, delivered on the SEPARATE
     // Mouse top-level collection (REPORTID_STANDARDMOUSE) - see
     // AAPL_WELLSPRING_T2_FORCETOUCH_MOUSE_TLC. This never touches the
@@ -293,41 +301,65 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         AmtForceTouchEdgeEnqueue(pCtx, FALSE);
     }
 
+    // Gated pop: WdfIoQueueRetrieveNextRequest's success/failure decides
+    // whether an edge is actually consumed this pass, so the check, the
+    // dequeue attempt, and the pop must stay one atomic step - this is the
+    // one WDF call that stays inside the lock (see the lock-hold-time
+    // comment above for why). mouseRequest/edgeButton2State are captured
+    // here for delivery after the lock is released below; on failure
+    // (no second request available yet) the queue is left untouched for a
+    // later completion to retry, same as before.
     if (pCtx->PendingForceTouchEdgeCount > 0) {
-        BOOLEAN edgeButton2State =
-            pCtx->PendingForceTouchEdgeQueue[pCtx->PendingForceTouchEdgeHead];
+        NTSTATUS mouseStatus = WdfIoQueueRetrieveNextRequest(pCtx->InputQueue, &mouseRequest);
+        if (NT_SUCCESS(mouseStatus)) {
+            edgeButton2State = pCtx->PendingForceTouchEdgeQueue[pCtx->PendingForceTouchEdgeHead];
 
-        WDFREQUEST mouseRequest;
-        Status = WdfIoQueueRetrieveNextRequest(pCtx->InputQueue, &mouseRequest);
-        if (NT_SUCCESS(Status)) {
-            WDFMEMORY mouseRequestMemory;
-            Status = WdfRequestRetrieveOutputMemory(mouseRequest, &mouseRequestMemory);
-            if (NT_SUCCESS(Status)) {
-                PTP_FORCETOUCH_MOUSE_REPORT mouseReport;
-                RtlZeroMemory(&mouseReport, sizeof(mouseReport));
-                mouseReport.ReportID = REPORTID_STANDARDMOUSE;
-                mouseReport.Button2  = edgeButton2State ? 1 : 0;
-
-                Status = WdfMemoryCopyFromBuffer(
-                    mouseRequestMemory, 0, (PVOID)&mouseReport, sizeof(mouseReport));
-                if (NT_SUCCESS(Status)) {
-                    WdfRequestSetInformation(mouseRequest, sizeof(mouseReport));
-                }
-            }
-            WdfRequestComplete(mouseRequest, Status);
-
-            // Delivered (or at least handed to Windows - matches prior
-            // behavior of completing the request either way): pop it off
-            // the head of the queue.
             pCtx->PendingForceTouchEdgeHead =
                 (UCHAR)((pCtx->PendingForceTouchEdgeHead + 1) % PENDING_FORCE_TOUCH_EDGE_CAPACITY);
             pCtx->PendingForceTouchEdgeCount--;
+
+            haveMouseEdge = TRUE;
         }
         // else: still no second request available this pass - leave the
         // queue untouched and retry on the next interrupt completion.
     }
 
     WdfSpinLockRelease(pCtx->StateLock);
+    // ---- end of critical section: pCtx is no longer touched below ----
+
+    AmtReportCheckInvariants(&Report);
+
+    // Touch/digitizer report delivery - independent of the mouse edge
+    // below (a copy failure here, essentially unreachable in practice
+    // since RequestMemory's size is guaranteed by the IOCTL_HID_READ_REPORT
+    // contract, must not block delivering an already-dequeued force-touch
+    // edge - the two requests are unrelated once off InputQueue).
+    Status = WdfMemoryCopyFromBuffer(
+        RequestMemory, 0, (PVOID)&Report, sizeof(PTP_REPORT));
+    if (NT_SUCCESS(Status)) {
+        WdfRequestSetInformation(Request, sizeof(PTP_REPORT));
+    }
+    WdfRequestComplete(Request, Status);
+
+    if (haveMouseEdge) {
+        NTSTATUS  mouseCompleteStatus;
+        WDFMEMORY mouseRequestMemory;
+
+        mouseCompleteStatus = WdfRequestRetrieveOutputMemory(mouseRequest, &mouseRequestMemory);
+        if (NT_SUCCESS(mouseCompleteStatus)) {
+            PTP_FORCETOUCH_MOUSE_REPORT mouseReport;
+            RtlZeroMemory(&mouseReport, sizeof(mouseReport));
+            mouseReport.ReportID = REPORTID_STANDARDMOUSE;
+            mouseReport.Button2  = edgeButton2State ? 1 : 0;
+
+            mouseCompleteStatus = WdfMemoryCopyFromBuffer(
+                mouseRequestMemory, 0, (PVOID)&mouseReport, sizeof(mouseReport));
+            if (NT_SUCCESS(mouseCompleteStatus)) {
+                WdfRequestSetInformation(mouseRequest, sizeof(mouseReport));
+            }
+        }
+        WdfRequestComplete(mouseRequest, mouseCompleteStatus);
+    }
 }
 
 BOOLEAN
