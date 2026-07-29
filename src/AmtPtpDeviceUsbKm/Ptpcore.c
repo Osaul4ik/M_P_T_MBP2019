@@ -461,6 +461,11 @@ PTPCore_ProcessFrame(
                 // Defer one frame for gesture recognizer.
                 pCtx->ActiveContacts[p].FramesAlive++;
 
+                DbgPrint("[AmtPtp] DEFER pool=%Iu id=%lu framesAlive=%u groupMin=%u qpc=%I64d\n",
+                         p, pCtx->ActiveContacts[p].ContactID,
+                         pCtx->ActiveContacts[p].FramesAlive,
+                         gestureGroupMinFramesAlive, NowQpc);
+
                 AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
                                    pCtx->ActiveContacts[p].ReportX, pCtx->ActiveContacts[p].ReportY,
                                    CONTACT_PHASE_MOVE, TRUE);
@@ -471,6 +476,8 @@ PTPCore_ProcessFrame(
             AmtContactEnterGrace(pCtx->ActiveContacts, p, &oldId, &oldX, &oldY);
             AmtContactExpireGrace(pCtx->ActiveContacts, p);
             // No AmtRecentLiftRecord here - intentional (Issue #4 fix).
+            DbgPrint("[AmtPtp] UP gesture-tainted id=%lu X=%u Y=%u qpc=%I64d\n",
+                     oldId, oldX, oldY, NowQpc);
             AmtCoreEmitContact(pCtx, OutResult, oldId, oldX, oldY, CONTACT_PHASE_UP, TRUE);
 
         } else {
@@ -479,6 +486,8 @@ PTPCore_ProcessFrame(
             // never falls through to this branch.
             AmtContactKill(pCtx->ActiveContacts, p, &oldId, &oldX, &oldY);
             AmtRecentLiftRecord(&pCtx->RecentLifts, NowQpc, oldX, oldY);
+            DbgPrint("[AmtPtp] UP solo id=%lu X=%u Y=%u qpc=%I64d\n",
+                     oldId, oldX, oldY, NowQpc);
             AmtCoreEmitContact(pCtx, OutResult, oldId, oldX, oldY, CONTACT_PHASE_UP, TRUE);
         }
     }
@@ -492,6 +501,9 @@ PTPCore_ProcessFrame(
         if (!matchResult.NewIdentity[ci]) continue;
 
         ULONG  oldId; USHORT oldX, oldY;
+        DbgPrint("[AmtPtp] NewIdentity(origin==0) pool=%Iu oldId=%lu WasInGesture=%u qpc=%I64d\n",
+                 p, pCtx->ActiveContacts[p].ContactID,
+                 pCtx->ActiveContacts[p].WasInGesture, NowQpc);
         if (pCtx->ActiveContacts[p].WasInGesture) {
             AmtContactEnterGrace(pCtx->ActiveContacts, p, &oldId, &oldX, &oldY);
             AmtContactExpireGrace(pCtx->ActiveContacts, p);
@@ -644,6 +656,9 @@ PTPCore_ProcessFrame(
                                     pCtx->PerfFrequency.QuadPart,
                                     cand->X, cand->Y, &liftX, &liftY);
 
+        DbgPrint("[AmtPtp] BIRTH X=%u Y=%u looksLikeRetap=%u liftX=%u liftY=%u qpc=%I64d\n",
+                 cand->X, cand->Y, looksLikeRetap, liftX, liftY, NowQpc);
+
         if (looksLikeRetap) {
             // RetapSeeded: seed survives first AmtContactUpdate.
             AmtContactBirthWithRetapSmoothing(
@@ -790,6 +805,8 @@ PTPCore_ProcessFrame(
                     GESTURE_TAINT_DEBOUNCE_FRAMES)
                 {
                     pCtx->ActiveContacts[p].WasInGesture = TRUE;
+                    DbgPrint("[AmtPtp] WasInGesture SET pool=%Iu id=%lu qpc=%I64d\n",
+                             p, pCtx->ActiveContacts[p].ContactID, NowQpc);
                 }
             } else {
                 pCtx->ActiveContacts[p].GestureCandidateFrames = 0;

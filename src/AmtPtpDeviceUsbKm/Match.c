@@ -164,6 +164,12 @@ AmtMatchBuildCandidates(
         cand.Minor         = rc->Minor;
         cand.Pressure      = rc->Pressure;
 
+        // TEMP DIAG (DebugView): every raw contact's firmware Origin and
+        // the IdentityBreak decision derived from it. Remove once the
+        // tap/gesture misfire repro is captured.
+        DbgPrint("[AmtPtp] cand slot=%u origin=%u X=%u Y=%u IdentityBreak=%u\n",
+                 rc->SlotIndex, rc->Origin, rc->X, rc->Y, cand.IdentityBreak);
+
         if (palm == PALM_LOCAL) {
             cand.PalmLocal = TRUE;
             cand.X = rc->X;
