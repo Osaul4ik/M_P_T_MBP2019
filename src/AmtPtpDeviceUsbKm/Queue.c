@@ -164,9 +164,20 @@ AmtPtpDeviceUsbKmEvtIoStop(
     }
 
     // Purge: device is being removed/stopped for good - the request must
-    // actually be cancelled so the I/O manager can proceed.
+    // actually be completed so the I/O manager can proceed.
+    //
+    // BUG FIX: this used to call WdfRequestCancelSentRequest, which is for
+    // a request the driver itself sent onward to a lower I/O target via
+    // WdfRequestSend. This request was never sent anywhere - it sits in
+    // InputQueue after being forwarded here with WdfRequestForwardToIoQueue
+    // (see AmtPtpDispatchReadReportRequests) and is waiting to be picked up
+    // by AmtPtpEvtUsbInterruptPipeReadComplete. WdfRequestCancelSentRequest
+    // does not complete a request like this, so the request was left
+    // neither completed nor cancelled - exactly the framework hang the
+    // AUDIT FIX comment above (EvtIoStop's completion contract) exists to
+    // avoid. Completing it directly is correct here.
     if (ActionFlags & WdfRequestStopActionPurge) {
-        WdfRequestCancelSentRequest(Request);
+        WdfRequestComplete(Request, STATUS_CANCELLED);
         return;
     }
 }
