@@ -38,14 +38,5 @@
 #define BEGIN_COLLECTION 0xa1
 #define END_COLLECTION   0xc0
 
-// Force-touch -> synthetic right-click. Originally assumed the raw
-// pressure field topped out around ~300 (borrowed from the unused
-// BCM5974_PARAM.p {SN_PRESSURE, 0, 300} quality range in
-// AppleDefinition.h). Real-hardware testing on MacBookPro16,1 showed
-// that assumption was wrong - regular clicks were already reading
-// pressure values well above 300, so 200 fired on ordinary clicks, not
-// just deliberate hard presses. Retuned to 500 based on that testing.
-// If it still misfires, this is the one knob to move; a longer-term
-// fix would be to log real pressure traces (click vs. deliberate force
-// press) and set the threshold from percentiles instead of a guess.
+// Force-touch -> synthetic right-click
 #define FORCE_TOUCH_PRESSURE_THRESHOLD 240
