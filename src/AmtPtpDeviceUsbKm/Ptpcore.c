@@ -287,7 +287,7 @@ PTPCore_ProcessFrame(
 
     // Cost-based correspondence
     MATCH_RESULT matchResult;
-    AmtMatchCorrespond(&candidates, pCtx->ActiveContacts,
+    AmtMatchCorrespond(&candidates, pCtx->ActiveContacts, pCtx->DeviceInfo,
                        NowQpc, pCtx->PerfFrequency.QuadPart,
                        &matchResult);
 
