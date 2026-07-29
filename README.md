@@ -4,7 +4,7 @@
 
 WellspringPTP is a Windows Precision Touchpad driver focused on delivering a native, responsive, and reliable experience on Apple MacBook T2 hardware.
 
-The project started as a fork of **mac-precision-touchpad** and has since evolved into a significantly reworked implementation for Apple T2 MacBooks. Support for non-T2 MacBook models remains based on the original implementation.
+The project started as a fork of **mac-precision-touchpad** and has since evolved into a significantly reworked implementation for Apple T2 MacBooks.
 
 ---
 
@@ -44,7 +44,7 @@ The driver has been extensively tested on this device and is optimized specifica
 
 ### Other MacBooks Non T2
 
-* Other Apple trackpads supported by the original project work, but are not actively maintained or tested.
+* Use https://github.com/imbushuo/mac-precision-touchpad
 
 ### Magic TrackPad 2
 
