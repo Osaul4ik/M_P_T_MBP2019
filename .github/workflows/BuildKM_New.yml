@@ -33,11 +33,8 @@ jobs:
 
 
     # =====================================================================
-    # НОВЕ: перевірка секретів підпису ДО збірки, щоб не витрачати час
+    # Перевірка секретів підпису ДО збірки, щоб не витрачати час
     # раннера на компіляцію, якщо секрети для test-signing не налаштовані.
-    # Повідомлення навмисно англійською: символи кирилиці всередині
-    # PowerShell-рядків на Windows-раннерах GitHub Actions інколи
-    # некоректно декодуються (не UTF-8), що ламає парсинг рядка в лапках.
     # =====================================================================
     - name: Validate signing secrets are present
       run: |
@@ -61,10 +58,8 @@ jobs:
 
 
     # =====================================================================
-    # НОВЕ: обчислення версії/дати драйвера на основі поточної дати й часу.
+    # Обчислення версії/дати драйвера на основі поточної дати й часу.
     # Формат версії: 1.<рік>.<місяцьдень>.<годинахвилина>, напр. 1.2026.0729.1435
-    # Це валідний 4-компонентний DriverVer (кожна частина <= 65535).
-    # Значення пишемо в $GITHUB_ENV, щоб їх бачили наступні кроки.
     # =====================================================================
     - name: Compute driver version and date
       run: |
@@ -92,10 +87,8 @@ jobs:
 
 
     # =====================================================================
-    # НОВЕ: готуємо окрему "staging" теку package/, куди кладемо тільки
-    # .sys та .inf, що стосуються AmtPtpDeviceUsbKm. Саме в цій теці далі
-    # Inf2Cat згенерує .cat (він створює каталог поруч із файлами, які
-    # перелічені в inf, і сканує весь вміст теки).
+    # Готуємо окрему "staging" теку package/, куди кладемо тільки
+    # .sys та .inf, що стосуються AmtPtpDeviceUsbKm.
     # =====================================================================
     - name: Prepare signing package folder
       run: |
@@ -131,13 +124,7 @@ jobs:
 
 
     # =====================================================================
-    # НОВЕ: автопошук StampInf.exe (той самий інструмент, яким VS Driver
-    # Package build target стампує .inf: підставляє $ARCH$ -> amd64,
-    # $KMDFVERSION$ -> реальну версію KMDF, і дату/версію в DriverVer).
-    # Наш AmtPtpDeviceUsbKm.vcxproj не має вбудованого Package-кроку
-    # (<Inf Include=... /> відсутній), тому робимо це вручну - саме так,
-    # як це робив оригінальний AmtPtpDeviceUniversalPkg.vcxproj "за старою
-    # схемою збірки".
+    # Автопошук StampInf.exe
     # =====================================================================
     - name: Locate StampInf.exe
       run: |
@@ -171,12 +158,8 @@ jobs:
 
 
     # =====================================================================
-    # НОВЕ: стампуємо staged .inf у package/ - підставляємо архітектуру
-    # (amd64), дату й версію (обчислені раніше) та версію KMDF (1.33 -
-    # відповідає WDK 10.0.26100.x, який використовується для збірки).
-    # Це і виправляє помилку Inf2Cat "does not have NTAMD64 decorated
-    # model sections": до стампування секція називалась буквально
-    # [Standard.NT$ARCH$], після - [Standard.NTamd64].
+    # Стампуємо staged .inf у package/ - підставляємо архітектуру
+    # (amd64), дату й версію та версію KMDF (1.33).
     # =====================================================================
     - name: Stamp INF (architecture / date / version / KMDF)
       run: |
@@ -198,9 +181,7 @@ jobs:
 
 
     # =====================================================================
-    # НОВЕ: автопошук Inf2Cat.exe у встановленому Windows SDK/WDK замість
-    # хардкоду шляху (версії SDK на runner-ах змінюються з часом).
-    # Якщо інструмент не знайдено - крок падає з чіткою помилкою.
+    # Автопошук Inf2Cat.exe
     # =====================================================================
     - name: Locate Inf2Cat.exe
       run: |
@@ -223,7 +204,6 @@ jobs:
           exit 1
         }
 
-        # Prefer the x64 build of the tool, then the newest by path (versioned folder)
         $tool = $candidates | Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
         if (-not $tool) {
           $tool = $candidates | Sort-Object FullName -Descending | Select-Object -First 1
@@ -235,9 +215,7 @@ jobs:
 
 
     # =====================================================================
-    # НОВЕ: генерація .cat файлу з .inf через Inf2Cat.
-    # /os:10_X64 відповідає платформі збірки (x64) та сумісний з
-    # Windows Server 2022 (Server10_X64 покривається тим самим сімейством NT10).
+    # Генерація .cat файлу з .inf через Inf2Cat.
     # =====================================================================
     - name: Generate CAT file (Inf2Cat)
       run: |
@@ -261,8 +239,7 @@ jobs:
 
 
     # =====================================================================
-    # НОВЕ: автопошук signtool.exe у Windows SDK/WDK.
-    # Так само падає з чіткою помилкою, якщо інструмент не знайдено.
+    # Автопошук signtool.exe
     # =====================================================================
     - name: Locate signtool.exe
       run: |
@@ -296,12 +273,9 @@ jobs:
 
 
     # =====================================================================
-    # НОВЕ: декодування PFX із секрету, підпис .sys і .cat, експорт
+    # Декодування PFX із секрету, підпис .sys і .cat, експорт
     # публічного сертифіката (.cer) для встановлення довіри на цільових
-    # машинах, і ГАРАНТОВАНЕ видалення тимчасового .pfx у блоці finally
-    # (спрацює навіть якщо підпис впаде з помилкою).
-    # PFX ніколи не потрапляє в репозиторій - існує лише в $env:TEMP
-    # runner-а й видаляється в кінці цього ж кроку.
+    # машинах.
     # =====================================================================
     - name: Sign .sys and .cat with SignTool
       run: |
@@ -347,35 +321,32 @@ jobs:
 
 
     # =====================================================================
-    # НОВЕ: інформаційна (не блокуюча) перевірка підпису. Для test-signing
-    # сертифіката signtool verify /pa може повідомляти про недовіру ланцюга
-    # на цій же машині (сертифікат не в Trusted Root) - це очікувано, тому
-    # continue-on-error: true. Ціль кроку - лог, а не gate збірки.
+    # ВИПРАВЛЕНО: інформаційна перевірка підпису без /pa, щоб не перевіряти
+    # довіру до кореневого сертифіката. Для тестових сертифікатів це
+    # нормально - вони не встановлені в Trusted Root на раннері.
     # =====================================================================
     - name: Verify signatures (informational)
       run: |
         Write-Host "==> Verifying .sys signature"
-        & "$env:SIGNTOOL_PATH" verify /v /pa "$env:SYS_PATH"
+        & "$env:SIGNTOOL_PATH" verify /v "$env:SYS_PATH"
         Write-Host "==> Verifying .cat signature"
-        & "$env:SIGNTOOL_PATH" verify /v /pa "$env:CAT_PATH"
+        & "$env:SIGNTOOL_PATH" verify /v "$env:CAT_PATH"
+        Write-Host "==> Verification completed (test certificate - trust not verified)"
       shell: pwsh
       continue-on-error: true
 
 
     # =====================================================================
-    # ЗМІНЕНО: більше НЕ пакуємо в .zip вручну через Compress-Archive.
-    # actions/upload-artifact сам обгортає вміст артефакту в zip при
-    # завантаженні через UI/API - якщо покласти в path вже готовий .zip,
-    # користувач отримує "архів в архіві" (file.zip.zip з file.zip всередині).
-    # Тому тут ми лише готуємо теку WellspringPTP/ з фінальними файлами,
-    # а сам zip більше не створюємо.
+    # Створюємо структуру папок для архіву з папкою WellspringPTP всередині.
     # =====================================================================
     - name: Prepare final package folder
       run: |
         $ErrorActionPreference = "Stop"
-        $stagingRoot  = "archive-staging"
-        $stagingDir   = Join-Path $stagingRoot "WellspringPTP"
-        $installCert  = "src/InstallCert.bat"
+        
+        # Створюємо тимчасову теку, яка буде коренем для архіву
+        $tempRoot = "temp-upload"
+        $stagingDir = Join-Path $tempRoot "WellspringPTP"
+        $installCert = "src/InstallCert.bat"
 
         Write-Host "==> Preparing staging folder $stagingDir"
         New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
@@ -394,14 +365,14 @@ jobs:
         Write-Host "OK: staged files:"
         Get-ChildItem $stagingDir | ForEach-Object { Write-Host "  - $($_.Name)" }
 
-        Add-Content -Path $env:GITHUB_ENV -Value "STAGING_DIR=$stagingDir"
+        # Зберігаємо шлях до КОРЕНЕВОЇ теки (temp-upload), а не до WellspringPTP
+        Add-Content -Path $env:GITHUB_ENV -Value "STAGING_DIR=$tempRoot"
       shell: pwsh
 
 
     # =====================================================================
-    # ЗМІНЕНО: path вказує на ТЕКУ (не на .zip). GitHub Actions сам
-    # запакує цю теку в один zip при завантаженні - без подвійного
-    # архівування. Ім'я zip-файлу після завантаження = ім'я артефакту.
+    # Завантаження артефакту - GitHub запакує temp-upload в zip,
+    # і всередині буде папка WellspringPTP з файлами.
     # =====================================================================
     - name: Upload signed driver package artifact
       uses: actions/upload-artifact@v4
