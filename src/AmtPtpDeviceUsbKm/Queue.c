@@ -40,8 +40,27 @@ AmtPtpDeviceUsbKmQueueInitialize(
     }
 
     // Manual queue for touch read requests.
+    //
+    // AUDIT FIX (EvtIoStop wired to the wrong queue): EvtIoStop was
+    // previously only ever set on the DEFAULT queue's config above, but the
+    // requests that actually need Purge/Suspend handling are the
+    // IOCTL_HID_READ_REPORT requests sitting HERE, in InputQueue -
+    // AmtPtpDispatchReadReportRequests (below) forwards them out of the
+    // default queue with WdfRequestForwardToIoQueue the moment they arrive,
+    // so by the time the default queue's EvtIoStop could ever see one, it
+    // has already left that queue. The default queue's own requests
+    // (GET_DESCRIPTOR/GET_ATTRIBUTES/GET_REPORT_DESCRIPTOR/GET_FEATURE/
+    // SET_FEATURE, all handled synchronously in
+    // AmtPtpDeviceUsbKmEvtIoDeviceControl) never stay pending long enough
+    // for EvtIoStop to matter there. Registering the same callback here
+    // too means a request parked in InputQueue waiting on
+    // AmtPtpEvtUsbInterruptPipeReadComplete is now actually acknowledged
+    // (Suspend) or completed with STATUS_CANCELLED (Purge) instead of
+    // relying on undocumented default framework purge behavior for a
+    // manual, non-power-managed queue.
     WDF_IO_QUEUE_CONFIG_INIT(&queueConfig, WdfIoQueueDispatchManual);
     queueConfig.PowerManaged = WdfFalse;
+    queueConfig.EvtIoStop    = AmtPtpDeviceUsbKmEvtIoStop;
 
     status = WdfIoQueueCreate(
         Device,
@@ -145,7 +164,11 @@ AmtPtpDeviceUsbKmEvtIoStop(
     _In_ WDFREQUEST Request,
     _In_ ULONG ActionFlags
 )
-// Called before device leaves D0 for power-managed queues.
+// Shared EvtIoStop for BOTH queues (see AmtPtpDeviceUsbKmQueueInitialize):
+// the default power-managed queue (Suspend on D0 exit, Purge on removal)
+// and the manual, non-power-managed InputQueue (Purge on removal/stop only
+// - a manual queue isn't power-managed, so Suspend is not expected for it,
+// but ActionFlags is still checked rather than assumed).
 //
 // AUDIT FIX: this previously only traced and returned, which violates the
 // WDF contract - EvtIoStop MUST complete, cancel, or explicitly acknowledge
