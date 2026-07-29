@@ -13,6 +13,18 @@
 // press must not fire a synthetic right-click on top of that drag.
 #define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 60
 
+// How long PTPCore will let a press's ordinary click report stay
+// withheld while pressure is still below FORCE_TOUCH_PRESSURE_THRESHOLD,
+// before giving up on it ever crossing and reporting the click live.
+// Bounds the delay for long, pressure-quiet holds (click-and-hold with
+// no drag) - without this, such a hold would never get reported until
+// release, no matter how long it's held. A real force touch ramps past
+// the threshold well under this window in practice, so it rarely even
+// gets the chance to elapse for a genuine force-touch press. Once
+// pressure DOES cross the threshold, this timer no longer applies - see
+// the AUDIT note above the arbitration block below. Tunable.
+#define CLICK_ARBITRATION_GRACE_MS 60
+
 // Recent-lift ring buffer (slot-independent retap memory)
 
 VOID
@@ -766,10 +778,9 @@ PTPCore_ProcessFrame(
     // the force-touch check below so both see the same, already-updated
     // state this frame.
     //
-    // REDESIGN (removes the old timeout/hysteresis "wait and see" model):
-    // force touch is no longer decided - or reported - while the button
-    // is still held at all. It is resolved ENTIRELY at the moment of
-    // release, from two one-way latches accumulated over the press:
+    // Force touch itself is never decided - or reported - while the
+    // button is still held. It is resolved from two one-way latches
+    // accumulated over the press:
     //   - ForceTouchDragLockout (set elsewhere above, once the finger
     //     passes FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the button-down
     //     anchor) - if this ever trips, the press is a hard-tap/drag and
@@ -777,19 +788,28 @@ PTPCore_ProcessFrame(
     //     regardless of pressure;
     //   - ClickArbitrationPressureCrossed - latched TRUE the first frame
     //     framePeakPressure exceeds FORCE_TOUCH_PRESSURE_THRESHOLD.
-    // While PENDING (drag lockout hasn't tripped), the ordinary click is
-    // withheld - reporting it early and retracting it later if pressure
-    // does cross the threshold would itself show up in Windows as a
-    // real, brief left-click that shouldn't have happened, right before
-    // the force-touch right-click - trading one glitch for a worse one.
-    // At release, IF still PENDING (never dragged): the press becomes
-    // FORCE_TOUCH if pressure ever crossed the threshold at any point
-    // during the hold, otherwise it becomes an ordinary HARD_TAP (a
-    // ordinary tap/click that never got anywhere near force-touch
-    // pressure) - reported as a same-frame click pulse. No timer, no
-    // pressure-hysteresis "is it receding" guesswork: the two inputs
-    // that matter (did it move, did it get pressed hard) are just read
-    // directly at the one moment either of them can no longer change.
+    // While PressureCrossed is FALSE, reporting the ordinary click early
+    // and retracting it later if pressure does end up crossing the
+    // threshold would itself show up in Windows as a real, brief
+    // left-click that shouldn't have happened, right before the
+    // force-touch right-click - trading one glitch for a worse one. So
+    // as long as there's still a chance this press crosses the
+    // threshold, the click stays withheld.
+    //
+    // That "still a chance" window is bounded by
+    // CLICK_ARBITRATION_GRACE_MS, not by pressure hysteresis or by
+    // waiting for release: a genuine force touch ramps pressure past the
+    // threshold within well under this window in practice, so once it
+    // elapses with pressure still below threshold, this press is judged
+    // decisively not a force touch - HARD_TAP commits right then and
+    // there, live, same as an ordinary click would report. This is what
+    // makes long, pressure-quiet holds (click-and-hold with no drag) work
+    // normally again: they no longer sit unreported for the entire
+    // duration of the hold, only for this one bounded grace window at
+    // the very start. Once PressureCrossed goes TRUE, the grace timer is
+    // irrelevant - that press is a force-touch candidate for the rest of
+    // the hold and its outcome (FORCE_TOUCH, or HARD_TAP if it later
+    // drags) is still only ever revealed at release, exactly as before.
     if (!ButtonDown) {
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
             pCtx->ClickArbitrationState = pCtx->ClickArbitrationPressureCrossed
@@ -802,6 +822,7 @@ PTPCore_ProcessFrame(
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_IDLE) {
             pCtx->ClickArbitrationState           = CLICK_ARBITRATION_PENDING;
             pCtx->ClickArbitrationPressureCrossed = FALSE;
+            pCtx->ClickArbitrationStartQpc        = NowQpc;
         }
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
             if (framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
@@ -813,6 +834,14 @@ PTPCore_ProcessFrame(
                 // of how hard it's pressed or whether it already crossed
                 // the force-touch threshold earlier this same press.
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
+            } else if (!pCtx->ClickArbitrationPressureCrossed) {
+                LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
+                LONGLONG graceTicks = (pCtx->PerfFrequency.QuadPart > 0)
+                    ? (pCtx->PerfFrequency.QuadPart * CLICK_ARBITRATION_GRACE_MS) / 1000
+                    : 0; // no usable clock - fail open to a live click below
+                if (elapsedTicks >= graceTicks) {
+                    pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
+                }
             }
         }
         // else: HARD_TAP already latched - hold it. (FORCE_TOUCH is never
