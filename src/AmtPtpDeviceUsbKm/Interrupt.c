@@ -281,6 +281,14 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     Report.ScanTime = (USHORT)PerfDelta;
     pCtx->LastReportTime = Now;
 
+    // DIAG (soft-tap/double-tap investigation): ScanTime (100ns units,
+    // clamped to USHORT) is exactly the field the QPC fix changed - it
+    // was permanently 0 before. Windows' PTP recognizer uses it to judge
+    // report cadence; if it's now reading absurdly large (clock unit
+    // mismatch) or still stuck at 0, that's visible here. Remove once
+    // the soft-double-tap report is resolved.
+    DbgPrint("[AmtPtp] ScanTime=%u qpc=%I64d\n", Report.ScanTime, Now.QuadPart);
+
     // PTPCore orchestration
     PTP_CORE_FRAME coreFrame;
     BOOLEAN forceTouchDownEdge = FALSE;

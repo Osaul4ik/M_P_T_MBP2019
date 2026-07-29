@@ -843,6 +843,24 @@ PTPCore_ProcessFrame(
             ? TRUE
             : (BOOLEAN)(cand->TipDropApplied == 0);
 
+        // DIAG (soft-tap/double-tap investigation): DOWN is the one phase
+        // that was never logged anywhere - UP has two prints (solo/
+        // gesture-tainted), BIRTH has one, but a tap's DOWN edge, its
+        // Confident bit, and the WasInGesture state it starts with were
+        // all invisible. Windows' own PTP recognizer decides tap vs
+        // double-tap vs click purely from the Confident/ContactID/
+        // ScanTime sequence we hand it - if a DOWN reports Confident=0,
+        // or WasInGesture=1 (retap smoothing/tail-overlap taint), the
+        // recognizer can silently drop that tap without anything else in
+        // this driver seeing an error. Remove once the soft-double-tap
+        // report is resolved.
+        if (justBorn) {
+            DbgPrint("[AmtPtp] DOWN id=%lu X=%u Y=%u Confident=%u WasInGesture=%u RetapSeeded=%u qpc=%I64d\n",
+                     pCtx->ActiveContacts[p].ContactID, repX, repY, reportConfident,
+                     pCtx->ActiveContacts[p].WasInGesture,
+                     pCtx->ActiveContacts[p].RetapSeeded, NowQpc);
+        }
+
         AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
                            repX, repY,
                            justBorn ? CONTACT_PHASE_DOWN : CONTACT_PHASE_MOVE,
