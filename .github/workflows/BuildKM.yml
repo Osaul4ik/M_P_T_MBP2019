@@ -363,17 +363,38 @@ jobs:
 
 
     # =====================================================================
-    # НОВЕ: пакування sys + inf + cat + cer в один ZIP-архів замість
-    # окремих файлів-артефактів.
+    # НОВЕ: пакування sys + inf + cat + cer + InstallCert.bat в один ZIP-архів.
+    # Усі файли спершу копіюються у теку WellspringPTP/, і саме ця тека
+    # (а не окремі файли) кладеться в архів - так у ZIP зверху опиняється
+    # єдина папка WellspringPTP з усім вмістом усередині.
     # =====================================================================
     - name: Create single signed-driver archive
       run: |
         $ErrorActionPreference = "Stop"
-        $archiveName = "$($env:DRIVER_NAME)-Signed-$($env:DRIVER_VERSION).zip"
+        $archiveName  = "$($env:DRIVER_NAME)-Signed-$($env:DRIVER_VERSION).zip"
+        $stagingRoot  = "archive-staging"
+        $stagingDir   = Join-Path $stagingRoot "WellspringPTP"
+        $installCert  = "src/InstallCert.bat"
+
+        Write-Host "==> Preparing staging folder $stagingDir"
+        New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+
+        Copy-Item -Path $env:SYS_PATH -Destination $stagingDir -Force
+        Copy-Item -Path $env:INF_PATH -Destination $stagingDir -Force
+        Copy-Item -Path $env:CAT_PATH -Destination $stagingDir -Force
+        Copy-Item -Path $env:CER_PATH -Destination $stagingDir -Force
+
+        if (-not (Test-Path $installCert)) {
+          Write-Error "InstallCert.bat not found at $installCert."
+          exit 1
+        }
+        Copy-Item -Path $installCert -Destination $stagingDir -Force
+
+        Write-Host "OK: staged files:"
+        Get-ChildItem $stagingDir | ForEach-Object { Write-Host "  - $($_.Name)" }
 
         Write-Host "==> Building archive $archiveName"
-        Compress-Archive -Path $env:SYS_PATH, $env:INF_PATH, $env:CAT_PATH, $env:CER_PATH `
-          -DestinationPath $archiveName -Force
+        Compress-Archive -Path $stagingDir -DestinationPath $archiveName -Force
 
         Write-Host "OK: archive created -> $archiveName"
         Add-Content -Path $env:GITHUB_ENV -Value "ARCHIVE_PATH=$archiveName"
