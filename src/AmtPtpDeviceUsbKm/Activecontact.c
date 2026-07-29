@@ -78,6 +78,16 @@ AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal, _In_ INT alphaNum
     return (USHORT)blended;
 }
 
+// Saturating LONG clamp - see the call site in AmtContactUpdate for why
+// a plain truncating cast isn't safe here.
+static inline LONG
+AmtContactClampVelocity(_In_ LONGLONG Value)
+{
+    if (Value > MAXLONG) return MAXLONG;
+    if (Value < MINLONG) return MINLONG;
+    return (LONG)Value;
+}
+
 // Classifies how fast a contact is moving, in normalized device units/sec,
 // by comparing the incoming raw sample against the contact's last
 // committed Hyst baseline (the same baseline AmtContactEvaluateDeadzone
@@ -234,6 +244,8 @@ AmtContactBirth(
     c->LastMajor           = 0;
     c->LastMinor           = 0;
     c->LastPressure        = 0;
+    c->VelocityX           = 0; // no prior sample yet - see AmtContactUpdate
+    c->VelocityY           = 0;
     c->FramesAlive         = 1; // birth frame counts as 1
 }
 
@@ -272,6 +284,8 @@ AmtContactBirthWithRetapSmoothing(
     c->LastMajor           = 0;
     c->LastMinor           = 0;
     c->LastPressure        = 0;
+    c->VelocityX           = 0; // no prior sample yet - see AmtContactUpdate
+    c->VelocityY           = 0;
     c->FramesAlive         = 1;
 }
 
@@ -585,6 +599,14 @@ AmtContactUpdate(
     INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity);
     INT alphaNum          = AmtContactAlphaForVelocity(velocity);
 
+    // Prediction input (see Match.c's dead-reckoned matching cost): the
+    // report position BEFORE this frame's commit, so the velocity below
+    // measures actual reported motion (post deadzone/EMA), not raw
+    // sensor jitter. Read before AmtContactCommitSample overwrites
+    // Contact->ReportX/Y.
+    USHORT prevReportX = Contact->ReportX;
+    USHORT prevReportY = Contact->ReportY;
+
     if (Contact->PendingFirstSample) {
         if (retapSeededFirstSample) {
             // Do not reset HystX/Y - they hold the seeded baseline.
@@ -602,6 +624,37 @@ AmtContactUpdate(
                            gestureActive, (BOOLEAN)(velocity == VELOCITY_SLOW),
                            alphaNum, retapSeededFirstSample,
                            OutX, OutY);
+
+    // Refresh per-axis velocity from the actual reported motion this
+    // frame (post deadzone/EMA, so it agrees with what Match.c will
+    // predict from). Same "no reliable dt" guard as
+    // AmtContactClassifyVelocity above (prevQpc==0 covers birth/rebind;
+    // dtTicks<=0 covers a nonpositive delta) - both fall back to 0,
+    // which makes AmtMatchCorrespond's prediction transparently collapse
+    // to the un-predicted last-position cost instead of extrapolating
+    // from stale/bogus velocity.
+    //
+    // AmtContactClampVelocity saturates rather than lets the final cast
+    // to LONG silently wrap: dtTicks isn't bounded from below here (only
+    // >0 is required), so a pathologically small interval between two
+    // updates - a duplicate/near-back-to-back call, a clock hiccup -
+    // could otherwise produce a 64-bit intermediate far outside LONG's
+    // range; a raw truncating cast could wrap that into a garbage,
+    // possibly wrong-signed velocity that would then predict motion in
+    // the wrong direction next frame instead of just an extreme one.
+    // Saturating instead means the worst case is a clamped-at-the-edge
+    // prediction (AmtMatchClampCoord in Match.c already clamps any
+    // resulting position to a valid coordinate either way), never a
+    // sign flip.
+    if (dtTicks > 0 && PerfFrequencyHz > 0) {
+        Contact->VelocityX = AmtContactClampVelocity(
+            ((LONGLONG)(*OutX - (INT)prevReportX) * PerfFrequencyHz) / dtTicks);
+        Contact->VelocityY = AmtContactClampVelocity(
+            ((LONGLONG)(*OutY - (INT)prevReportY) * PerfFrequencyHz) / dtTicks);
+    } else {
+        Contact->VelocityX = 0;
+        Contact->VelocityY = 0;
+    }
 
     Contact->LastSlotHint = slotHint;
     Contact->LastSeenQpc  = nowQpc;
