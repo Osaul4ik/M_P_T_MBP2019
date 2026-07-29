@@ -203,24 +203,31 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         raw_n = (NumBytesTransferred - headerSize) / fingerSize;
         if (raw_n > PTP_MAX_CONTACT_POINTS) raw_n = PTP_MAX_CONTACT_POINTS;
 
-        // AUDIT FIX (delta not accounted for in the byte budget): raw_n
-        // above is derived from (NumBytesTransferred - headerSize), but
-        // finger records actually start tp_delta bytes further in
-        // (f_base below) - so the real budget for finger data is
-        // (NumBytesTransferred - headerSize - tp_delta). Left unguarded,
-        // the last parsed finger record could read up to tp_delta bytes
-        // past NumBytesTransferred - still inside the WDFMEMORY buffer
-        // (sized for the full tp_datalen transfer length), but past the
-        // bytes this specific completion actually delivered. Reclamp
-        // raw_n against the real, delta-adjusted budget instead.
-        size_t availableForFingers = NumBytesTransferred - headerSize;
-        size_t delta = (size_t)pCtx->DeviceInfo->tp_delta;
-        if (delta > availableForFingers) {
-            raw_n = 0;
-        } else {
-            size_t maxFingers = (availableForFingers - delta) / fingerSize;
-            if (raw_n > maxFingers) raw_n = maxFingers;
-        }
+        // REVERTED (regression, confirmed on real MacBookPro16,1/T2
+        // PID 0x0340 hardware): a prior "AUDIT FIX" here additionally
+        // reclamped raw_n to (NumBytesTransferred - headerSize - tp_delta)
+        // / fingerSize, on the theory that tp_delta bytes are extra wire
+        // payload that must come out of the finger-data budget. That's
+        // wrong for this hardware's actual transfer shape - with
+        // USBD_SHORT_TRANSFER_OK (continuous reader config), the device
+        // sends exactly headerSize + N*fingerSize bytes for N active
+        // contacts (confirmed by the modulo check above: it requires
+        // (NumBytesTransferred - headerSize) to be an exact multiple of
+        // fingerSize, which only holds if tp_delta contributes ZERO extra
+        // transferred bytes). tp_delta is purely a f_base pointer offset
+        // (below) into memory already accounted for by headerSize, not
+        // additional payload. Subtracting it from an exact multiple of
+        // fingerSize before dividing floors the result down by one
+        // whenever 0 < tp_delta < fingerSize (true here: delta=2,
+        // fingerSize=30) - N=1 -> maxFingers=0 (finger dropped entirely),
+        // N=2 -> 1, N=3 -> 2. f_base below does read tp_delta bytes past
+        // NumBytesTransferred for the LAST finger record - that part is
+        // real, but bounded-safe (WDFMEMORY is allocated for the full
+        // tp_datalen transfer length regardless of actual bytes received)
+        // and only touches TRACKPAD_FINGER's trailing field, not
+        // major/minor/abs_x/abs_y (all read from earlier, always-valid
+        // offsets). Reducing the reported finger COUNT is the wrong fix
+        // for that - do not reintroduce this reclamp.
 
         UCHAR* f_base = TouchBuffer + headerSize + pCtx->DeviceInfo->tp_delta;
         AmtInputParseFrame(f_base, fingerSize, raw_n, pCtx->DeviceInfo,
