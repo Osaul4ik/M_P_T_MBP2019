@@ -204,12 +204,24 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         raw_n = (NumBytesTransferred - headerSize) / fingerSize;
         if (raw_n > PTP_MAX_CONTACT_POINTS) raw_n = PTP_MAX_CONTACT_POINTS;
 
-        // NOTE: no "raw_n * fingerSize > NumBytesTransferred - headerSize"
-        // check here anymore - it was dead code. The modulo check at the
-        // top of this function already guarantees (NumBytesTransferred -
-        // headerSize) is an exact multiple of fingerSize, and raw_n is
-        // only ever clamped DOWN from the exact quotient, so the product
-        // can never exceed the transferred byte count.
+        // AUDIT FIX (delta not accounted for in the byte budget): raw_n
+        // above is derived from (NumBytesTransferred - headerSize), but
+        // finger records actually start tp_delta bytes further in
+        // (f_base below) - so the real budget for finger data is
+        // (NumBytesTransferred - headerSize - tp_delta). Left unguarded,
+        // the last parsed finger record could read up to tp_delta bytes
+        // past NumBytesTransferred - still inside the WDFMEMORY buffer
+        // (sized for the full tp_datalen transfer length), but past the
+        // bytes this specific completion actually delivered. Reclamp
+        // raw_n against the real, delta-adjusted budget instead.
+        size_t availableForFingers = NumBytesTransferred - headerSize;
+        size_t delta = (size_t)pCtx->DeviceInfo->tp_delta;
+        if (delta > availableForFingers) {
+            raw_n = 0;
+        } else {
+            size_t maxFingers = (availableForFingers - delta) / fingerSize;
+            if (raw_n > maxFingers) raw_n = maxFingers;
+        }
 
         UCHAR* f_base = TouchBuffer + headerSize + pCtx->DeviceInfo->tp_delta;
         AmtInputParseFrame(f_base, fingerSize, raw_n, pCtx->DeviceInfo,
