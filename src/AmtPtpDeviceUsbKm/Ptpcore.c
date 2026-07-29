@@ -13,20 +13,6 @@
 // press must not fire a synthetic right-click on top of that drag.
 #define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 60
 
-// How long PTPCore will wait, once the button goes down, for the press
-// to either cross FORCE_TOUCH_PRESSURE_THRESHOLD or start receding
-// before giving up and committing it as an ordinary click. "Some time"
-// per the design note - tunable.
-#define CLICK_ARBITRATION_TIMEOUT_MS 60
-
-// A press is considered to be receding once its pressure falls this many
-// raw units below the highest value seen so far this press (rather than
-// below the immediately preceding frame - the sensor is noisy enough
-// that a single frame-to-frame dip isn't reliable on its own). Tunable;
-// ~3-5 units is enough margin to absorb sensor noise without meaningfully
-// delaying the decision.
-#define CLICK_ARBITRATION_PRESSURE_HYSTERESIS 4
-
 // Recent-lift ring buffer (slot-independent retap memory)
 
 VOID
@@ -778,118 +764,76 @@ PTPCore_ProcessFrame(
 
     // Click arbitration: force-touch vs ordinary hard-tap. Decides BEFORE
     // the force-touch check below so both see the same, already-updated
-    // state this frame. Once the button is held, this press stays
-    // CLICK_ARBITRATION_PENDING until one of four things happens:
-    //   - the drag lockout trips (finger has moved past
-    //     FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the button-down anchor,
-    //     e.g. dragging a window) -> HARD_TAP, unconditionally, even if
-    //     pressure ALSO crosses the force-touch threshold in this exact
-    //     same frame. Movement wins over pressure: a press that's moving
-    //     is a drag, full stop, regardless of how hard it's pressed.
-    //     Checked FIRST, ahead of the pressure check below, specifically
-    //     for that same-frame race;
-    //   - pressure crosses FORCE_TOUCH_PRESSURE_THRESHOLD (and the drag
-    //     lockout has NOT tripped) -> FORCE_TOUCH, the ordinary click is
-    //     suppressed for the rest of the press;
-    //   - pressure falls CLICK_ARBITRATION_PRESSURE_HYSTERESIS units or
-    //     more below the highest pressure seen so far this press, before
-    //     ever reaching the threshold -> the press has peaked and is on
-    //     its way back down -> HARD_TAP, immediately. Compared against
-    //     the running PEAK rather than the previous frame's raw sample:
-    //     the sensor is noisy (252, 250, 251, 252, 251...), so a single
-    //     frame-to-frame dip is not a reliable "it's receding" signal -
-    //     only falling meaningfully below the best value seen is;
-    //   - none of the above within CLICK_ARBITRATION_TIMEOUT_MS (pressure
-    //     climbing slowly or just wobbling) -> give up waiting -> HARD_TAP.
-    // The decision then latches for the remainder of the press (reset to
-    // IDLE only on button release) - EXCEPT for one case: once FORCE_TOUCH
-    // is decided, moving the finger while still pressing is normally a
-    // right-click-drag (e.g. dragging out a selection with the force-touch
-    // menu open) and must NOT cancel the force touch on its own; only the
-    // pressure dropping back down (or the button releasing) ends that.
-    // BUT if the finger travels far enough to trip the SAME drag lockout
-    // used above (FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the button-down
-    // anchor) - i.e. an accidental force-touch trigger followed by a real,
-    // deliberate window-drag or selection-drag - that downgrades an
-    // already-latched FORCE_TOUCH back to HARD_TAP too, immediately. The
-    // asymmetry is intentional: FORCE_TOUCH is easy to trigger by accident
-    // (a moment of extra pressure mid-press) and hard to undo by design,
-    // but a real drag is a much stronger, harder-to-fake signal of actual
-    // intent than the small residual finger movement a genuine force-touch
-    // hold naturally produces - so it's still allowed to override, whereas
-    // a mere pressure dip is not.
+    // state this frame.
+    //
+    // REDESIGN (removes the old timeout/hysteresis "wait and see" model):
+    // force touch is no longer decided - or reported - while the button
+    // is still held at all. It is resolved ENTIRELY at the moment of
+    // release, from two one-way latches accumulated over the press:
+    //   - ForceTouchDragLockout (set elsewhere above, once the finger
+    //     passes FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the button-down
+    //     anchor) - if this ever trips, the press is a hard-tap/drag and
+    //     is committed as HARD_TAP immediately, the instant it trips,
+    //     regardless of pressure;
+    //   - ClickArbitrationPressureCrossed - latched TRUE the first frame
+    //     framePeakPressure exceeds FORCE_TOUCH_PRESSURE_THRESHOLD.
+    // While PENDING (drag lockout hasn't tripped), the ordinary click is
+    // withheld - reporting it early and retracting it later if pressure
+    // does cross the threshold would itself show up in Windows as a
+    // real, brief left-click that shouldn't have happened, right before
+    // the force-touch right-click - trading one glitch for a worse one.
+    // At release, IF still PENDING (never dragged): the press becomes
+    // FORCE_TOUCH if pressure ever crossed the threshold at any point
+    // during the hold, otherwise it becomes an ordinary HARD_TAP (a
+    // ordinary tap/click that never got anywhere near force-touch
+    // pressure) - reported as a same-frame click pulse. No timer, no
+    // pressure-hysteresis "is it receding" guesswork: the two inputs
+    // that matter (did it move, did it get pressed hard) are just read
+    // directly at the one moment either of them can no longer change.
     if (!ButtonDown) {
-        pCtx->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
+        if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
+            pCtx->ClickArbitrationState = pCtx->ClickArbitrationPressureCrossed
+                ? CLICK_ARBITRATION_FORCE_TOUCH
+                : CLICK_ARBITRATION_HARD_TAP;
+        } else {
+            pCtx->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
+        }
     } else {
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_IDLE) {
-            pCtx->ClickArbitrationState         = CLICK_ARBITRATION_PENDING;
-            pCtx->ClickArbitrationStartQpc      = NowQpc;
-            pCtx->ClickArbitrationPeakPressure  = framePeakPressure;
+            pCtx->ClickArbitrationState           = CLICK_ARBITRATION_PENDING;
+            pCtx->ClickArbitrationPressureCrossed = FALSE;
         }
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
-            if (framePeakPressure > pCtx->ClickArbitrationPeakPressure)
-                pCtx->ClickArbitrationPeakPressure = framePeakPressure;
-
-            INT dropFromPeak = (INT)pCtx->ClickArbitrationPeakPressure -
-                                (INT)framePeakPressure;
-
-            if (pCtx->ForceTouchDragLockout) {
-                // Movement beats pressure, even in a same-frame tie -
-                // checked before the threshold test below on purpose.
-                pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
-            } else if (framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
-                pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
-            } else if (dropFromPeak >= CLICK_ARBITRATION_PRESSURE_HYSTERESIS) {
-                pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
-            } else {
-                LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
-                LONGLONG timeoutTicks = (pCtx->PerfFrequency.QuadPart > 0)
-                    ? (pCtx->PerfFrequency.QuadPart * CLICK_ARBITRATION_TIMEOUT_MS) / 1000
-                    : 0; // no usable clock - fail open to a plain click below
-                if (elapsedTicks >= timeoutTicks) {
-                    pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
-                }
+            if (framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
+                pCtx->ClickArbitrationPressureCrossed = TRUE;
             }
-        } else if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_FORCE_TOUCH) {
-            // BUG FIX: an accidental force-touch trigger (brushed past
-            // FORCE_TOUCH_PRESSURE_THRESHOLD for a moment while meaning to
-            // do an ordinary hard-tap-and-drag) used to latch permanently -
-            // moving the finger afterwards, even far past the drag-lockout
-            // distance, could never turn it back into a plain click, so a
-            // window-move or click-drag-select accidentally got eaten by
-            // force-touch's synthetic right-click instead. Re-check the
-            // drag lockout here too: if the finger has now moved past
-            // FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the anchor, downgrade
-            // to HARD_TAP so the drag/selection goes through normally.
             if (pCtx->ForceTouchDragLockout) {
+                // Movement wins, unconditionally, the instant it trips -
+                // a press that's moving is a drag, full stop, regardless
+                // of how hard it's pressed or whether it already crossed
+                // the force-touch threshold earlier this same press.
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
             }
         }
-        // else: HARD_TAP already latched - hold it.
+        // else: HARD_TAP already latched - hold it. (FORCE_TOUCH is never
+        // latched while ButtonDown - see the release branch above - so
+        // there is nothing to hold or downgrade here for that case.)
     }
 
     *OutButtonClickReport =
         (pCtx->ClickArbitrationState == CLICK_ARBITRATION_HARD_TAP);
 
-    // Force-touch: once click arbitration has latched FORCE_TOUCH for
-    // this press, it stays engaged until the button is released OR the
-    // drag-lockout downgrade above fires - it does NOT re-check pressure
-    // frame-to-frame anymore. Pressure naturally wobbles while the finger
-    // holds/drags (sensor noise, grip changes), and re-testing it here
-    // every frame caused a spurious re-trigger: a momentary dip back
-    // under the threshold dropped ForceTouchActive (sending a synthetic
-    // right-click-UP), then the next frame's recovery sent a
-    // right-click-DOWN again - a second, unwanted force-touch trigger
-    // mid-press. Movement doesn't have that problem: ForceTouchDragLockout
-    // is itself a one-way latch (see its own set site above), so once it
-    // flips ClickArbitrationState to HARD_TAP here it can't flip back and
-    // forth either - a real re-trigger of FORCE_TOUCH itself must still
-    // only happen after a genuine release (button up resets
-    // ClickArbitrationState to IDLE, so the next press starts PENDING
-    // and must cross the threshold again on its own).
+    // Force-touch is now a one-frame resolution pulse, not a held state:
+    // ClickArbitrationState only ever becomes FORCE_TOUCH for the single
+    // frame that resolves it (the release branch above), then reverts to
+    // IDLE the very next frame (the "else" arm above, since state is no
+    // longer PENDING). So forceTouchNow simply mirrors that one frame -
+    // no ButtonDown gate needed, since by construction this frame IS the
+    // release, and the transition out of FORCE_TOUCH next frame produces
+    // the matching up-edge one frame later, same as Interrupt.c already
+    // expects (down edge, then up edge, delivered as two reports).
     BOOLEAN forceTouchNow =
-        ButtonDown && (pCtx->ClickArbitrationState == CLICK_ARBITRATION_FORCE_TOUCH);
-
+        (pCtx->ClickArbitrationState == CLICK_ARBITRATION_FORCE_TOUCH);
 
     *OutForceTouchDownEdge = forceTouchNow && !pCtx->ForceTouchActive;
     *OutForceTouchUpEdge   = !forceTouchNow && pCtx->ForceTouchActive;
