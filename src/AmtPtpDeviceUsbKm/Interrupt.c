@@ -177,41 +177,19 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     BOOLEAN    haveMouseEdge    = FALSE;
     BOOLEAN    edgeButton2State = FALSE;
 
-    // AUDIT FIX (data race): everything from here down either reads or
-    // mutates shared DEVICE_CONTEXT state (LastReportTime, the whole
-    // PTPCore contact pool via PTPCore_ProcessFrame, and the force-touch
-    // edge queue further below) - see the StateLock comment in Device.h
-    // for why this is necessary even though completions look sequential
-    // on paper.
-    //
-    // AUDIT FIX (lock-hold-time reduction): this used to also stay held
-    // across WdfMemoryCopyFromBuffer/WdfRequestComplete for BOTH the touch
-    // report and the force-touch mouse report. WdfRequestComplete walks
-    // the completed IRP back up the whole stack (HIDCLASS, mouhid.sys, any
-    // upper filters) - its duration is not bounded by this driver, so
-    // running it under a DISPATCH_LEVEL spinlock on every single USB
-    // interrupt completion needlessly extended how long this CPU spends at
-    // raised IRQL, on the hot path, for every scan. The lock below now
-    // covers ONLY the DEVICE_CONTEXT reads/writes: timing, PTPCore's
-    // contact pool, and the force-touch edge FIFO push + gated pop
-    // (WdfIoQueueRetrieveNextRequest for the second/mouse request stays
-    // inside the lock - it's a bounded, purely-internal queue dequeue, not
-    // a completion callout, and whether it succeeds gates the pop, so the
-    // two must stay atomic together - see AUDIT FIX #1/#2 below). Once the
-    // lock is released, Report/mouseRequest/edgeButton2State are plain
-    // local state - delivering them doesn't need pCtx anymore.
-    WdfSpinLockAcquire(pCtx->StateLock);
-
+    // AUDIT FIX (lock-hold-time reduction, cont'd): pCtx->DeviceInfo,
+    // pCtx->PtpReportTouch and pCtx->PtpReportButton are written exactly
+    // once - at PrepareHardware/CreateDevice, on PASSIVE_LEVEL, before the
+    // interrupt pipe's continuous reader is ever configured/started - and
+    // are never mutated again for the life of the device. That means frame
+    // parsing (AmtInputParseFrame: up to PTP_MAX_CONTACT_POINTS finger
+    // records, clamp/normalize per contact - the single heaviest piece of
+    // per-scan work here) doesn't touch anything mutable and doesn't need
+    // StateLock. It's hoisted above the lock together with the QPC read
+    // (a HW counter, not device state) and the button-bit snapshot. Only
+    // the read-modify-write of LastReportTime and PTPCore's contact-pool
+    // update below actually need to be serialized.
     KeQueryPerformanceCounter(&Now);
-    PerfDelta = Now.QuadPart - pCtx->LastReportTime.QuadPart;
-    if (pCtx->PerfFrequency.QuadPart > 0)
-        PerfDelta = PerfDelta * 10000LL / pCtx->PerfFrequency.QuadPart;
-    else
-        PerfDelta /= 100LL;
-    if (PerfDelta > 0xFFFF) PerfDelta = 0xFFFF;
-    if (PerfDelta < 0)      PerfDelta = 0;
-    Report.ScanTime = (USHORT)PerfDelta;
-    pCtx->LastReportTime = Now;
 
     BOOLEAN buttonSnapshot =
         pCtx->PtpReportButton && TouchBuffer[pCtx->DeviceInfo->tp_button];
@@ -249,6 +227,42 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
                            Now.QuadPart, &rawFrame);
     }
     // else: empty RawFrame -> PTPCore_ProcessFrame lifts all active contacts.
+
+    // AUDIT FIX (data race): everything from here down either reads or
+    // mutates shared DEVICE_CONTEXT state (LastReportTime, the whole
+    // PTPCore contact pool via PTPCore_ProcessFrame, and the force-touch
+    // edge queue further below) - see the StateLock comment in Device.h
+    // for why this is necessary even though completions look sequential
+    // on paper.
+    //
+    // AUDIT FIX (lock-hold-time reduction): this used to also stay held
+    // across WdfMemoryCopyFromBuffer/WdfRequestComplete for BOTH the touch
+    // report and the force-touch mouse report, AND across frame parsing
+    // (hoisted above, see comment there). WdfRequestComplete walks the
+    // completed IRP back up the whole stack (HIDCLASS, mouhid.sys, any
+    // upper filters) - its duration is not bounded by this driver, so
+    // running it under a DISPATCH_LEVEL spinlock on every single USB
+    // interrupt completion needlessly extended how long this CPU spends at
+    // raised IRQL, on the hot path, for every scan. The lock below now
+    // covers ONLY the DEVICE_CONTEXT reads/writes: LastReportTime, PTPCore's
+    // contact pool, and the force-touch edge FIFO push + gated pop
+    // (WdfIoQueueRetrieveNextRequest for the second/mouse request stays
+    // inside the lock - it's a bounded, purely-internal queue dequeue, not
+    // a completion callout, and whether it succeeds gates the pop, so the
+    // two must stay atomic together - see AUDIT FIX #1/#2 below). Once the
+    // lock is released, Report/mouseRequest/edgeButton2State are plain
+    // local state - delivering them doesn't need pCtx anymore.
+    WdfSpinLockAcquire(pCtx->StateLock);
+
+    PerfDelta = Now.QuadPart - pCtx->LastReportTime.QuadPart;
+    if (pCtx->PerfFrequency.QuadPart > 0)
+        PerfDelta = PerfDelta * 10000LL / pCtx->PerfFrequency.QuadPart;
+    else
+        PerfDelta /= 100LL;
+    if (PerfDelta > 0xFFFF) PerfDelta = 0xFFFF;
+    if (PerfDelta < 0)      PerfDelta = 0;
+    Report.ScanTime = (USHORT)PerfDelta;
+    pCtx->LastReportTime = Now;
 
     // PTPCore orchestration
     PTP_CORE_FRAME coreFrame;
