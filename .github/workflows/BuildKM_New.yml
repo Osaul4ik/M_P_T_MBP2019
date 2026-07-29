@@ -363,15 +363,16 @@ jobs:
 
 
     # =====================================================================
-    # НОВЕ: пакування sys + inf + cat + cer + InstallCert.bat в один ZIP-архів.
-    # Усі файли спершу копіюються у теку WellspringPTP/, і саме ця тека
-    # (а не окремі файли) кладеться в архів - так у ZIP зверху опиняється
-    # єдина папка WellspringPTP з усім вмістом усередині.
+    # ЗМІНЕНО: більше НЕ пакуємо в .zip вручну через Compress-Archive.
+    # actions/upload-artifact сам обгортає вміст артефакту в zip при
+    # завантаженні через UI/API - якщо покласти в path вже готовий .zip,
+    # користувач отримує "архів в архіві" (file.zip.zip з file.zip всередині).
+    # Тому тут ми лише готуємо теку WellspringPTP/ з фінальними файлами,
+    # а сам zip більше не створюємо.
     # =====================================================================
-    - name: Create single signed-driver archive
+    - name: Prepare final package folder
       run: |
         $ErrorActionPreference = "Stop"
-        $archiveName  = "$($env:DRIVER_NAME)-Signed-$($env:DRIVER_VERSION).zip"
         $stagingRoot  = "archive-staging"
         $stagingDir   = Join-Path $stagingRoot "WellspringPTP"
         $installCert  = "src/InstallCert.bat"
@@ -393,16 +394,17 @@ jobs:
         Write-Host "OK: staged files:"
         Get-ChildItem $stagingDir | ForEach-Object { Write-Host "  - $($_.Name)" }
 
-        Write-Host "==> Building archive $archiveName"
-        Compress-Archive -Path $stagingDir -DestinationPath $archiveName -Force
-
-        Write-Host "OK: archive created -> $archiveName"
-        Add-Content -Path $env:GITHUB_ENV -Value "ARCHIVE_PATH=$archiveName"
+        Add-Content -Path $env:GITHUB_ENV -Value "STAGING_DIR=$stagingDir"
       shell: pwsh
 
 
+    # =====================================================================
+    # ЗМІНЕНО: path вказує на ТЕКУ (не на .zip). GitHub Actions сам
+    # запакує цю теку в один zip при завантаженні - без подвійного
+    # архівування. Ім'я zip-файлу після завантаження = ім'я артефакту.
+    # =====================================================================
     - name: Upload signed driver package artifact
       uses: actions/upload-artifact@v4
       with:
         name: AmtPtpDeviceUsbKm-Signed-${{ env.DRIVER_VERSION }}
-        path: ${{ env.ARCHIVE_PATH }}
+        path: ${{ env.STAGING_DIR }}
