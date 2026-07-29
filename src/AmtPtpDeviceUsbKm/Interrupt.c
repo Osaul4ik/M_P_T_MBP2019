@@ -189,7 +189,17 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // (a HW counter, not device state) and the button-bit snapshot. Only
     // the read-modify-write of LastReportTime and PTPCore's contact-pool
     // update below actually need to be serialized.
-    KeQueryPerformanceCounter(&Now);
+    // BUG FIX: KeQueryPerformanceCounter's RETURN VALUE is the current tick
+    // count; the out-param (NULL here - pCtx->PerfFrequency was already
+    // latched once in D0Entry, see Device.c) is the counter FREQUENCY,
+    // which is constant for the life of the device. The previous code
+    // discarded the return value and overwrote Now with the frequency
+    // instead, so Now.QuadPart never advanced between interrupt
+    // completions - every dtTicks/PerfDelta/elapsedTicks computed from it
+    // downstream (velocity classification, the 700ms retap window, the
+    // force-touch arbitration grace timer, Match.c's time-domain contact
+    // rejection) was permanently 0.
+    Now = KeQueryPerformanceCounter(NULL);
 
     BOOLEAN buttonSnapshot =
         pCtx->PtpReportButton && TouchBuffer[pCtx->DeviceInfo->tp_button];
