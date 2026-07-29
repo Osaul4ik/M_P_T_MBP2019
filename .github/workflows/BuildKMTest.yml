@@ -1,4 +1,4 @@
-name: BuildKM
+name: BuildKMTest
 
 on:
   push:
@@ -29,32 +29,35 @@ jobs:
         $wdkInstaller = "$env:TEMP\wdksetup.exe"
         Invoke-WebRequest -Uri $wdkUrl -OutFile $wdkInstaller
         Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet /norestart" -Wait
-      shell: powershell
+      shell: pwsh
 
 
     # =====================================================================
     # НОВЕ: перевірка секретів підпису ДО збірки, щоб не витрачати час
     # раннера на компіляцію, якщо секрети для test-signing не налаштовані.
+    # Повідомлення навмисно англійською: символи кирилиці всередині
+    # PowerShell-рядків на Windows-раннерах GitHub Actions інколи
+    # некоректно декодуються (не UTF-8), що ламає парсинг рядка в лапках.
     # =====================================================================
     - name: Validate signing secrets are present
       run: |
         $ErrorActionPreference = "Stop"
-        Write-Host "==> Перевірка наявності секретів SIGN_CERT_PFX / SIGN_CERT_PASSWORD"
+        Write-Host "==> Checking SIGN_CERT_PFX / SIGN_CERT_PASSWORD secrets"
 
         if ([string]::IsNullOrWhiteSpace($env:SIGN_CERT_PFX)) {
-          Write-Error "Секрет SIGN_CERT_PFX не заданий у GitHub Secrets. Додайте Base64-код PFX-сертифіката в Settings -> Secrets and variables -> Actions."
+          Write-Error "Secret SIGN_CERT_PFX is not set in GitHub Secrets. Add the Base64-encoded PFX certificate in Settings -> Secrets and variables -> Actions."
           exit 1
         }
         if ([string]::IsNullOrWhiteSpace($env:SIGN_CERT_PASSWORD)) {
-          Write-Error "Секрет SIGN_CERT_PASSWORD не заданий у GitHub Secrets."
+          Write-Error "Secret SIGN_CERT_PASSWORD is not set in GitHub Secrets."
           exit 1
         }
 
-        Write-Host "OK: обидва секрети присутні."
-      shell: powershell
+        Write-Host "OK: both secrets are present."
+      shell: pwsh
       env:
-        SIGN_CERT_PFX: ${{ secrets.SIGN_CERT_PFX }}
-        SIGN_CERT_PASSWORD: ${{ secrets.SIGN_CERT_PASSWORD }}
+        SIGN_CERT_PFX: ${{ secrets.CERT }}
+        SIGN_CERT_PASSWORD: ${{ secrets.CERT_PWD }}
 
 
     # =====================================================================
@@ -71,12 +74,12 @@ jobs:
         $driverDate    = $now.ToString("MM/dd/yyyy")
         $driverVersion = "1.$($now.Year).$($now.ToString('MMdd')).$($now.ToString('HHmm'))"
 
-        Write-Host "==> Дата драйвера (DriverVer date): $driverDate"
-        Write-Host "==> Версія драйвера (DriverVer ver): $driverVersion"
+        Write-Host "==> Driver date (DriverVer date): $driverDate"
+        Write-Host "==> Driver version (DriverVer ver): $driverVersion"
 
         Add-Content -Path $env:GITHUB_ENV -Value "DRIVER_DATE=$driverDate"
         Add-Content -Path $env:GITHUB_ENV -Value "DRIVER_VERSION=$driverVersion"
-      shell: powershell
+      shell: pwsh
 
 
     # =====================================================================
@@ -90,23 +93,23 @@ jobs:
         $infPath = "$env:PROJECT_DIR\$env:DRIVER_NAME.inf"
 
         if (-not (Test-Path $infPath)) {
-          Write-Error "INF-файл не знайдено: $infPath"
+          Write-Error "INF file not found: $infPath"
           exit 1
         }
 
-        Write-Host "==> Оновлення DriverVer у $infPath"
+        Write-Host "==> Updating DriverVer in $infPath"
         $content = Get-Content -Path $infPath -Raw
         $newLine = "DriverVer   = $env:DRIVER_DATE,$env:DRIVER_VERSION"
         $updated = $content -replace 'DriverVer\s*=\s*[^\r\n]+', $newLine
 
         if ($updated -eq $content) {
-          Write-Error "Не вдалося знайти рядок DriverVer у $infPath для заміни."
+          Write-Error "Could not find a DriverVer line to replace in $infPath."
           exit 1
         }
 
         Set-Content -Path $infPath -Value $updated -Encoding ASCII
         Write-Host "OK: DriverVer = $env:DRIVER_DATE,$env:DRIVER_VERSION"
-      shell: powershell
+      shell: pwsh
 
 
     - name: Build USB KM Driver
@@ -115,7 +118,7 @@ jobs:
           /p:Configuration=Release `
           /p:Platform=x64 `
           /p:WindowsTargetPlatformVersion=10.0.26100.0
-      shell: powershell
+      shell: pwsh
 
 
     # =====================================================================
@@ -133,13 +136,13 @@ jobs:
         $infSrcPath  = "$env:PROJECT_DIR\$env:DRIVER_NAME.inf"
         $packageDir  = "package"
 
-        Write-Host "==> Очікуваний шлях .sys: $sysPath"
+        Write-Host "==> Expected .sys path: $sysPath"
         if (-not (Test-Path $sysPath)) {
-          Write-Error "Зібраний .sys не знайдено: $sysPath. Перевірте крок 'Build USB KM Driver'."
+          Write-Error "Built .sys not found: $sysPath. Check the 'Build USB KM Driver' step."
           exit 1
         }
         if (-not (Test-Path $infSrcPath)) {
-          Write-Error ".inf-файл не знайдено: $infSrcPath."
+          Write-Error ".inf file not found: $infSrcPath."
           exit 1
         }
 
@@ -147,14 +150,14 @@ jobs:
         Copy-Item -Path $sysPath    -Destination $packageDir -Force
         Copy-Item -Path $infSrcPath -Destination $packageDir -Force
 
-        Write-Host "OK: у $packageDir скопійовано:"
+        Write-Host "OK: copied into $packageDir :"
         Get-ChildItem $packageDir | ForEach-Object { Write-Host "  - $($_.Name)" }
 
         Add-Content -Path $env:GITHUB_ENV -Value "PACKAGE_DIR=$packageDir"
         Add-Content -Path $env:GITHUB_ENV -Value "SYS_PATH=$packageDir\$env:DRIVER_NAME.sys"
         Add-Content -Path $env:GITHUB_ENV -Value "INF_PATH=$packageDir\$env:DRIVER_NAME.inf"
         Add-Content -Path $env:GITHUB_ENV -Value "CAT_PATH=$packageDir\$env:DRIVER_NAME.cat"
-      shell: powershell
+      shell: pwsh
 
 
     # =====================================================================
@@ -165,7 +168,7 @@ jobs:
     - name: Locate Inf2Cat.exe
       run: |
         $ErrorActionPreference = "Stop"
-        Write-Host "==> Пошук Inf2Cat.exe у Windows Kits..."
+        Write-Host "==> Searching for Inf2Cat.exe under Windows Kits..."
 
         $roots = @(
           "C:\Program Files (x86)\Windows Kits\10\bin",
@@ -179,19 +182,19 @@ jobs:
         }
 
         if (-not $candidates) {
-          Write-Error "Inf2Cat.exe не знайдено на цьому runner-і. Переконайтеся, що встановлено Windows SDK/WDK."
+          Write-Error "Inf2Cat.exe was not found on this runner. Make sure the Windows SDK/WDK is installed."
           exit 1
         }
 
-        # Перевага x64-версії інструменту, потім найновіша за шляхом (версійна тека)
+        # Prefer the x64 build of the tool, then the newest by path (versioned folder)
         $tool = $candidates | Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
         if (-not $tool) {
           $tool = $candidates | Sort-Object FullName -Descending | Select-Object -First 1
         }
 
-        Write-Host "OK: знайдено Inf2Cat.exe -> $($tool.FullName)"
+        Write-Host "OK: found Inf2Cat.exe -> $($tool.FullName)"
         Add-Content -Path $env:GITHUB_ENV -Value "INF2CAT_PATH=$($tool.FullName)"
-      shell: powershell
+      shell: pwsh
 
 
     # =====================================================================
@@ -202,22 +205,22 @@ jobs:
     - name: Generate CAT file (Inf2Cat)
       run: |
         $ErrorActionPreference = "Stop"
-        Write-Host "==> Генерація каталогу для $env:PACKAGE_DIR"
+        Write-Host "==> Generating catalog for $env:PACKAGE_DIR"
 
         $fullPackageDir = (Resolve-Path $env:PACKAGE_DIR).Path
         & "$env:INF2CAT_PATH" /driver:"$fullPackageDir" /os:10_X64 /verbose
 
         if ($LASTEXITCODE -ne 0) {
-          Write-Error "Inf2Cat завершився з кодом помилки $LASTEXITCODE."
+          Write-Error "Inf2Cat exited with error code $LASTEXITCODE."
           exit 1
         }
         if (-not (Test-Path $env:CAT_PATH)) {
-          Write-Error "Inf2Cat відпрацював без помилки, але .cat файл не з'явився за шляхом $env:CAT_PATH."
+          Write-Error "Inf2Cat did not report an error, but no .cat file was produced at $env:CAT_PATH."
           exit 1
         }
 
-        Write-Host "OK: .cat згенеровано -> $env:CAT_PATH"
-      shell: powershell
+        Write-Host "OK: .cat generated -> $env:CAT_PATH"
+      shell: pwsh
 
 
     # =====================================================================
@@ -227,7 +230,7 @@ jobs:
     - name: Locate signtool.exe
       run: |
         $ErrorActionPreference = "Stop"
-        Write-Host "==> Пошук signtool.exe у Windows Kits..."
+        Write-Host "==> Searching for signtool.exe under Windows Kits..."
 
         $roots = @(
           "C:\Program Files (x86)\Windows Kits\10\bin",
@@ -241,7 +244,7 @@ jobs:
         }
 
         if (-not $candidates) {
-          Write-Error "signtool.exe не знайдено на цьому runner-і. Переконайтеся, що встановлено Windows SDK/WDK."
+          Write-Error "signtool.exe was not found on this runner. Make sure the Windows SDK/WDK is installed."
           exit 1
         }
 
@@ -250,9 +253,9 @@ jobs:
           $tool = $candidates | Sort-Object FullName -Descending | Select-Object -First 1
         }
 
-        Write-Host "OK: знайдено signtool.exe -> $($tool.FullName)"
+        Write-Host "OK: found signtool.exe -> $($tool.FullName)"
         Add-Content -Path $env:GITHUB_ENV -Value "SIGNTOOL_PATH=$($tool.FullName)"
-      shell: powershell
+      shell: pwsh
 
 
     # =====================================================================
@@ -270,40 +273,40 @@ jobs:
         $cerPath = Join-Path $env:PACKAGE_DIR "$env:DRIVER_NAME.cer"
 
         try {
-          Write-Host "==> Декодування SIGN_CERT_PFX у тимчасовий файл"
+          Write-Host "==> Decoding SIGN_CERT_PFX into a temporary file"
           $bytes = [Convert]::FromBase64String($env:SIGN_CERT_PFX)
           [IO.File]::WriteAllBytes($pfxPath, $bytes)
 
-          Write-Host "==> Підпис $env:SYS_PATH"
+          Write-Host "==> Signing $env:SYS_PATH"
           & "$env:SIGNTOOL_PATH" sign /v /fd SHA256 /f "$pfxPath" /p "$env:SIGN_CERT_PASSWORD" `
             /tr http://timestamp.digicert.com /td SHA256 "$env:SYS_PATH"
-          if ($LASTEXITCODE -ne 0) { Write-Error "Підпис .sys завершився помилкою ($LASTEXITCODE)."; exit 1 }
+          if ($LASTEXITCODE -ne 0) { Write-Error "Signing .sys failed (exit code $LASTEXITCODE)."; exit 1 }
 
-          Write-Host "==> Підпис $env:CAT_PATH"
+          Write-Host "==> Signing $env:CAT_PATH"
           & "$env:SIGNTOOL_PATH" sign /v /fd SHA256 /f "$pfxPath" /p "$env:SIGN_CERT_PASSWORD" `
             /tr http://timestamp.digicert.com /td SHA256 "$env:CAT_PATH"
-          if ($LASTEXITCODE -ne 0) { Write-Error "Підпис .cat завершився помилкою ($LASTEXITCODE)."; exit 1 }
+          if ($LASTEXITCODE -ne 0) { Write-Error "Signing .cat failed (exit code $LASTEXITCODE)."; exit 1 }
 
-          Write-Host "==> Експорт публічного сертифіката для довіри на цільових машинах -> $cerPath"
+          Write-Host "==> Exporting public certificate for target-machine trust -> $cerPath"
           $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
             $pfxPath, $env:SIGN_CERT_PASSWORD,
             [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable
           )
           Export-Certificate -Cert $cert -FilePath $cerPath | Out-Null
 
-          Write-Host "OK: .sys, .cat підписано; .cer експортовано."
+          Write-Host "OK: .sys and .cat signed; .cer exported."
           Add-Content -Path $env:GITHUB_ENV -Value "CER_PATH=$cerPath"
         }
         finally {
           if (Test-Path $pfxPath) {
-            Write-Host "==> Видалення тимчасового .pfx"
+            Write-Host "==> Removing temporary .pfx"
             Remove-Item -Path $pfxPath -Force
           }
         }
-      shell: powershell
+      shell: pwsh
       env:
-        SIGN_CERT_PFX: ${{ secrets.SIGN_CERT_PFX }}
-        SIGN_CERT_PASSWORD: ${{ secrets.SIGN_CERT_PASSWORD }}
+        SIGN_CERT_PFX: ${{ secrets.CERT }}
+        SIGN_CERT_PASSWORD: ${{ secrets.CERT_PWD }}
 
 
     # =====================================================================
@@ -314,11 +317,11 @@ jobs:
     # =====================================================================
     - name: Verify signatures (informational)
       run: |
-        Write-Host "==> Перевірка підпису .sys"
+        Write-Host "==> Verifying .sys signature"
         & "$env:SIGNTOOL_PATH" verify /v /pa "$env:SYS_PATH"
-        Write-Host "==> Перевірка підпису .cat"
+        Write-Host "==> Verifying .cat signature"
         & "$env:SIGNTOOL_PATH" verify /v /pa "$env:CAT_PATH"
-      shell: powershell
+      shell: pwsh
       continue-on-error: true
 
 
@@ -331,13 +334,13 @@ jobs:
         $ErrorActionPreference = "Stop"
         $archiveName = "$($env:DRIVER_NAME)-Signed-$($env:DRIVER_VERSION).zip"
 
-        Write-Host "==> Формування архіву $archiveName"
+        Write-Host "==> Building archive $archiveName"
         Compress-Archive -Path $env:SYS_PATH, $env:INF_PATH, $env:CAT_PATH, $env:CER_PATH `
           -DestinationPath $archiveName -Force
 
-        Write-Host "OK: архів створено -> $archiveName"
+        Write-Host "OK: archive created -> $archiveName"
         Add-Content -Path $env:GITHUB_ENV -Value "ARCHIVE_PATH=$archiveName"
-      shell: powershell
+      shell: pwsh
 
 
     - name: Upload signed driver package artifact
