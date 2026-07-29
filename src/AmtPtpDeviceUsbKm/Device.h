@@ -9,16 +9,17 @@ EXTERN_C_START
 
 // Force-touch vs hard-tap click arbitration (Ptpcore.c). While the
 // mechanical button is held, the ordinary click report is withheld
-// until PTPCore can tell whether the press is turning into a force
-// touch (deep press) or staying an ordinary click - so a force touch
-// never also fires a regular click underneath it. See ClickArbitration*
-// fields below.
+// (state stays PENDING) until either the drag lockout trips (committing
+// HARD_TAP immediately) or the button is released - force touch itself
+// is decided ONLY at release, never live during the hold, so it can
+// never fire underneath / alongside an ordinary click. See
+// ClickArbitration* fields below.
 typedef enum _CLICK_ARBITRATION_STATE
 {
     CLICK_ARBITRATION_IDLE = 0,    // button not down
     CLICK_ARBITRATION_PENDING,     // button down, still deciding
     CLICK_ARBITRATION_HARD_TAP,    // decided: ordinary click - report it
-    CLICK_ARBITRATION_FORCE_TOUCH  // decided: force touch - suppress click
+    CLICK_ARBITRATION_FORCE_TOUCH  // decided at release: force touch pulse
 } CLICK_ARBITRATION_STATE;
 
 typedef struct _DEVICE_CONTEXT
@@ -97,10 +98,12 @@ typedef struct _DEVICE_CONTEXT
     UCHAR   PendingForceTouchEdgeCount;  // number of queued, undelivered edges
 
     // Click arbitration (Ptpcore.c) - see CLICK_ARBITRATION_STATE above.
-    // PeakPressure/StartQpc are only meaningful while State == PENDING.
+    // PressureCrossed latches TRUE the first frame this press's pressure
+    // exceeds FORCE_TOUCH_PRESSURE_THRESHOLD; reset to FALSE at each new
+    // button-down. Only meaningful while State == PENDING - read once, at
+    // release, to decide FORCE_TOUCH vs HARD_TAP.
     CLICK_ARBITRATION_STATE ClickArbitrationState;
-    USHORT                  ClickArbitrationPeakPressure;
-    LONGLONG                ClickArbitrationStartQpc;
+    BOOLEAN                 ClickArbitrationPressureCrossed;
 
     // Scan time
     LARGE_INTEGER LastReportTime;
