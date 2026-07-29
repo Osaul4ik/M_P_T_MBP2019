@@ -59,14 +59,32 @@ AmtMatchBuildCandidates(
 // Max time gap for same-ContactID continuation (150ms).
 #define MATCH_MAX_TIME_DELTA_100NS (150LL * 10000LL)
 
-// Cost-based correspondence. Greedy min-cost, N,M<=5. Rejected on spatial/
-// time gap or IdentityBreak. Ties within MATCH_TIE_EPSILON_SQ break first
-// on LastSlotHint match, then (if that's also tied) on touch geometry/
-// pressure similarity - see MATCH_SHAPE_TIE_EPSILON in Match.c.
+// Cost-based correspondence. Exact max-cardinality, min-cost bipartite
+// assignment via bounded backtracking (N,M<=5, see AmtMatchSearch in
+// Match.c) - not a greedy nearest-neighbor pass, so a jitter-sized cost
+// difference between two crossing candidates can't make the wrong one
+// grab a pool slot before the right one is considered. The search now
+// also branch-and-bound prunes subtrees that provably cannot beat the
+// best assignment found so far (see AmtMatchSearch) - same exact result,
+// fewer leaves visited. Pairs failing the spatial/time gap check are
+// excluded from the search entirely (never assignable). The ranking cost
+// compares each candidate against the pool entry's DEAD-RECKONED
+// position (last report position extrapolated by ACTIVE_CONTACT's
+// VelocityX/Y over the elapsed time since LastSeenQpc - see
+// AmtMatchPredictPosition in Match.c) instead of the stale last-report
+// position alone, so a fast, steadily-moving contact isn't penalized for
+// having moved since it was last seen. This only affects ranking/tie-
+// breaking; the spatial/time feasibility gate still uses the actual last
+// report position, unchanged. Ties in total cost break on total
+// LastSlotHint agreement, then on total touch geometry/pressure
+// similarity - see AmtMatchShapeDistance in Match.c, which is now
+// normalized against DevInfo's calibrated pressure/width ranges instead
+// of comparing raw ADC units directly.
 VOID
 AmtMatchCorrespond(
     _In_  const MATCH_CANDIDATE_SET*               Candidates,
     _In_reads_(MAX_CONTACTS) const ACTIVE_CONTACT*  Pool,
+    _In_  const struct BCM5974_CONFIG*               DevInfo,
     _In_  LONGLONG                                  NowQpc,
     _In_  LONGLONG                                  PerfFrequencyHz,
     _Out_ MATCH_RESULT*                              OutResult
