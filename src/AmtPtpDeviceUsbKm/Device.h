@@ -32,6 +32,19 @@ typedef struct _DEVICE_CONTEXT
     USB_DEVICE_DESCRIPTOR DeviceDescriptor;
     ULONG           UsbDeviceTraits;
 
+    // AUDIT FIX (data race): the USB continuous reader
+    // (AmtPtpConfigContReaderForInterruptEndPoint) keeps more than one read
+    // request pending by default, so AmtPtpEvtUsbInterruptPipeReadComplete
+    // can in principle be re-entered on another CPU before a prior
+    // completion has finished mutating this context - LastReportTime, the
+    // whole ActiveContacts pool, NextContactId, the Overflow*/RecentLifts
+    // state, ClickArbitrationState, ForceTouch*/PendingForceTouchEdge* -
+    // none of which were ever protected by anything. Also guards the state
+    // reset in AmtPtpEvtDeviceD0Entry against the same fields. Acquired at
+    // DISPATCH_LEVEL (USB completion routines are not guaranteed to run at
+    // PASSIVE_LEVEL), hence WDFSPINLOCK rather than WDFWAITLOCK.
+    WDFSPINLOCK     StateLock;
+
     // Device config
     const struct BCM5974_CONFIG* DeviceInfo;
     BOOLEAN IsWellspringModeOn;
