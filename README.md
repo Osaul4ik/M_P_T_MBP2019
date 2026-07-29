@@ -25,7 +25,7 @@ The driver has been extensively tested on this device and is optimized specifica
 * Improved cursor stability
 * Enhanced palm rejection
 * Overflow packet handling
-* Force Touch for open context menu (Next release)
+* Force Touch for open context menu
 * Low-latency input processing
 * Optimized scrolling behavior
 * Production-oriented architecture focused on correctness and maintainability
