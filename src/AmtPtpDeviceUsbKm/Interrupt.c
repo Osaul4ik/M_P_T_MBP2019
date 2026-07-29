@@ -348,12 +348,35 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // since RequestMemory's size is guaranteed by the IOCTL_HID_READ_REPORT
     // contract, must not block delivering an already-dequeued force-touch
     // edge - the two requests are unrelated once off InputQueue).
-    Status = WdfMemoryCopyFromBuffer(
-        RequestMemory, 0, (PVOID)&Report, sizeof(PTP_REPORT));
-    if (NT_SUCCESS(Status)) {
-        WdfRequestSetInformation(Request, sizeof(PTP_REPORT));
+    //
+    // AUDIT FIX (hot-path copy): WdfMemoryCopyFromBuffer re-validates
+    // Offset/Length against the memory object's tracked size on every call,
+    // on top of the framework's own object-handle checks - overhead paid
+    // per interrupt completion for a size that's fixed at compile time.
+    // WdfMemoryGetBuffer hands back the raw pointer + actual size once;
+    // the size check below is the same safety guarantee
+    // WdfMemoryCopyFromBuffer would have enforced, just done directly.
+    {
+        size_t bufferSize = 0;
+        PVOID  buffer = WdfMemoryGetBuffer(RequestMemory, &bufferSize);
+        if (buffer != NULL && bufferSize >= sizeof(PTP_REPORT)) {
+            RtlCopyMemory(buffer, &Report, sizeof(PTP_REPORT));
+            WdfRequestSetInformation(Request, sizeof(PTP_REPORT));
+            Status = STATUS_SUCCESS;
+        } else {
+            Status = STATUS_BUFFER_TOO_SMALL;
+        }
     }
-    WdfRequestComplete(Request, Status);
+    // AUDIT FIX (scheduling latency): IO_NO_INCREMENT (plain
+    // WdfRequestComplete) leaves the thread that's waiting on this IRP
+    // (HIDCLASS / whatever ultimately reads the digitizer input) at its
+    // normal priority, same as any other completed I/O. mouclass.sys/
+    // kbdclass.sys boost their completions for exactly this reason - the
+    // consumer of a fresh input sample should get scheduled promptly, not
+    // wait its ordinary turn. This changes nothing about the data or the
+    // locking above - just how eagerly the waiting thread gets to run
+    // once the report is ready.
+    WdfRequestCompleteWithPriorityBoost(Request, Status, IO_MOUSE_INCREMENT);
 
     if (haveMouseEdge) {
         NTSTATUS  mouseCompleteStatus;
@@ -366,13 +389,17 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
             mouseReport.ReportID = REPORTID_STANDARDMOUSE;
             mouseReport.Button2  = edgeButton2State ? 1 : 0;
 
-            mouseCompleteStatus = WdfMemoryCopyFromBuffer(
-                mouseRequestMemory, 0, (PVOID)&mouseReport, sizeof(mouseReport));
-            if (NT_SUCCESS(mouseCompleteStatus)) {
+            size_t mouseBufferSize = 0;
+            PVOID  mouseBuffer = WdfMemoryGetBuffer(mouseRequestMemory, &mouseBufferSize);
+            if (mouseBuffer != NULL && mouseBufferSize >= sizeof(mouseReport)) {
+                RtlCopyMemory(mouseBuffer, &mouseReport, sizeof(mouseReport));
                 WdfRequestSetInformation(mouseRequest, sizeof(mouseReport));
+                mouseCompleteStatus = STATUS_SUCCESS;
+            } else {
+                mouseCompleteStatus = STATUS_BUFFER_TOO_SMALL;
             }
         }
-        WdfRequestComplete(mouseRequest, mouseCompleteStatus);
+        WdfRequestCompleteWithPriorityBoost(mouseRequest, mouseCompleteStatus, IO_MOUSE_INCREMENT);
     }
 }
 
