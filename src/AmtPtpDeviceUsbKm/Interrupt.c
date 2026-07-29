@@ -172,6 +172,15 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     RtlZeroMemory(&Report, sizeof(PTP_REPORT));
     Report.ReportID = REPORTID_MULTITOUCH;
 
+    // AUDIT FIX (data race): everything from here down either reads or
+    // mutates shared DEVICE_CONTEXT state (LastReportTime, the whole
+    // PTPCore contact pool via PTPCore_ProcessFrame, and the force-touch
+    // edge queue further below) - see the StateLock comment in Device.h
+    // for why this is necessary even though completions look sequential
+    // on paper. Held across the WDF calls in this region too (manual,
+    // non-power-managed queue - safe at DISPATCH_LEVEL).
+    WdfSpinLockAcquire(pCtx->StateLock);
+
     KeQueryPerformanceCounter(&Now);
     PerfDelta = Now.QuadPart - pCtx->LastReportTime.QuadPart;
     if (pCtx->PerfFrequency.QuadPart > 0)
@@ -195,10 +204,12 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         raw_n = (NumBytesTransferred - headerSize) / fingerSize;
         if (raw_n > PTP_MAX_CONTACT_POINTS) raw_n = PTP_MAX_CONTACT_POINTS;
 
-        if (raw_n * fingerSize > (NumBytesTransferred - headerSize)) {
-            WdfRequestComplete(Request, STATUS_DATA_ERROR);
-            return;
-        }
+        // NOTE: no "raw_n * fingerSize > NumBytesTransferred - headerSize"
+        // check here anymore - it was dead code. The modulo check at the
+        // top of this function already guarantees (NumBytesTransferred -
+        // headerSize) is an exact multiple of fingerSize, and raw_n is
+        // only ever clamped DOWN from the exact quotient, so the product
+        // can never exceed the transferred byte count.
 
         UCHAR* f_base = TouchBuffer + headerSize + pCtx->DeviceInfo->tp_delta;
         AmtInputParseFrame(f_base, fingerSize, raw_n, pCtx->DeviceInfo,
@@ -232,6 +243,7 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     Status = WdfMemoryCopyFromBuffer(
         RequestMemory, 0, (PVOID)&Report, sizeof(PTP_REPORT));
     if (!NT_SUCCESS(Status)) {
+        WdfSpinLockRelease(pCtx->StateLock);
         WdfRequestComplete(Request, Status);
         return;
     }
@@ -302,6 +314,8 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         // else: still no second request available this pass - leave the
         // queue untouched and retry on the next interrupt completion.
     }
+
+    WdfSpinLockRelease(pCtx->StateLock);
 }
 
 BOOLEAN
