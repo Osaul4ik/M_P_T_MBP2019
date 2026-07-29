@@ -516,7 +516,62 @@ PTPCore_ProcessFrame(
 
         size_t freeIdx = AmtContactPoolFindFree(pCtx->ActiveContacts);
         if (freeIdx == MAX_CONTACTS) {
-            continue;
+            // BUG FIX (silent birth drop under palm/edge-rest pool
+            // pressure): the pool is only MAX_CONTACTS (5) slots, and a
+            // PALM_LOCAL-frozen contact (palmLocalFrozen[] above - e.g. a
+            // wrist/palm edge resting near the bottom dead zone while
+            // typing or gesturing) holds its slot ACTIVE indefinitely for
+            // as long as it's physically touching, since Phase A freezes
+            // it in place rather than killing it. With real fingers also
+            // down, this can exhaust the pool - and this candidate,
+            // representing a genuine new touch, used to just be dropped
+            // here with a bare "continue": no DOWN ever reported, no
+            // retry, nothing. Silent and invisible - exactly matching two
+            // reported symptoms: a quick soft tap or the start of a
+            // double-tap sometimes not registering at all, and the third
+            // finger of a 3-finger swipe sometimes only being recognized
+            // a frame or two late (Windows briefly sees 2 fingers, not 3,
+            // until this candidate finally finds room).
+            //
+            // Reclaim a frozen slot instead of giving up: a PALM_LOCAL-
+            // frozen contact already reports Confidence=0 (Phase A above)
+            // and Windows already ignores it for pointer/gesture purposes
+            // - so ending it early to make room for a REAL touch costs
+            // nothing Windows was actually using. If the resting palm/
+            // wrist is still there next frame, it simply re-qualifies as
+            // PALM_LOCAL again and gets reborn frozen under a fresh
+            // ContactID (Kill->Birth, the same sanctioned identity-churn
+            // pattern used everywhere else in this file) - invisible to
+            // Windows either way. Only reclaims a FROZEN slot - if all 5
+            // are genuine, live, non-frozen touches, there is truly
+            // nothing safe to free, and this candidate is still dropped
+            // (unreachable in practice: that would mean 6 simultaneous
+            // real contacts, beyond this hardware's own reporting limit).
+            size_t reclaimIdx = MAX_CONTACTS;
+            for (size_t rp = 0; rp < MAX_CONTACTS; rp++) {
+                if (pCtx->ActiveContacts[rp].State == CONTACT_ACTIVE &&
+                    palmLocalFrozen[rp]) {
+                    reclaimIdx = rp;
+                    break;
+                }
+            }
+
+            if (reclaimIdx == MAX_CONTACTS) {
+                continue;
+            }
+
+            ULONG  reclaimedId; USHORT reclaimedX, reclaimedY;
+            AmtContactKill(pCtx->ActiveContacts, reclaimIdx,
+                           &reclaimedId, &reclaimedX, &reclaimedY);
+            AmtCoreEmitContact(pCtx, OutResult, reclaimedId, reclaimedX, reclaimedY,
+                               CONTACT_PHASE_UP, TRUE);
+            // Clear the stale flag: this index is about to be reborn as a
+            // real, non-frozen touch below - if a LATER candidate in this
+            // same Phase B loop also needs to reclaim a slot, it must not
+            // mistake this freshly-birthed real contact for still being
+            // the frozen palm/edge entry it used to be.
+            palmLocalFrozen[reclaimIdx] = FALSE;
+            freeIdx = reclaimIdx;
         }
 
         USHORT liftX, liftY;
