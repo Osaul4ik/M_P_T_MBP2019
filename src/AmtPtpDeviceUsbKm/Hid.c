@@ -7,12 +7,26 @@
 // struct we're about to read/write" check. Replaces 4 separate ad-hoc
 // comparisons (2 pre-existing in AmtPtpReportFeatures, 2 added in
 // AmtPtpSetFeatures) so a future new REPORTID_* case can't silently skip it.
+//
+// AUDIT FIX (missing reportBuffer NULL check): pHidPacket is read directly
+// from Irp->UserBuffer (AmtPtpReportFeatures/AmtPtpSetFeatures below) - its
+// reportBuffer/reportBufferLen fields are populated by HIDCLASS, not this
+// driver, and were previously trusted as an internally-consistent pair
+// purely on reportBufferLen's value. A malformed packet with a satisfying
+// reportBufferLen but a NULL reportBuffer would sail through the old check
+// and then fault on the very first direct dereference in every REPORTID_*
+// case below (e.g. capsReport->MaximumContactPoints = ...) - a guaranteed
+// bugcheck reachable from a HID IOCTL, not just a memory-safety nicety.
+// Checking the pointer here, at the one place both fields are already read
+// together, closes that off for every current and future call site without
+// touching the two call sites themselves.
 static __inline BOOLEAN
 HidValidateReportSize(
 	_In_ PHID_XFER_PACKET pHidPacket,
 	_In_ size_t           requiredSize)
 {
-	return (pHidPacket->reportBufferLen >= (ULONG)requiredSize);
+	return (pHidPacket->reportBuffer != NULL) &&
+	       (pHidPacket->reportBufferLen >= (ULONG)requiredSize);
 }
 
 #ifndef _AAPL_HID_DESCRIPTOR_H_
