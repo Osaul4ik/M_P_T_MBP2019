@@ -226,6 +226,13 @@ AmtPtpReportFeatures(
 				goto exit;
 			}
 
+			// DIAG (dead tap-to-click investigation): confirms Windows is
+			// actually querying device capabilities at all - if this never
+			// prints, Windows never got far enough to consider this a
+			// Precision Touchpad in the first place, regardless of how
+			// correct every subsequent touch report is.
+			DbgPrint("[AmtPtp] FEATURE GetFeatures REPORTID_DEVICE_CAPS queried\n");
+
 			PPTP_DEVICE_CAPS_FEATURE_REPORT capsReport = (PPTP_DEVICE_CAPS_FEATURE_REPORT) pHidPacket->reportBuffer;
 			capsReport->MaximumContactPoints = PTP_MAX_CONTACT_POINTS;
 			capsReport->ButtonType = PTP_BUTTON_TYPE_CLICK_PAD;
@@ -245,6 +252,16 @@ AmtPtpReportFeatures(
 			}
 
 			PPTP_DEVICE_HQA_CERTIFICATION_REPORT certReport = (PPTP_DEVICE_HQA_CERTIFICATION_REPORT)pHidPacket->reportBuffer;
+
+			// DIAG (dead tap-to-click investigation): confirms Windows
+			// actually reads the HQA certification blob. Windows requires
+			// this to trust a PTP-class device enough to run its full
+			// gesture/tap recognizer - if this never fires (or the blob
+			// content is wrong), Windows can silently fall back to basic
+			// digitizer/mouse-only behavior: cursor tracking still works,
+			// but tap-to-click and inertia never engage, matching exactly
+			// what's being reported.
+			DbgPrint("[AmtPtp] FEATURE GetFeatures REPORTID_PTPHQA queried\n");
 
 			// RtlCopyMemory (direct assignment was a comma-expression bug).
 			{
@@ -319,6 +336,21 @@ AmtPtpSetFeatures(
 			PPTP_DEVICE_INPUT_MODE_REPORT devInputMode = (PPTP_DEVICE_INPUT_MODE_REPORT) pHidPacket->reportBuffer;
 			BOOLEAN bWellspringMode = pDeviceContext->IsWellspringModeOn;
 
+			// DIAG (dead tap-to-click investigation): the single most
+			// important unanswered question so far - what Mode value does
+			// Windows actually send, and does the switch into PTP mode
+			// (AmtPtpSetWellspringMode) really succeed? Cursor tracking
+			// working while tap-to-click/inertia never engage is exactly
+			// what a silently-incomplete mode switch would look like: the
+			// default case below already used to claim success on any
+			// unrecognized Mode value without doing anything (see its
+			// comment) - if Windows is sending something other than
+			// PTP_COLLECTION_WINDOWS here, or AmtPtpSetWellspringMode is
+			// failing, that would explain the symptom with no touch-report
+			// content bug required at all.
+			DbgPrint("[AmtPtp] FEATURE SetFeatures REPORTID_REPORTMODE Mode=%u "
+			         "wasWellspringMode=%u\n", devInputMode->Mode, bWellspringMode);
+
 			switch (devInputMode->Mode)
 			{
 				case PTP_COLLECTION_MOUSE:
@@ -332,6 +364,9 @@ AmtPtpSetFeatures(
 
 					if (!bWellspringMode) {
 						status = AmtPtpSetWellspringMode(pDeviceContext, TRUE);
+						DbgPrint("[AmtPtp] FEATURE AmtPtpSetWellspringMode(TRUE) "
+						         "status=0x%08x nowWellspringMode=%u\n",
+						         status, pDeviceContext->IsWellspringModeOn);
 						if (!NT_SUCCESS(status)) {
 							goto exit;
 						}
@@ -341,6 +376,9 @@ AmtPtpSetFeatures(
 				default:
 				{
 					// Unknown Mode: previously fell through silently claiming success.
+					DbgPrint("[AmtPtp] FEATURE SetFeatures REPORTMODE UNKNOWN Mode=%u "
+					         "- claiming success without switching anything\n",
+					         devInputMode->Mode);
 					break;
 				}
 			}
