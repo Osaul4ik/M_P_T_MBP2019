@@ -7,6 +7,17 @@
 // Max per-frame finger movement. Shared with tip-drop anchor search.
 #define MATCH_MAX_CONTINUATION_DELTA 4000
 
+// BUG FIX (spurious origin==0 mid-touch identity churn - see
+// AmtMatchCorrespond below): how far a firmware-flagged "identity break"
+// candidate may land from its matched pool entry's last reported
+// position and still be honored as a genuine new touch. 600 mirrors
+// RETAP_MAX_DISTANCE (Activecontact.h) - the same "still basically the
+// same spot" scale already used elsewhere for a deliberate fast re-tap.
+// Anything beyond this is not a plausible same-finger re-tap distance;
+// see the AUDIT FIX comment at the call site for why that means it's
+// firmware noise, not a second touch.
+#define IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP 600
+
 // Must match MATCH_MAX_CONTINUATION_DELTA to prevent false Confidence=1
 // on fast-but-light drags (soft-drift confidence bug fix).
 #define TIP_DROP_MAX_REPOSITION_DELTA MATCH_MAX_CONTINUATION_DELTA
@@ -517,8 +528,67 @@ AmtMatchCorrespond(
             poolClaimedFinal[p] = TRUE;
 
             OutResult->CorrespondingPoolIndex[ci] = p;
-            OutResult->NewIdentity[ci] =
-                Candidates->Candidates[ci].IdentityBreak ? TRUE : FALSE;
+
+            // AUDIT FIX (spurious origin==0 mid-touch identity churn):
+            // firmware's Origin byte reports 0 ("identity break") in two
+            // very different real situations that look identical here -
+            // (a) a genuine fast lift+re-tap landing back near the same
+            // spot, which Ptpcore.c's NewIdentity(origin==0) path exists
+            // to turn into a clean UP+DOWN pair for Windows' tap/
+            // double-tap recognizer (the intended case), and (b) a T2/
+            // BCM5974 internal slot-reassignment glitch - confirmed via
+            // DebugView repro (SAKURAMBPRO.log): every multi-finger
+            // transition (2nd/3rd/4th finger joining or leaving) can make
+            // the controller re-tag an ALREADY-ACTIVE, never-lifted
+            // finger's slot with origin==0 for exactly one frame, paired
+            // with a garbage position 1000-2500+ raw units from where
+            // that same finger was reporting one frame earlier - nowhere
+            // near a real finger's per-frame travel distance. The old
+            // code trusted the flag unconditionally: forced a kill of the
+            // correctly-tracked contact and a rebirth at that garbage
+            // position, mid-gesture. Each rebirth is a brand-new
+            // ContactID at a teleported position, which resets whatever
+            // velocity/momentum Windows' PTP stack was accumulating for
+            // that finger - repeated throughout a 2-finger scroll, this
+            // is consistent with the reported "very slow scroll, no
+            // inertia" (momentum never has a clean, continuous trajectory
+            // to compute from) and, during quick re-taps, with "double
+            // soft tap doesn't work" (the second tap's REAL finger
+            // position gets discarded in favor of the glitch position).
+            //
+            // Fix: only honor IdentityBreak as authoritative when the
+            // candidate's position is within IDENTITY_BREAK_MAX_PLAUSIBLE_
+            // JUMP of the matched pool entry's last reported position -
+            // i.e. a real "still basically the same spot" re-tap. Beyond
+            // that distance, this candidate already won the spatial
+            // match (bestAssignment) on its own merits - the match search
+            // above only pairs candidates within MATCH_MAX_CONTINUATION_
+            // DELTA (4000) of the pool entry's last position AND inside
+            // MATCH_MAX_TIME_DELTA_100NS of its last-seen time in the
+            // first place - so this is not "accept an implausible jump
+            // instead of rejecting it," it's "stop treating an
+            // already-accepted continuation as a brand-new identity just
+            // because of a firmware flag with no reasoning documented for
+            // why it should override spatial continuity."
+            if (Candidates->Candidates[ci].IdentityBreak) {
+                INT ibDx = (INT)Candidates->Candidates[ci].X - (INT)Pool[p].ReportX;
+                INT ibDy = (INT)Candidates->Candidates[ci].Y - (INT)Pool[p].ReportY;
+                if (ibDx < 0) ibDx = -ibDx;
+                if (ibDy < 0) ibDy = -ibDy;
+
+                OutResult->NewIdentity[ci] =
+                    (ibDx <= IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP &&
+                     ibDy <= IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP);
+
+                if (!OutResult->NewIdentity[ci]) {
+                    DbgPrint("[AmtPtp] IdentityBreak SUPPRESSED (glitch) pool=%Iu "
+                             "candX=%u candY=%u lastX=%u lastY=%u\n",
+                             p, Candidates->Candidates[ci].X, Candidates->Candidates[ci].Y,
+                             Pool[p].ReportX, Pool[p].ReportY);
+                }
+            } else {
+                OutResult->NewIdentity[ci] = FALSE;
+            }
         }
     }
 
