@@ -134,6 +134,17 @@ typedef struct _DEVICE_CONTEXT
     // Scan time
     LARGE_INTEGER LastReportTime;
 
+    // SCANTIME FIX: Windows PTP spec requires Report.ScanTime to be a
+    // free-running, ever-increasing hardware-clock counter (100us units),
+    // which Windows itself differentiates frame-to-frame to derive
+    // velocity/inertia - NOT a pre-computed inter-frame delta. This
+    // accumulator holds the running total (in 100us units); each frame
+    // adds the elapsed-since-last-report delta onto it, and the low 16
+    // bits are truncated into the USHORT report field, letting it wrap
+    // naturally as the spec expects. Reseeded to 0 at D0Entry alongside
+    // LastReportTime.
+    ULONG ScanTimeAccumulator;
+
     // Palm rejection - session-level latch (sticky "still palm-adjacent"
     // state), owned by PTPCore_ProcessFrame. Per-sample classification
     // lives in Palm.c.

@@ -303,23 +303,41 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // local state - delivering them doesn't need pCtx anymore.
     WdfSpinLockAcquire(pCtx->StateLock);
 
+    // SCANTIME FIX: the Windows PTP spec defines ScanTime as a
+    // free-running, ever-increasing hardware-clock sample (100us units) -
+    // Windows differentiates it ACROSS frames itself to derive velocity
+    // and inertia. The previous code sent the pre-computed inter-frame
+    // delta instead (always ~the same small value at a steady scan rate),
+    // so consecutive ScanTime values looked nearly IDENTICAL rather than
+    // monotonically increasing - Windows' own frame-to-frame diff of two
+    // near-equal deltas collapsed to ~0, which reads as "no motion" no
+    // matter how fast the finger was actually moving. That produced the
+    // slow/non-inertial scroll and likely corrupted the double-tap timing
+    // judgement too.
+    //
+    // Fix: accumulate elapsed time onto a running ULONG counter and only
+    // truncate the low 16 bits into the report field. USHORT wraparound
+    // here is expected/required by spec, not a bug - Windows' consumer is
+    // written to handle it.
     PerfDelta = Now.QuadPart - pCtx->LastReportTime.QuadPart;
     if (pCtx->PerfFrequency.QuadPart > 0)
         PerfDelta = PerfDelta * 10000LL / pCtx->PerfFrequency.QuadPart;
     else
         PerfDelta /= 100LL;
-    if (PerfDelta > 0xFFFF) PerfDelta = 0xFFFF;
-    if (PerfDelta < 0)      PerfDelta = 0;
-    Report.ScanTime = (USHORT)PerfDelta;
+    if (PerfDelta < 0) PerfDelta = 0;
+
+    pCtx->ScanTimeAccumulator += (ULONG)PerfDelta;
+    Report.ScanTime = (USHORT)(pCtx->ScanTimeAccumulator & 0xFFFF);
     pCtx->LastReportTime = Now;
 
-    // DIAG (soft-tap/double-tap investigation): ScanTime (100ns units,
-    // clamped to USHORT) is exactly the field the QPC fix changed - it
-    // was permanently 0 before. Windows' PTP recognizer uses it to judge
-    // report cadence; if it's now reading absurdly large (clock unit
-    // mismatch) or still stuck at 0, that's visible here. Remove once
-    // the soft-double-tap report is resolved.
-    DbgPrint("[AmtPtp] ScanTime=%u qpc=%I64d\n", Report.ScanTime, Now.QuadPart);
+    // DIAG (soft-tap/double-tap investigation): ScanTime is now the
+    // truncated low 16 bits of a free-running accumulator (see fix above),
+    // not a per-frame delta - it should print as a steadily increasing
+    // (and eventually wrapping) sequence across consecutive interrupts,
+    // not a string of near-identical values. Remove once the
+    // soft-double-tap report is resolved.
+    DbgPrint("[AmtPtp] ScanTime=%u accum=%lu qpc=%I64d\n",
+             Report.ScanTime, pCtx->ScanTimeAccumulator, Now.QuadPart);
 
     // PTPCore orchestration
     PTP_CORE_FRAME coreFrame;
