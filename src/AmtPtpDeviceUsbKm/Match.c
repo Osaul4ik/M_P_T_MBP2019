@@ -571,7 +571,7 @@ AmtMatchCorrespond(
             // because of a firmware flag with no reasoning documented for
             // why it should override spatial continuity."
             if (Candidates->Candidates[ci].IdentityBreak) {
-#if AMT_RAW_DEBUG_MODE
+#if AMT_RAW_DISABLE_IDENTITY_BREAK_FIX
                 // RAW MODE: trust the firmware's IdentityBreak flag
                 // unconditionally, exactly like before the plausible-
                 // jump fix below existed - no suppression at all.

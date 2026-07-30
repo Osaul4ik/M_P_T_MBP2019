@@ -444,7 +444,7 @@ AmtContactCommitSample(
 {
     USHORT repX, repY;
 
-#if AMT_RAW_DEBUG_MODE
+#if AMT_RAW_DISABLE_POSITION_SMOOTHING
     // RAW MODE: report the raw candidate position unconditionally - no
     // deadzone hold, no EMA smoothing, no scroll-delta scaling. Whatever
     // the matcher handed this contact this frame is what gets reported.
