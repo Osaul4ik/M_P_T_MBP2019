@@ -32,7 +32,13 @@
 // the minimum that filters a one-frame blip while still tainting a real
 // 2(+)-finger gesture on its 2nd live frame - imperceptible for gestures,
 // which run for many frames, but decisive for a single noisy sample.
+#if AMT_RAW_DEBUG_MODE
+// RAW MODE: no debounce - a single qualifying frame latches immediately,
+// same as before either debounce fix existed.
+#define GESTURE_TAINT_DEBOUNCE_FRAMES 1
+#else
 #define GESTURE_TAINT_DEBOUNCE_FRAMES 2
+#endif
 
 // BUG FIX (spurious full-pool rebind from summed multi-finger force):
 // this hardware's integrated-button bit is a raw firmware click-force
@@ -52,7 +58,13 @@
 // frames (~24ms at this hardware's ~8ms cadence) comfortably clears any
 // deliberate click, which is held for tens of ms at minimum, while
 // filtering the 1-2 frame blips seen in the repro log.
+#if AMT_RAW_DEBUG_MODE
+// RAW MODE: honor the button bit the instant it's seen, same as before
+// this debounce fix existed.
+#define BUTTON_CLICK_DEBOUNCE_FRAMES 1
+#else
 #define BUTTON_CLICK_DEBOUNCE_FRAMES 3
+#endif
 
 // Recent-lift ring buffer (slot-independent retap memory)
 
@@ -700,6 +712,15 @@ PTPCore_ProcessFrame(
         DbgPrint("[AmtPtp] BIRTH X=%u Y=%u looksLikeRetap=%u liftX=%u liftY=%u qpc=%I64d\n",
                  cand->X, cand->Y, looksLikeRetap, liftX, liftY, NowQpc);
 
+#if AMT_RAW_DEBUG_MODE
+        // RAW MODE: always a plain birth, never seeded from the recent-
+        // lift record - looksLikeRetap is still computed and printed
+        // above (so the BIRTH diagnostic line is unaffected), just not
+        // acted on.
+        AmtContactBirth(
+            pCtx->ActiveContacts, freeIdx, &pCtx->NextContactId,
+            cand->X, cand->Y, cand->SlotIndex);
+#else
         if (looksLikeRetap) {
             // RetapSeeded: seed survives first AmtContactUpdate.
             AmtContactBirthWithRetapSmoothing(
@@ -710,6 +731,7 @@ PTPCore_ProcessFrame(
                 pCtx->ActiveContacts, freeIdx, &pCtx->NextContactId,
                 cand->X, cand->Y, cand->SlotIndex);
         }
+#endif
 
         // NOTE: WasInGesture is NOT decided here. Phase C below runs
         // immediately after for this exact same candidate (candidates

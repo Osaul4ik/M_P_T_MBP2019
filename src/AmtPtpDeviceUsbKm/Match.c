@@ -571,6 +571,12 @@ AmtMatchCorrespond(
             // because of a firmware flag with no reasoning documented for
             // why it should override spatial continuity."
             if (Candidates->Candidates[ci].IdentityBreak) {
+#if AMT_RAW_DEBUG_MODE
+                // RAW MODE: trust the firmware's IdentityBreak flag
+                // unconditionally, exactly like before the plausible-
+                // jump fix below existed - no suppression at all.
+                OutResult->NewIdentity[ci] = TRUE;
+#else
                 INT ibDx = (INT)Candidates->Candidates[ci].X - (INT)Pool[p].ReportX;
                 INT ibDy = (INT)Candidates->Candidates[ci].Y - (INT)Pool[p].ReportY;
                 if (ibDx < 0) ibDx = -ibDx;
@@ -586,6 +592,7 @@ AmtMatchCorrespond(
                              p, Candidates->Candidates[ci].X, Candidates->Candidates[ci].Y,
                              Pool[p].ReportX, Pool[p].ReportY);
                 }
+#endif
             } else {
                 OutResult->NewIdentity[ci] = FALSE;
             }

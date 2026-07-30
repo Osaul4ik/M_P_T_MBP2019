@@ -444,6 +444,21 @@ AmtContactCommitSample(
 {
     USHORT repX, repY;
 
+#if AMT_RAW_DEBUG_MODE
+    // RAW MODE: report the raw candidate position unconditionally - no
+    // deadzone hold, no EMA smoothing, no scroll-delta scaling. Whatever
+    // the matcher handed this contact this frame is what gets reported.
+    (VOID)passedDeadzone;
+    (VOID)aliveCountIsOne;
+    (VOID)gestureActive;
+    (VOID)velocityIsSlow;
+    (VOID)alphaNum;
+    (VOID)commitIsRetapSeededFirstSample;
+    repX = candX;
+    repY = candY;
+    Contact->ScrollRemX = 0;
+    Contact->ScrollRemY = 0;
+#else
     if (!passedDeadzone) {
         repX = Contact->ReportX;
         repY = Contact->ReportY;
@@ -532,6 +547,7 @@ AmtContactCommitSample(
             repY = AmtContactSmoothCoord(candY, Contact->ReportY, alphaNum);
         }
     }
+#endif
 
     // BUG FIX (intermittent double-tap failure): WasInGesture used to
     // only get cleared inside the skipEma (fast/medium velocity) branch
