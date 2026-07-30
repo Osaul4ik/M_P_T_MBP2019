@@ -204,6 +204,38 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     BOOLEAN buttonSnapshot =
         pCtx->PtpReportButton && TouchBuffer[pCtx->DeviceInfo->tp_button];
 
+    // DIAG (spurious buttonClickEdge investigation): buttonSnapshot comes
+    // straight from a fixed offset (tp_button) into the raw HID report,
+    // completely independent of finger-tracking logic - if it's going
+    // TRUE without a real physical/force click (confirmed: user felt no
+    // click during the "hold + add second finger" repro), the cause is
+    // either (a) genuine firmware behavior - T2 Force Touch trackpads
+    // threshold on *summed* force across all fingers, so a second finger
+    // landing on an already-resting first finger can cross the click
+    // threshold without either finger feeling individually "hard-pressed"
+    // - or (b) tp_button pointing at the wrong byte, misread once a
+    // second finger's record is present. Printing the exact byte at
+    // tp_button plus its immediate neighbors (offset-by-one is the usual
+    // symptom of (b)) alongside NumBytesTransferred/raw finger count
+    // distinguishes the two: a firmware/threshold cause should show a
+    // clean, plausible button-byte value (0/1-ish) that flips exactly
+    // when total pressure crosses some level; a wrong-offset cause should
+    // show a byte that only "looks like a click" by coincidence (e.g.
+    // tracks X/Y/pressure data from the second finger instead) and won't
+    // correlate with anything the user is actually pressing.
+    // Remove once the spurious-click investigation is resolved.
+    {
+        LONG btnOff = pCtx->DeviceInfo->tp_button;
+        UCHAR bPrev = (btnOff > 0) ? TouchBuffer[btnOff - 1] : 0xFF;
+        UCHAR bCur  = TouchBuffer[btnOff];
+        UCHAR bNext = (size_t)(btnOff + 1) < NumBytesTransferred
+                        ? TouchBuffer[btnOff + 1] : 0xFF;
+        DbgPrint("[AmtPtp] BTN raw off=%ld prev=0x%02x cur=0x%02x next=0x%02x "
+                 "snapshot=%u xferBytes=%Iu qpc=%I64d\n",
+                 btnOff, bPrev, bCur, bNext, buttonSnapshot,
+                 NumBytesTransferred, Now.QuadPart);
+    }
+
     // RawFrame construction (InputAdapter - no decisions)
     RAW_FRAME rawFrame;
     RtlZeroMemory(&rawFrame, sizeof(rawFrame));
