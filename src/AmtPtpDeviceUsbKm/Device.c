@@ -175,6 +175,7 @@ AmtPtpEvtDeviceD0Entry(
     pDeviceContext->NextContactId        = 0;
     pDeviceContext->OverflowCount        = 0;
     pDeviceContext->PrevButtonClicked    = FALSE;
+    pDeviceContext->ButtonDebounceFrames = 0;
     pDeviceContext->ForceTouchActive     = FALSE;
     pDeviceContext->ForceTouchAnchorValid = FALSE;
     pDeviceContext->ForceTouchDragLockout = FALSE;

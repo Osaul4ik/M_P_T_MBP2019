@@ -59,6 +59,17 @@ typedef struct _DEVICE_CONTEXT
     // drives the forced-rebirth anti-jitter-snap workaround.
     BOOLEAN PrevButtonClicked;
 
+    // BUG FIX (spurious buttonClickEdge from summed multi-finger force):
+    // consecutive-frame counter for the debounce in Ptpcore.c - the raw
+    // button bit must hold TRUE for BUTTON_CLICK_DEBOUNCE_FRAMES straight
+    // frames before a click-edge is honored, so a one-frame threshold
+    // crossing (e.g. a second finger landing on an already-resting first
+    // finger, confirmed via the BTN raw diagnostic in Interrupt.c: clean,
+    // stable byte, not misread data) doesn't trigger the full-pool
+    // rebind. A real click held down for even a few ms comfortably clears
+    // this many consecutive frames.
+    UCHAR ButtonDebounceFrames;
+
     // Force-touch latch (Ptpcore.c). TRUE while some contact's pressure
     // is above FORCE_TOUCH_PRESSURE_THRESHOLD and the button is held;
     // compared against the previous frame to derive the down/up edges

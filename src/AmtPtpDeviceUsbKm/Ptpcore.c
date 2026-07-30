@@ -34,6 +34,26 @@
 // which run for many frames, but decisive for a single noisy sample.
 #define GESTURE_TAINT_DEBOUNCE_FRAMES 2
 
+// BUG FIX (spurious full-pool rebind from summed multi-finger force):
+// this hardware's integrated-button bit is a raw firmware click-force
+// threshold computed over TOTAL pressure across all fingers, not a true
+// mechanical switch - confirmed via the BTN raw diagnostic in
+// Interrupt.c: a clean, stable byte (not a misread offset) that flips
+// to 1 for a handful of frames when a second finger lands on an
+// already-resting first finger, with no felt click and no intent to
+// click. A single qualifying frame used to be enough to fire
+// buttonClickEdge and force-rebind every active contact's ContactID
+// (Phase A.5 below) - which is exactly what a real click needs (Windows'
+// anti-jitter snap must be routed around on the very frame the click
+// lands), but also fires on this kind of momentary, unintended
+// threshold crossing. Require the raw bit to hold for this many
+// CONSECUTIVE frames before honoring it as a real click-edge - matches
+// the same debounce pattern as GESTURE_TAINT_DEBOUNCE_FRAMES above. 3
+// frames (~24ms at this hardware's ~8ms cadence) comfortably clears any
+// deliberate click, which is held for tens of ms at minimum, while
+// filtering the 1-2 frame blips seen in the repro log.
+#define BUTTON_CLICK_DEBOUNCE_FRAMES 3
+
 // Recent-lift ring buffer (slot-independent retap memory)
 
 VOID
@@ -261,8 +281,29 @@ PTPCore_ProcessFrame(
     // Forcing a real Kill->Birth of the live contact's ContactID at its
     // own current position routes this click through the ordinary
     // soft-tap TipSwitch path instead, which isn't subject to that snap.
-    BOOLEAN buttonClickEdge = ButtonDown && !pCtx->PrevButtonClicked;
-    pCtx->PrevButtonClicked = ButtonDown;
+    // BUG FIX (spurious buttonClickEdge): debounce the RAW button bit
+    // itself, before edge detection - see BUTTON_CLICK_DEBOUNCE_FRAMES.
+    // ButtonDown must hold for several consecutive frames before it's
+    // treated as "the button is down" for THIS purpose; debouncedButtonDown
+    // (not the raw ButtonDown) is what PrevButtonClicked/buttonClickEdge
+    // are computed from, so a momentary threshold crossing never reaches
+    // Phase A.5's full-pool rebind. Deliberately narrow: force-touch
+    // arbitration/drag-lockout further below stays on the RAW ButtonDown
+    // (see their own "recomputed every frame from the RAW frame" comments)
+    // - that logic already has its own pressure-based gating and a several-
+    // frame delay there would just add latency to a real force-touch press
+    // without fixing anything this bug report is about.
+    if (ButtonDown) {
+        if (pCtx->ButtonDebounceFrames < 255)
+            pCtx->ButtonDebounceFrames++;
+    } else {
+        pCtx->ButtonDebounceFrames = 0;
+    }
+    BOOLEAN debouncedButtonDown =
+        pCtx->ButtonDebounceFrames >= BUTTON_CLICK_DEBOUNCE_FRAMES;
+
+    BOOLEAN buttonClickEdge = debouncedButtonDown && !pCtx->PrevButtonClicked;
+    pCtx->PrevButtonClicked = debouncedButtonDown;
 
     RtlZeroMemory(OutResult, sizeof(PTP_CORE_FRAME));
     OutResult->TimestampQpc = NowQpc;
