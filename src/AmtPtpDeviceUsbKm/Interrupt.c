@@ -151,6 +151,18 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     if (NumBytesTransferred < headerSize ||
         (NumBytesTransferred - headerSize) % fingerSize != 0) {
+        // DIAG (raw-frame-loss investigation): this used to return
+        // silently - a malformed/truncated transfer vanished with no
+        // trace anywhere in the log, before even the BTN/xferBytes print
+        // below. If multi-finger taps are being dropped upstream of
+        // AmtInputParseFrame, this is the first place to check: a
+        // genuine N-finger transfer that arrives short/misaligned would
+        // show up here instead of ever reaching raw_n. Remove once the
+        // multi-finger-drop investigation is resolved.
+        DbgPrint("[AmtPtp] XFER malformed xferBytes=%Iu headerSize=%Iu "
+                 "fingerSize=%Iu qpc=%I64d\n",
+                 NumBytesTransferred, headerSize, fingerSize,
+                 KeQueryPerformanceCounter(NULL).QuadPart);
         return;
     }
 
@@ -243,6 +255,22 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     if (pCtx->PtpReportTouch) {
         raw_n = (NumBytesTransferred - headerSize) / fingerSize;
+
+        // DIAG (raw-frame-loss investigation): this is the finger-record
+        // count as computed straight from NumBytesTransferred, before the
+        // PTP_MAX_CONTACT_POINTS clamp below and before AmtInputParseFrame's
+        // per-finger major/minor filter. If a multi-finger tap shows up
+        // here with the expected count but fewer contacts survive past
+        // Input.c, the loss is in the major<=0/minor<=0 filter (see the
+        // per-finger DIAG in Input.c). If it's already short HERE, the
+        // transfer itself never carried the extra fingers - nothing this
+        // driver's matching/confidence logic can compensate for. Remove
+        // once the multi-finger-drop investigation is resolved.
+        DbgPrint("[AmtPtp] RAWN raw_n=%Iu xferBytes=%Iu headerSize=%Iu "
+                 "fingerSize=%Iu qpc=%I64d\n",
+                 raw_n, NumBytesTransferred, headerSize, fingerSize,
+                 Now.QuadPart);
+
         if (raw_n > PTP_MAX_CONTACT_POINTS) raw_n = PTP_MAX_CONTACT_POINTS;
 
         // REVERTED (regression, confirmed on real MacBookPro16,1/T2

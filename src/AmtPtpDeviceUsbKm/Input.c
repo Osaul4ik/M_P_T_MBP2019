@@ -53,6 +53,18 @@ AmtInputParseFrame(
         INT pressure = AmtInputRawToInteger(f->pressure);
         if (pressure < 0) pressure = 0; // clamp - negative pressure is not meaningful
 
+        // DIAG (raw-frame-loss investigation): every finger slot the
+        // transfer carried, before the no-contact filter right below.
+        // Cross-reference against Interrupt.c's RAWN print (same qpc,
+        // via TimestampQpc) - if a slot shows up here with major<=0 &&
+        // minor<=0, the finger WAS present on the wire but this driver's
+        // own filter dropped it (a firmware-side ellipse/pressure miss,
+        // not a transport loss). If fewer slots appear here than RAWN's
+        // raw_n promised, something between the two is wrong. Remove
+        // once the multi-finger-drop investigation is resolved.
+        DbgPrint("[AmtPtp] RAWFINGER slot=%Iu major=%d minor=%d pressure=%d qpc=%I64d\n",
+                 i, major, minor, pressure, TimestampQpc);
+
         // No contact at all - InputAdapter does not debounce this; a
         // downstream layer with track history may choose to bridge it.
         if (major <= 0 && minor <= 0)
