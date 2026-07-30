@@ -40,6 +40,50 @@
 #define GESTURE_TAINT_DEBOUNCE_FRAMES 2
 #endif
 
+// BUG FIX (deliberate fast N-finger tap misread as a gesture): the
+// debounce above only filters a single-FRAME noise blip - it still lets
+// WasInGesture latch the instant aliveCount>=2 has held for
+// GESTURE_TAINT_DEBOUNCE_FRAMES (~16ms at this hardware's ~8ms scan
+// cadence), with zero regard for how long the multi-finger contact
+// actually stays down. Repro logs (SAKURAMBPRO.log) show a user
+// deliberately tapping 2 fingers, over and over, and lifting again
+// 120-230ms later: EVERY one of those pairs got WasInGesture SET within
+// a single extra frame of birth, before there was any way to tell "a
+// quick 2-finger tap" from "the start of a 2-finger scroll" - the two
+// look byte-for-byte identical for the first couple of frames. Once
+// WasInGesture latches, the pair's eventual lift-off is reported via the
+// "gesture-tainted" path (deferred, paired) instead of the "solo" path
+// (immediate, independent) - and Windows' own PTP recognizer leans on
+// exactly that Confident/WasInGesture/ContactID shape to decide tap vs.
+// scroll, so a tainted-but-actually-brief pair becomes a coin flip on
+// the OS side: sometimes still read as a tap/right-click, sometimes
+// silently dropped as an incomplete scroll. That is the intermittent
+// "two-finger tap sometimes doesn't register" symptom.
+//
+// Fix: WasInGesture may only actually LATCH once the contact has been
+// alive for at least GESTURE_TAINT_MIN_HOLD_FRAMES (ACTIVE_CONTACT.
+// FramesAlive, already maintained per-contact by AmtContactUpdate -
+// ActiveContact.c - so this needs no new state). GestureCandidateFrames
+// keeps counting as before (still filters a single-frame noise blip
+// immediately), but the commit is now gated on BOTH conditions. A
+// contact that lifts before crossing this hold takes the "solo" lift
+// path (Phase A) even though a second finger was present the whole
+// time - which is the correct, desired outcome for a genuine fast
+// N-finger tap: each contact reports its own clean DOWN...UP with
+// Confident=1 and WasInGesture=0 throughout, the exact shape Windows'
+// recognizer wants for a tap. 24 frames (~190ms at ~8ms/frame) sits
+// comfortably above every real tap observed in the repro logs
+// (120-230ms) while staying far short of any deliberate scroll (which
+// runs for many hundreds of ms at minimum) - tunable if a given panel's
+// scan cadence or a user's tap cadence differs meaningfully from this.
+#if AMT_RAW_DISABLE_GESTURE_DEBOUNCE
+// RAW MODE: no minimum hold either - latch the instant the frame-count
+// debounce above is satisfied, same as before this fix existed.
+#define GESTURE_TAINT_MIN_HOLD_FRAMES 1
+#else
+#define GESTURE_TAINT_MIN_HOLD_FRAMES 24
+#endif
+
 // BUG FIX (spurious full-pool rebind from summed multi-finger force):
 // this hardware's integrated-button bit is a raw firmware click-force
 // threshold computed over TOTAL pressure across all fingers, not a true
@@ -860,16 +904,31 @@ PTPCore_ProcessFrame(
         // Only touches contacts not already tainted; an already-tainted
         // contact keeps re-qualifying every gestureThisFrame frame same as
         // before (no behavior change for an established gesture).
+        //
+        // BUG FIX (fast deliberate tap misread as gesture): the frame-
+        // count debounce alone only filters a 1-frame blip - it still let
+        // WasInGesture latch within ~16ms of a 2nd finger landing, with no
+        // regard for how long the contact actually stays down. Added
+        // second gate, FramesAlive >= GESTURE_TAINT_MIN_HOLD_FRAMES, so a
+        // pair that lifts again quickly (a real N-finger tap) never
+        // latches at all and takes the immediate "solo" lift path instead
+        // of the deferred "gesture-tainted" one - see the comment on
+        // GESTURE_TAINT_MIN_HOLD_FRAMES above for the full rationale and
+        // the repro-log timings behind the chosen threshold.
         if (!pCtx->ActiveContacts[p].WasInGesture) {
             if (shouldTaint) {
                 if (pCtx->ActiveContacts[p].GestureCandidateFrames < 255)
                     pCtx->ActiveContacts[p].GestureCandidateFrames++;
                 if (pCtx->ActiveContacts[p].GestureCandidateFrames >=
-                    GESTURE_TAINT_DEBOUNCE_FRAMES)
+                        GESTURE_TAINT_DEBOUNCE_FRAMES &&
+                    pCtx->ActiveContacts[p].FramesAlive >=
+                        GESTURE_TAINT_MIN_HOLD_FRAMES)
                 {
                     pCtx->ActiveContacts[p].WasInGesture = TRUE;
-                    DbgPrint("[AmtPtp] WasInGesture SET pool=%Iu id=%lu qpc=%I64d\n",
-                             p, pCtx->ActiveContacts[p].ContactID, NowQpc);
+                    DbgPrint("[AmtPtp] WasInGesture SET pool=%Iu id=%lu "
+                             "framesAlive=%u qpc=%I64d\n",
+                             p, pCtx->ActiveContacts[p].ContactID,
+                             pCtx->ActiveContacts[p].FramesAlive, NowQpc);
                 }
             } else {
                 pCtx->ActiveContacts[p].GestureCandidateFrames = 0;
