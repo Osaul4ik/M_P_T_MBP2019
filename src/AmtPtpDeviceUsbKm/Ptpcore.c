@@ -942,28 +942,58 @@ PTPCore_ProcessFrame(
                          (BOOLEAN)(aliveCount == 1), gestureThisFrame,
                          &repX, &repY);
 
-        // AUDIT FIX (click Confidence false-negative): TipDropApplied
-        // means "X/Y is stale/bridged," not "this isn't a real finger" -
-        // but Phase C was reusing it as-is for Confident on EVERY report,
-        // including a buttonClickEdge rebind's DOWN. A physical mechanical
-        // click on this hardware momentarily flexes the pad and shrinks
-        // the reported touch ellipse (Major/Minor), often dropping it
-        // below AmtMatchCandidateTip's threshold right at the click - and
-        // since a deliberate click is almost always thrown while the
-        // finger is held still, that lands in the "isStationary" tip-drop
-        // branch (Match.c) which sets TipDropApplied=1. That falsely
-        // reported the freshly-rebound ContactID's DOWN as Confident=
-        // FALSE, and Windows' PTP stack discards non-confident contacts
-        // for pointer/click purposes - so the click never registered
-        // unless the finger was lifted and touched again (a real birth,
-        // on a later frame once the ellipse recovered above threshold).
-        // A rebound contact is by definition an already-tracked, real
-        // finger (identity swap only, per AmtContactRebindIdentity) - so
-        // its Confidence must not be gated by the tip-threshold heuristic
-        // meant for brand-new/continuing touch candidates.
-        BOOLEAN reportConfident = rebindThisFrame[p]
-            ? TRUE
-            : (BOOLEAN)(cand->TipDropApplied == 0);
+        // AUDIT FIX (tap/click Confidence false-negative - generalized):
+        // TipDropApplied means "X/Y is stale/bridged," not "this isn't a
+        // real finger" - grep confirms its ONLY consumer in the entire
+        // driver is this exact line, and it is set to 1 in exactly one
+        // place (Match.c's isStationary tip-drop branch): an ALREADY-
+        // ACTIVE, previously-matched pool entry (bestPoolIdx found) whose
+        // reported ellipse (Major/Minor) has dropped below
+        // AmtMatchCandidateTip's threshold while the contact is holding
+        // still. A brand-new/no-anchor candidate always forces
+        // TipDropApplied=0 (Match.c: "No anchor: full-confidence birth
+        // candidate"), so this branch structurally can never fire for a
+        // genuinely new/unverified touch - only for a finger this driver
+        // already knows is real.
+        //
+        // That is precisely the shape of a tap's OWN final live frame(s):
+        // pressure eases right before/at liftoff, the contact ellipse
+        // naturally shrinks, and the finger is essentially stationary by
+        // definition (it's a tap, not a swipe) - isStationary=TRUE. A
+        // previous fix (below, superseded) only exempted the
+        // buttonClickEdge rebind case from this, but any ordinary tap -
+        // solo, N-finger, or force-touch/hard-tap, whichever finger count
+        // - hits the exact same branch on its way out and got Confident=0
+        // reported for it. Windows' PTP stack silently discards non-
+        // confident contacts for pointer/click purposes, so the tap's
+        // last frame(s) before UP could get dropped from the recognizer's
+        // view - intermittently, depending on exactly which frame the
+        // ellipse dipped on. Scrolling never hits this: a moving finger
+        // always takes the dxMove/dyMove "live position" branch, which
+        // unconditionally sets TipDropApplied=0 regardless of ellipse
+        // size (Match.c) - consistent with taps/clicks being flaky while
+        // scroll stayed stable.
+        //
+        // Fix: since TipDropApplied structurally only ever describes an
+        // already-verified, already-tracked real finger (never a fresh/
+        // ambiguous candidate), it must not gate Confidence for ANY
+        // continuing contact - not just the rebind case. It still fully
+        // controls whether the bridged/frozen position vs the live one is
+        // reported (Match.c's cand.X/cand.Y assignment, untouched here) -
+        // only its (mis)use as a confidence signal is removed.
+        BOOLEAN reportConfident = TRUE;
+
+        // DIAG (Confidence false-negative confirmation): this used to be
+        // the exact condition that forced Confident=0 before the fix
+        // above. Left as a visibility print (not a behavior change) so a
+        // DebugView capture of a failed tap can confirm this branch was
+        // actually hit on the tap's final frame(s) - remove once
+        // confirmed fixed on real hardware.
+        if (cand->TipDropApplied != 0) {
+            DbgPrint("[AmtPtp] TIPDROP stationary-bridge pool=%Iu id=%lu "
+                     "X=%u Y=%u (would have forced Confident=0 pre-fix) qpc=%I64d\n",
+                     p, pCtx->ActiveContacts[p].ContactID, repX, repY, NowQpc);
+        }
 
         // DIAG (soft-tap/double-tap investigation): DOWN is the one phase
         // that was never logged anywhere - UP has two prints (solo/
