@@ -110,10 +110,17 @@ typedef struct _DEVICE_CONTEXT
     UCHAR   PendingForceTouchEdgeCount;  // number of queued, undelivered edges
 
     // Click arbitration (Ptpcore.c) - see CLICK_ARBITRATION_STATE above.
-    // PeakPressure/StartQpc are only meaningful while State == PENDING.
+    // PeakPressure/StartQpc/StallFrames are only meaningful while State ==
+    // PENDING.
     CLICK_ARBITRATION_STATE ClickArbitrationState;
     USHORT                  ClickArbitrationPeakPressure;
     LONGLONG                ClickArbitrationStartQpc;
+    // Consecutive frames PeakPressure has NOT grown (press has plateaued,
+    // not actively climbing toward FORCE_TOUCH_PRESSURE_THRESHOLD). Lets
+    // an ordinary flat/light press resolve to HARD_TAP well before the
+    // full CLICK_ARBITRATION_TIMEOUT_MS safety-net timeout - only a press
+    // that keeps climbing needs the full window measured out.
+    UCHAR                   ClickArbitrationStallFrames;
 
     // Scan time
     LARGE_INTEGER LastReportTime;

@@ -16,10 +16,12 @@
 // was pressed at any point during the hold.
 #define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 70
 
-// How long PTPCore will wait, once the button goes down, for the press
-// to either cross FORCE_TOUCH_PRESSURE_THRESHOLD or start receding
-// before giving up and committing it as an ordinary click. "Some time"
-// per the design note - tunable.
+// Absolute wall-clock safety-net cap: once the button goes down, no press
+// stays PENDING longer than this no matter what, even one that keeps
+// inching up without ever stalling for CLICK_ARBITRATION_STALL_FRAMES_
+// FAST_RESOLVE in a row. The common case resolves much sooner, via either
+// the stall fast-exit below (ordinary flat/light press) or the drop-from-
+// peak hysteresis (a press that peaked and is now receding). Tunable.
 #define CLICK_ARBITRATION_TIMEOUT_MS 60
 
 // A press is considered to be receding once its pressure falls this many
@@ -29,6 +31,19 @@
 // ~3-5 units is enough margin to absorb sensor noise without meaningfully
 // delaying the decision.
 #define CLICK_ARBITRATION_PRESSURE_HYSTERESIS 4
+
+// FIX (soft-press fast resolve): consecutive frames the running peak
+// pressure must go without growing before an otherwise-undecided PENDING
+// press is treated as an ordinary click, instead of waiting out the full
+// CLICK_ARBITRATION_TIMEOUT_MS. Only a press that is still actively
+// climbing toward FORCE_TOUCH_PRESSURE_THRESHOLD needs the long window -
+// an ordinary press plateaus almost immediately and has no reason to hold
+// up the click report. NOT calibrated against real hardware scan cadence
+// (assumed ~120Hz/~8ms per frame elsewhere in this file, so 3 frames is
+// ~24ms) - revisit if real-device testing shows force-touch presses
+// naturally stalling for a frame or two mid-ramp (sensor noise, grip
+// micro-adjustment) and getting cut off too early; raise toward 5-6 if so.
+#define CLICK_ARBITRATION_STALL_FRAMES_FAST_RESOLVE 3
 
 // Recent-lift ring buffer (slot-independent retap memory)
 
@@ -850,6 +865,7 @@ PTPCore_ProcessFrame(
             pCtx->ClickArbitrationState         = CLICK_ARBITRATION_PENDING;
             pCtx->ClickArbitrationStartQpc      = NowQpc;
             pCtx->ClickArbitrationPeakPressure  = framePeakPressure;
+            pCtx->ClickArbitrationStallFrames   = 0;
         }
 
         if (pCtx->ForceTouchDragLockout) {
@@ -858,8 +874,20 @@ PTPCore_ProcessFrame(
             // FORCE_TOUCH decision already made earlier this same press.
             pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
         } else if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
-            if (framePeakPressure > pCtx->ClickArbitrationPeakPressure)
+            if (framePeakPressure > pCtx->ClickArbitrationPeakPressure) {
                 pCtx->ClickArbitrationPeakPressure = framePeakPressure;
+                // Still climbing toward the threshold this frame - this is
+                // exactly the case that genuinely needs measuring, so keep
+                // resetting the stall counter for as long as it keeps
+                // growing. Comparison against the running PEAK (not the
+                // previous frame's raw sample) makes this noise-robust the
+                // same way the drop-from-peak hysteresis below already is:
+                // the peak only ever moves up, so per-frame sensor jitter
+                // below it can't spuriously "reset progress".
+                pCtx->ClickArbitrationStallFrames = 0;
+            } else if (pCtx->ClickArbitrationStallFrames < 255) {
+                pCtx->ClickArbitrationStallFrames++;
+            }
 
             INT dropFromPeak = (INT)pCtx->ClickArbitrationPeakPressure -
                                 (INT)framePeakPressure;
@@ -868,7 +896,25 @@ PTPCore_ProcessFrame(
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
             } else if (dropFromPeak >= CLICK_ARBITRATION_PRESSURE_HYSTERESIS) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
+            } else if (pCtx->ClickArbitrationStallFrames >= CLICK_ARBITRATION_STALL_FRAMES_FAST_RESOLVE) {
+                // FIX (soft-press fast resolve): an ordinary flat/light
+                // press neither climbs toward the threshold nor recedes
+                // enough to trip the hysteresis exit above - peak just
+                // sits at whatever the steady pressure is, so it used to
+                // sit PENDING for the full CLICK_ARBITRATION_TIMEOUT_MS
+                // every single time, no matter how obviously it was never
+                // a force-touch attempt. Only a press that is actively
+                // still climbing needs the full window measured out; one
+                // that has stopped growing for
+                // CLICK_ARBITRATION_STALL_FRAMES_FAST_RESOLVE consecutive
+                // frames has already shown its hand and can resolve now.
+                pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
             } else {
+                // Safety net: still climbing (or too new to tell) - fall
+                // back to the absolute wall-clock cap so a slow, genuine
+                // force-touch ramp that never quite stalls for
+                // STALL_FRAMES_FAST_RESOLVE in a row (e.g. it inches up by
+                // 1 unit every other frame) still can't wait forever.
                 LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
                 LONGLONG timeoutTicks = (pCtx->PerfFrequency.QuadPart > 0)
                     ? (pCtx->PerfFrequency.QuadPart * CLICK_ARBITRATION_TIMEOUT_MS) / 1000
