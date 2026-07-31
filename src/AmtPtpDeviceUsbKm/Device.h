@@ -23,6 +23,19 @@ typedef enum _CLICK_ARBITRATION_STATE
 
 typedef struct _DEVICE_CONTEXT
 {
+    // AUDIT FIX: the continuous USB reader can have more than one read
+    // pending at once, so AmtPtpEvtUsbInterruptPipeReadComplete
+    // (Interrupt.c) is not guaranteed to run to completion on one CPU
+    // before the next completion starts on another. Every field below
+    // that function reads/writes without doing its own synchronization
+    // (LastReportTime, ScanTimeAccumulator, ActiveContacts[],
+    // ClickArbitrationState, ForceTouch*, PendingForceTouchEdge*, and
+    // everything PTPCore_ProcessFrame touches through them) must only be
+    // touched while holding this lock. Created in
+    // AmtPtpDeviceUsbKmCreateDevice; acquired/released around the whole
+    // state-mutating body of AmtPtpEvtUsbInterruptPipeReadComplete.
+    WDFSPINLOCK     StateLock;
+
     // USB
     WDFUSBDEVICE    UsbDevice;
     WDFUSBPIPE      InterruptPipe;

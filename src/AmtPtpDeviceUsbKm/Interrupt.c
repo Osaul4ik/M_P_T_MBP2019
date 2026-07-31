@@ -169,6 +169,15 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         return;
     }
 
+    // AUDIT FIX: the continuous reader can have more than one read pending,
+    // so this callback can re-enter on another CPU before a prior call has
+    // finished with LastReportTime/ScanTimeAccumulator/ActiveContacts[]/
+    // ClickArbitrationState/ForceTouch*/PendingForceTouchEdge* (and
+    // everything PTPCore_ProcessFrame derives from them). Hold StateLock
+    // (raises to DISPATCH_LEVEL) across the whole state-mutating body;
+    // every exit path below releases it before returning.
+    WdfSpinLockAcquire(pCtx->StateLock);
+
     RtlZeroMemory(&Report, sizeof(PTP_REPORT));
     Report.ReportID = REPORTID_MULTITOUCH;
 
@@ -218,6 +227,7 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         if (raw_n > PTP_MAX_CONTACT_POINTS) raw_n = PTP_MAX_CONTACT_POINTS;
 
         if (raw_n * fingerSize > (NumBytesTransferred - headerSize)) {
+            WdfSpinLockRelease(pCtx->StateLock);
             WdfRequestComplete(Request, STATUS_DATA_ERROR);
             return;
         }
@@ -254,6 +264,7 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     Status = WdfMemoryCopyFromBuffer(
         RequestMemory, 0, (PVOID)&Report, sizeof(PTP_REPORT));
     if (!NT_SUCCESS(Status)) {
+        WdfSpinLockRelease(pCtx->StateLock);
         WdfRequestComplete(Request, Status);
         return;
     }
@@ -324,6 +335,8 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         // else: still no second request available this pass - leave the
         // queue untouched and retry on the next interrupt completion.
     }
+
+    WdfSpinLockRelease(pCtx->StateLock);
 }
 
 BOOLEAN

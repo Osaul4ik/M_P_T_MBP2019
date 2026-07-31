@@ -12,7 +12,13 @@ HidValidateReportSize(
 	_In_ PHID_XFER_PACKET pHidPacket,
 	_In_ size_t           requiredSize)
 {
-	return (pHidPacket->reportBufferLen >= (ULONG)requiredSize);
+	// AUDIT FIX: reportBufferLen alone doesn't guarantee reportBuffer is
+	// non-NULL - pHidPacket is HID-class/user-mode supplied, so a crafted
+	// IOCTL with a satisfying reportBufferLen but reportBuffer == NULL
+	// previously passed this check and then crashed on the very next
+	// direct dereference in the caller (e.g. capsReport->... assignments).
+	return (pHidPacket->reportBuffer != NULL) &&
+	       (pHidPacket->reportBufferLen >= (ULONG)requiredSize);
 }
 
 #ifndef _AAPL_HID_DESCRIPTOR_H_

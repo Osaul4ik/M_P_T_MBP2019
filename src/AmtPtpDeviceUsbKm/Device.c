@@ -59,6 +59,20 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     deviceContext->PtpReportButton = TRUE;
     deviceContext->PtpReportTouch  = TRUE;
 
+    // AUDIT FIX: backs the shared frame-processing state guarded in
+    // Interrupt.c (see StateLock comment in Device.h). Parented to the
+    // WDF device so it is torn down automatically with it.
+    {
+        WDF_OBJECT_ATTRIBUTES lockAttributes;
+        WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
+        lockAttributes.ParentObject = device;
+
+        status = WdfSpinLockCreate(&lockAttributes, &deviceContext->StateLock);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+    }
+
     status = WdfDeviceCreateDeviceInterface(
         device, &GUID_DEVINTERFACE_AmtPtpDeviceUsbKm, NULL);
 

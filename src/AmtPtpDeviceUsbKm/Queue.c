@@ -40,8 +40,17 @@ AmtPtpDeviceUsbKmQueueInitialize(
     }
 
     // Manual queue for touch read requests.
+    //
+    // AUDIT FIX: this is where IOCTL_HID_READ_REPORT requests actually sit
+    // pending (forwarded here via WdfRequestForwardToIoQueue, waiting on
+    // AmtPtpEvtUsbInterruptPipeReadComplete) - EvtIoStop was previously only
+    // wired up on the default queue above, so Suspend/Purge on THIS queue
+    // (device stop/remove, "Safely Remove") had no handler at all and the
+    // framework would wait indefinitely for these requests to be
+    // acknowledged.
     WDF_IO_QUEUE_CONFIG_INIT(&queueConfig, WdfIoQueueDispatchManual);
     queueConfig.PowerManaged = WdfFalse;
+    queueConfig.EvtIoStop = AmtPtpDeviceUsbKmEvtIoStop;
 
     status = WdfIoQueueCreate(
         Device,
@@ -165,8 +174,16 @@ AmtPtpDeviceUsbKmEvtIoStop(
 
     // Purge: device is being removed/stopped for good - the request must
     // actually be cancelled so the I/O manager can proceed.
+    //
+    // AUDIT FIX: WdfRequestCancelSentRequest is for a request the driver
+    // itself sent onward via WdfRequestSend and is waiting on completion
+    // for. This request was only forwarded to InputQueue via
+    // WdfRequestForwardToIoQueue - it was never sent anywhere - so that call
+    // does nothing to it. The request would then never be completed, and
+    // WDF would wait forever for it during device stop/remove, hanging on
+    // unplug/disable/"Safely Remove". Complete it directly instead.
     if (ActionFlags & WdfRequestStopActionPurge) {
-        WdfRequestCancelSentRequest(Request);
+        WdfRequestComplete(Request, STATUS_CANCELLED);
         return;
     }
 }
