@@ -145,6 +145,10 @@ AmtPtpEvtDeviceD0Entry(
 
     pDeviceContext->LastReportTime =
         KeQueryPerformanceCounter(&pDeviceContext->PerfFrequency);
+    // SCANTIME FIX: reseed the free-running ScanTime accumulator alongside
+    // LastReportTime, so each new session starts the hardware-clock
+    // counter back at 0 rather than carrying over a stale wrap point.
+    pDeviceContext->ScanTimeAccumulator = 0;
 
     // Reseed ContactID counter and reset the contact pool on D0Entry.
     // Prevents stale ContactIDs from surviving sleep/wake cycles.

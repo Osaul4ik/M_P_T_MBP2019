@@ -172,15 +172,37 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     RtlZeroMemory(&Report, sizeof(PTP_REPORT));
     Report.ReportID = REPORTID_MULTITOUCH;
 
-    KeQueryPerformanceCounter(&Now);
+    // BUG FIX: KeQueryPerformanceCounter's RETURN VALUE is the current tick
+    // count; the out-param is the counter FREQUENCY, which is constant for
+    // the life of the device (already latched once in D0Entry, see
+    // Device.c). The previous code discarded the return value and
+    // overwrote Now with the frequency instead, so Now.QuadPart never
+    // advanced between interrupt completions - every dtTicks/PerfDelta
+    // computed from it downstream was permanently 0.
+    Now = KeQueryPerformanceCounter(NULL);
+
+    // SCANTIME FIX: the Windows PTP spec defines ScanTime as a
+    // free-running, ever-increasing hardware-clock sample (100us units) -
+    // Windows differentiates it ACROSS frames itself to derive velocity
+    // and inertia. Sending the pre-computed inter-frame delta directly
+    // (always ~the same small value at a steady scan rate) makes
+    // consecutive ScanTime values look nearly IDENTICAL rather than
+    // monotonically increasing - Windows' own frame-to-frame diff of two
+    // near-equal deltas collapses to ~0, which reads as "no motion" no
+    // matter how fast the finger is actually moving.
+    //
+    // Fix: accumulate elapsed time onto a running ULONG counter and only
+    // truncate the low 16 bits into the report field. USHORT wraparound
+    // here is expected/required by spec, not a bug.
     PerfDelta = Now.QuadPart - pCtx->LastReportTime.QuadPart;
     if (pCtx->PerfFrequency.QuadPart > 0)
         PerfDelta = PerfDelta * 10000LL / pCtx->PerfFrequency.QuadPart;
     else
         PerfDelta /= 100LL;
-    if (PerfDelta > 0xFFFF) PerfDelta = 0xFFFF;
-    if (PerfDelta < 0)      PerfDelta = 0;
-    Report.ScanTime = (USHORT)PerfDelta;
+    if (PerfDelta < 0) PerfDelta = 0;
+
+    pCtx->ScanTimeAccumulator += (ULONG)PerfDelta;
+    Report.ScanTime = (USHORT)(pCtx->ScanTimeAccumulator & 0xFFFF);
     pCtx->LastReportTime = Now;
 
     BOOLEAN buttonSnapshot =
