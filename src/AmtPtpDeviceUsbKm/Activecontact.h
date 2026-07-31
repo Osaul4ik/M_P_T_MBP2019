@@ -71,14 +71,12 @@ typedef struct _ACTIVE_CONTACT
     USHORT   LastMinor;
     USHORT   LastPressure;
 
-    // Gesture-last-finger deferral counter. NOT identity/matching hint.
+    // Frames this contact has been alive, saturating at 255. NOT an
+    // identity/matching hint - purely a diagnostic/age counter.
     UCHAR FramesAlive;
 } ACTIVE_CONTACT, *PACTIVE_CONTACT;
 
 #define MAX_CONTACTS PTP_MAX_CONTACT_POINTS  // pool capacity, not slot count
-
-// Gesture-last-finger kill deferral. Solo contacts killed immediately.
-#define MIN_CONTACT_LIFETIME_FRAMES 4
 
 // Zero/FREE-initialise the whole pool. Call at device creation and D0Entry.
 VOID

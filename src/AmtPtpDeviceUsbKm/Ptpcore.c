@@ -395,19 +395,16 @@ PTPCore_ProcessFrame(
         ULONG  oldId; USHORT oldX, oldY;
 
         if (pCtx->ActiveContacts[p].WasInGesture) {
-            // Gesture-tainted: defer if fresh and last finger.
-            if (pCtx->ActiveContacts[p].FramesAlive < MIN_CONTACT_LIFETIME_FRAMES
-                && aliveCount == 0)
-            {
-                // Defer one frame for gesture recognizer.
-                pCtx->ActiveContacts[p].FramesAlive++;
-
-                AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
-                                   pCtx->ActiveContacts[p].ReportX, pCtx->ActiveContacts[p].ReportY,
-                                   CONTACT_PHASE_MOVE, TRUE);
-                continue; // no lift-off this frame
-            }
-
+            // Gesture-tainted: lift immediately, no defer. The
+            // MIN_CONTACT_LIFETIME_FRAMES fake-MOVE-then-UP deferral was
+            // removed here (previously gated on FramesAlive < 4 &&
+            // aliveCount == 0, i.e. "fresh last finger of a gesture
+            // session") because it delayed the real UP by up to 4 frames
+            // (~33ms @ 120Hz) - exactly the artificial-timing problem
+            // Issue #2 already fixed for solo taps below; it had just
+            // never been removed from this branch. Symptoms traced
+            // directly to this: delayed 3-finger swipe completion,
+            // 2-finger soft tap intermittently not registering.
             // Gesture lift: not recorded in RecentLifts.
             AmtContactEnterGrace(pCtx->ActiveContacts, p, &oldId, &oldX, &oldY);
             AmtContactExpireGrace(pCtx->ActiveContacts, p);
