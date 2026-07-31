@@ -155,6 +155,24 @@ AmtMatchBuildCandidates(
     *LargePalmDetected = FALSE;
     RtlZeroMemory(OutCandidates, sizeof(MATCH_CANDIDATE_SET));
 
+    // See the matching "multiFingerContext" block in AmtMatchCorrespond
+    // for the full rationale - same signal, computed here too because
+    // the TIP_DROP anchor search below runs BEFORE AmtMatchCorrespond
+    // and needs to make the identical solo-vs-multi-finger call: a
+    // firmware origin==0 contact ("this slot is a fresh identity") must
+    // not be offered a stale pool entry as a debounce anchor when there
+    // is no second finger anywhere in the picture, because outside a
+    // real multi-finger transition there is no slot-renumbering glitch
+    // for that anchor to be compensating for - it would just be a
+    // different finger that happens to share the freed hw slot.
+    UCHAR activePoolCountBc = 0;
+    for (size_t pp = 0; pp < MAX_CONTACTS; pp++) {
+        if (Pool[pp].State == CONTACT_ACTIVE)
+            activePoolCountBc++;
+    }
+    BOOLEAN multiFingerContextBc =
+        (activePoolCountBc >= 2) || (RawFrame->ContactCount >= 2);
+
     for (UCHAR i = 0; i < RawFrame->ContactCount; i++) {
         const RAW_CONTACT* rc = &RawFrame->Contacts[i];
 
@@ -201,7 +219,23 @@ AmtMatchBuildCandidates(
         size_t bestPoolIdx  = MAX_CONTACTS;
         LONG   bestDistSq   = -1;
 
+        // BUG FIX (right-then-left / left-then-right hand-off teleport):
+        // origin==0 in a solo-finger context means firmware itself is
+        // telling us this touch is a fresh identity, not a continuation
+        // of whatever used to own this hw slot - see multiFingerContextBc
+        // above. Refusing an anchor here forces the "no anchor: full-
+        // confidence birth candidate" branch below, which reports this
+        // candidate's real, live coordinates with no borrowed identity
+        // baggage - AmtMatchCorrespond's own multiFingerContext gate then
+        // decides cleanly whether it's a genuine new touch (usual case)
+        // or, if it does end up spatially coinciding with a stale pool
+        // entry, a proper lift+rebirth rather than a silent teleporting
+        // MOVE under the old ContactID.
+        BOOLEAN refuseAnchor = cand.IdentityBreak && !multiFingerContextBc;
+
         for (size_t p = 0; p < MAX_CONTACTS; p++) {
+            if (refuseAnchor)
+                break;
             if (Pool[p].State != CONTACT_ACTIVE)
                 continue;
             if (Pool[p].LastSlotHint != rc->SlotIndex)
@@ -402,6 +436,48 @@ AmtMatchCorrespond(
         OutResult->CorrespondingPoolIndex[ci] = MATCH_NO_CORRESPONDENCE;
     }
 
+    // ROOT-CAUSE FIX (single-finger sequential teleport/pinch misfire):
+    // the IdentityBreak "glitch" suppression below (IDENTITY_BREAK_MAX_
+    // PLAUSIBLE_JUMP) was written for ONE specific, documented mechanism:
+    // a BCM5974/T2 internal slot RENUMBERING glitch that only happens
+    // "during multi-finger transitions" (2nd/3rd/4th finger joining or
+    // leaving) - see the AUDIT FIX comment below. In that mechanism the
+    // SAME physical finger is still down and still present in the
+    // current frame; only its slot tag glitches for one frame. The
+    // distance-based heuristic (>600 units = "must be the glitch, not a
+    // real new touch") is only valid under that precondition.
+    //
+    // The code never actually checked that precondition, so it also
+    // fired for an unrelated situation with the same surface shape
+    // (IdentityBreak + a large jump): finger A lifts, finger B touches
+    // down elsewhere, and the hardware reuses A's now-free hw slot for B
+    // (LastSlotHint tracks touch ORDER, not which finger - see Match.h).
+    // That is a strictly single-finger-at-a-time sequence (right-then-
+    // left / left-then-right repro), not a multi-finger transition, so
+    // it can't be the documented renumbering glitch - yet the old code
+    // suppressed the identity break anyway, because a far jump looks
+    // identical in both cases. That kept B's real coordinates bound to
+    // A's old ContactID, which is exactly the teleport Windows' PTP
+    // stack reads as an instant pinch/zoom.
+    //
+    // Fix: only trust "large jump -> glitch, suppress" when the pool
+    // actually had >=2 concurrently active contacts going into this
+    // frame, or >=2 are being reported this frame - i.e. a genuine
+    // multi-finger transition, matching the mechanism this heuristic was
+    // built for. Outside that context, origin==0 is honored
+    // unconditionally: a solo finger's slot has nothing else to be
+    // renumbered against, so there's no glitch case left to protect
+    // against, and a big jump simply means a different finger arrived -
+    // exactly what NewIdentity exists for (clean UP on the old id, fresh
+    // DOWN on the new one).
+    UCHAR activePoolCount = 0;
+    for (size_t p = 0; p < MAX_CONTACTS; p++) {
+        if (Pool[p].State == CONTACT_ACTIVE)
+            activePoolCount++;
+    }
+    BOOLEAN multiFingerContext =
+        (activePoolCount >= 2) || (Candidates->Count >= 2);
+
     // Precompute the dead-reckoned predicted position ONCE per pool entry,
     // outside the (candidate, pool) double loop below. AmtMatchPredictPosition
     // depends only on `p` (the pool entry), never on which candidate `ci`
@@ -577,20 +653,28 @@ AmtMatchCorrespond(
                 // jump fix below existed - no suppression at all.
                 OutResult->NewIdentity[ci] = TRUE;
 #else
-                INT ibDx = (INT)Candidates->Candidates[ci].X - (INT)Pool[p].ReportX;
-                INT ibDy = (INT)Candidates->Candidates[ci].Y - (INT)Pool[p].ReportY;
-                if (ibDx < 0) ibDx = -ibDx;
-                if (ibDy < 0) ibDy = -ibDy;
+                if (!multiFingerContext) {
+                    // Solo-finger context: the documented renumbering
+                    // glitch cannot occur (see multiFingerContext
+                    // comment above) - trust firmware unconditionally,
+                    // regardless of jump distance.
+                    OutResult->NewIdentity[ci] = TRUE;
+                } else {
+                    INT ibDx = (INT)Candidates->Candidates[ci].X - (INT)Pool[p].ReportX;
+                    INT ibDy = (INT)Candidates->Candidates[ci].Y - (INT)Pool[p].ReportY;
+                    if (ibDx < 0) ibDx = -ibDx;
+                    if (ibDy < 0) ibDy = -ibDy;
 
-                OutResult->NewIdentity[ci] =
-                    (ibDx <= IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP &&
-                     ibDy <= IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP);
+                    OutResult->NewIdentity[ci] =
+                        (ibDx <= IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP &&
+                         ibDy <= IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP);
 
-                if (!OutResult->NewIdentity[ci]) {
-                    DbgPrint("[AmtPtp] IdentityBreak SUPPRESSED (glitch) pool=%Iu "
-                             "candX=%u candY=%u lastX=%u lastY=%u\n",
-                             p, Candidates->Candidates[ci].X, Candidates->Candidates[ci].Y,
-                             Pool[p].ReportX, Pool[p].ReportY);
+                    if (!OutResult->NewIdentity[ci]) {
+                        DbgPrint("[AmtPtp] IdentityBreak SUPPRESSED (glitch) pool=%Iu "
+                                 "candX=%u candY=%u lastX=%u lastY=%u\n",
+                                 p, Candidates->Candidates[ci].X, Candidates->Candidates[ci].Y,
+                                 Pool[p].ReportX, Pool[p].ReportY);
+                    }
                 }
 #endif
             } else {
