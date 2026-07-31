@@ -1166,11 +1166,19 @@ PTPCore_ProcessFrame(
             if (framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
                 pCtx->ClickArbitrationPressureCrossed = TRUE;
             }
-            if (pCtx->ForceTouchDragLockout) {
-                // Movement wins, unconditionally, the instant it trips -
-                // a press that's moving is a drag, full stop, regardless
-                // of how hard it's pressed or whether it already crossed
-                // the force-touch threshold earlier this same press.
+            // ORDER FIX: drag-lockout only wins while the press has NOT
+            // yet crossed the force-touch threshold. A hard press
+            // physically flexes the pad and can itself shift the
+            // reported contact position past FORCE_TOUCH_DRAG_LOCKOUT_
+            // DISTANCE - if PressureCrossed is already TRUE at that
+            // point, this is the pressure-flex artifact of a genuine
+            // force touch, not a drag, and must not retroactively
+            // demote it to HARD_TAP. Once pressure has legitimately
+            // crossed, only a fresh press (buttonClickEdge above) can
+            // reset this decision - see log SAKURAMBPRO.log presses at
+            // t=7.95/8.80/11.65/13.36 where pressure crossed BEFORE the
+            // lockout distance did, and force touch silently failed.
+            if (pCtx->ForceTouchDragLockout && !pCtx->ClickArbitrationPressureCrossed) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
             } else if (!pCtx->ClickArbitrationPressureCrossed) {
                 LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
