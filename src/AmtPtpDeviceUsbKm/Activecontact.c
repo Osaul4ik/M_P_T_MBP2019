@@ -44,15 +44,16 @@ typedef enum _CONTACT_VELOCITY_BUCKET
 
 #define SMOOTHING_ALPHA_NUM  3
 #define SMOOTHING_ALPHA_DEN  8
-// AUDIT (adaptive EMA rework - see AmtContactCommitSample): this used to
-// be 2 (25% raw / 75% previous report) - heavy enough that even slow,
-// deliberate cursor movement visibly lagged/sprang behind the finger
-// ("jelly cursor"), which is exactly the speed regime this bucket now
-// governs (EMA is skipped entirely at MEDIUM/FAST - see below). Raised to
-// 6 (75% raw): still pulls in enough of the previous report to smooth out
-// sub-deadzone-adjacent sensor tremor during fine, near-stationary
-// pointing, but no longer produces perceptible trailing lag.
-#define SMOOTHING_ALPHA_NUM_SLOW  6  // light smoothing only, near-stationary
+// TUNING (2026-07-31): user-reported jitter/twitch when aiming slowly and
+// precisely at a small target a few dozen pixels away - raw sensor noise at
+// near-stationary speed was passing through mostly unfiltered at 6 (75%
+// raw). Lowered to 3 (37.5% raw / 62.5% previous report) for noticeably
+// smoother fine positioning. Trade-off: slightly more perceptible lag
+// following the finger at slow speed than at 6 - if that lag becomes
+// bothersome, move this back up toward 5-6; if jitter is still visible,
+// it can go as low as 2 (was the original "jelly cursor" value before the
+// adaptive-EMA rework below, so treat 2 as the practical floor).
+#define SMOOTHING_ALPHA_NUM_SLOW  3  // stronger smoothing, near-stationary
 
 // Scroll delta scale: reports ~70% of the raw per-frame delta during
 // gestureActive frames (SMOOTHING_ALPHA_* has nothing to do with this -
