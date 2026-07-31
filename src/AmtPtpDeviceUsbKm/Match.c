@@ -7,38 +7,15 @@
 // Max per-frame finger movement. Shared with tip-drop anchor search.
 #define MATCH_MAX_CONTINUATION_DELTA 4000
 
-// BUG FIX (spurious origin==0 mid-touch identity churn - see
-// AmtMatchCorrespond below): how far a firmware-flagged "identity break"
-// candidate may land from its matched pool entry's last reported
-// position and still be honored as a genuine new touch. 600 mirrors
-// RETAP_MAX_DISTANCE (Activecontact.h) - the same "still basically the
-// same spot" scale already used elsewhere for a deliberate fast re-tap.
-// Anything beyond this is not a plausible same-finger re-tap distance;
-// see the AUDIT FIX comment at the call site for why that means it's
-// firmware noise, not a second touch.
-#define IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP 600
-
 // Must match MATCH_MAX_CONTINUATION_DELTA to prevent false Confidence=1
 // on fast-but-light drags (soft-drift confidence bug fix).
 #define TIP_DROP_MAX_REPOSITION_DELTA MATCH_MAX_CONTINUATION_DELTA
 
+// Slot-hint used only to break near-ties, never fixed-cost subtraction.
+#define MATCH_TIE_EPSILON_SQ 4  // ~2 units linear distance, squared
+
 // Stationary deadzone for debounce bridge. Real coords if moving.
 #define TIP_DROP_STATIONARY_DELTA       3
-
-// Squared distance in LONGLONG. A plain 32-bit (LONG)dx * dx is fine for
-// the un-predicted last-report distance below (real device coordinates
-// stay well inside a range where that never overflows), but the
-// PREDICTED position (AmtMatchPredictPosition) is clamped to ReportX/Y's
-// full USHORT range and can legitimately reach its edges under fast
-// motion plus a near-max allowed staleness gap (MATCH_MAX_TIME_DELTA_100NS)
-// - at which point a 32-bit squared distance can overflow. Using
-// LONGLONG for both keeps them on the same type (MATCH_EDGE.cost) without
-// needing a separate special case for which one is "safe".
-static LONGLONG
-AmtMatchSquaredDist(_In_ INT Dx, _In_ INT Dy)
-{
-    return (LONGLONG)Dx * Dx + (LONGLONG)Dy * Dy;
-}
 
 static UCHAR
 AmtMatchCandidateTip(_In_ USHORT major, _In_ USHORT minor)
@@ -47,100 +24,29 @@ AmtMatchCandidateTip(_In_ USHORT major, _In_ USHORT minor)
 }
 
 // Third-tier matching tie-break (see AmtMatchCorrespond): when two
-// candidate/pool pairs are tied on both spatial cost and slot-hint
-// match, prefer whichever pairing keeps touch geometry/pressure most
-// similar to what that pool entry last reported.
-//
-// NORMALIZED against DevInfo's own calibrated ranges (previously a raw,
-// unweighted ADC-unit sum - see git history). Major/Minor/Pressure are
-// still different raw units with different native ranges (e.g. width
-// 0..2048 vs pressure 0..300 on a typical panel, per BCM5974_CONFIG), so
-// summing them directly let whichever axis happens to have the larger
-// raw range dominate the tie-break regardless of how much it actually
-// changed, proportionally. Scaling each axis's delta by
-// MATCH_SHAPE_NORM_SCALE/range first (AmtMatchNormalizeDelta) puts all
-// three on the same "percent of that axis's calibrated span" footing
-// before summing - still a plain sum, not a hand-tuned weighted model,
-// but now an apples-to-apples one. Width range is shared by Major and
-// Minor (DevInfo->w) since the hardware reports both on the same raw
-// scale; pressure uses DevInfo->p.
-#define MATCH_SHAPE_NORM_SCALE 256
-
-static LONG
-AmtMatchNormalizeDelta(_In_ INT delta, _In_ INT range)
-{
-    if (delta < 0) delta = -delta;
-    if (range <= 0) range = 1; // guard: degenerate/missing calibration range
-    return ((LONG)delta * MATCH_SHAPE_NORM_SCALE) / range;
-}
-
+// candidate/pool pairs are tied on both spatial cost (within
+// MATCH_TIE_EPSILON_SQ) and slot-hint match, prefer whichever pairing
+// keeps touch geometry/pressure most similar to what that pool entry
+// last reported. This is a plain Manhattan-style sum, not a weighted/
+// normalized model - Major/Minor/Pressure are different raw units, but
+// for a last-resort tie-break among candidates that are already
+// spatially near-identical, "closer on all three, unweighted" is a
+// reasonable cheap heuristic and avoids inventing per-axis weights with
+// no real-device data to justify them.
 static LONG
 AmtMatchShapeDistance(
     _In_ const MATCH_CANDIDATE* Cand,
-    _In_ const ACTIVE_CONTACT*  Contact,
-    _In_ INT                    WidthRange,    // DevInfo->w.max - w.min, caller-hoisted
-    _In_ INT                    PressureRange  // DevInfo->p.max - p.min, caller-hoisted
+    _In_ const ACTIVE_CONTACT*  Contact
 )
 {
-    INT dMajor    = (INT)Cand->Major    - (INT)Contact->LastMajor;
-    INT dMinor    = (INT)Cand->Minor    - (INT)Contact->LastMinor;
+    INT dMajor = (INT)Cand->Major - (INT)Contact->LastMajor;
+    if (dMajor < 0) dMajor = -dMajor;
+    INT dMinor = (INT)Cand->Minor - (INT)Contact->LastMinor;
+    if (dMinor < 0) dMinor = -dMinor;
     INT dPressure = (INT)Cand->Pressure - (INT)Contact->LastPressure;
+    if (dPressure < 0) dPressure = -dPressure;
 
-    return AmtMatchNormalizeDelta(dMajor, WidthRange)
-         + AmtMatchNormalizeDelta(dMinor, WidthRange)
-         + AmtMatchNormalizeDelta(dPressure, PressureRange);
-}
-
-// Clamp a coordinate-space value back into ReportX/Y's USHORT range
-// before truncating - same clamp-before-truncate pattern as
-// AmtContactCommitSample's gesture-scroll branch in ActiveContact.c.
-// Guards AmtMatchPredictPosition against wraparound if a runaway
-// velocity value ever extrapolates outside the representable range.
-static USHORT
-AmtMatchClampCoord(_In_ LONGLONG Value)
-{
-    if (Value < 0)      return 0;
-    if (Value > 0xFFFF) return 0xFFFF;
-    return (USHORT)Value;
-}
-
-// Dead-reckoned prediction: where this pool entry's contact is expected
-// to be RIGHT NOW, extrapolating its last known per-axis velocity
-// (ACTIVE_CONTACT.VelocityX/Y - see AmtContactUpdate in ActiveContact.c)
-// forward by the elapsed time since it was last updated. Falls back
-// exactly to the last reported position whenever there's no reliable
-// velocity/timestamp to extrapolate from (LastSeenQpc==0,
-// PerfFrequencyHz<=0, or - the ordinary case for a stationary or
-// freshly-born contact - VelocityX/Y==0), since the extrapolated delta
-// is then 0. Used ONLY to rank/tie-break matching cost in
-// AmtMatchCorrespond - never for the spatial/time feasibility gate,
-// which stays anchored to the actual last report position, so a noisy
-// single-frame velocity estimate can never widen what's ACCEPTED as a
-// plausible continuation, only how already-accepted candidates rank.
-static VOID
-AmtMatchPredictPosition(
-    _In_  const ACTIVE_CONTACT* Contact,
-    _In_  LONGLONG              NowQpc,
-    _In_  LONGLONG              PerfFrequencyHz,
-    _Out_ USHORT*                PredX,
-    _Out_ USHORT*                PredY
-)
-{
-    LONGLONG deltaX = 0, deltaY = 0;
-
-    if (Contact->LastSeenQpc != 0 && PerfFrequencyHz > 0 &&
-        NowQpc > Contact->LastSeenQpc)
-    {
-        LONGLONG dtTicks = NowQpc - Contact->LastSeenQpc;
-        // velocity (units/sec) * dt (ticks) / freq (ticks/sec) = units.
-        // Multiply before divide for integer precision, same convention
-        // as AmtContactClassifyVelocity in ActiveContact.c.
-        deltaX = ((LONGLONG)Contact->VelocityX * dtTicks) / PerfFrequencyHz;
-        deltaY = ((LONGLONG)Contact->VelocityY * dtTicks) / PerfFrequencyHz;
-    }
-
-    *PredX = AmtMatchClampCoord((LONGLONG)Contact->ReportX + deltaX);
-    *PredY = AmtMatchClampCoord((LONGLONG)Contact->ReportY + deltaY);
+    return (LONG)dMajor + dMinor + dPressure;
 }
 
 VOID
@@ -154,24 +60,6 @@ AmtMatchBuildCandidates(
 {
     *LargePalmDetected = FALSE;
     RtlZeroMemory(OutCandidates, sizeof(MATCH_CANDIDATE_SET));
-
-    // See the matching "multiFingerContext" block in AmtMatchCorrespond
-    // for the full rationale - same signal, computed here too because
-    // the TIP_DROP anchor search below runs BEFORE AmtMatchCorrespond
-    // and needs to make the identical solo-vs-multi-finger call: a
-    // firmware origin==0 contact ("this slot is a fresh identity") must
-    // not be offered a stale pool entry as a debounce anchor when there
-    // is no second finger anywhere in the picture, because outside a
-    // real multi-finger transition there is no slot-renumbering glitch
-    // for that anchor to be compensating for - it would just be a
-    // different finger that happens to share the freed hw slot.
-    UCHAR activePoolCountBc = 0;
-    for (size_t pp = 0; pp < MAX_CONTACTS; pp++) {
-        if (Pool[pp].State == CONTACT_ACTIVE)
-            activePoolCountBc++;
-    }
-    BOOLEAN multiFingerContextBc =
-        (activePoolCountBc >= 2) || (RawFrame->ContactCount >= 2);
 
     for (UCHAR i = 0; i < RawFrame->ContactCount; i++) {
         const RAW_CONTACT* rc = &RawFrame->Contacts[i];
@@ -193,12 +81,6 @@ AmtMatchBuildCandidates(
         cand.Minor         = rc->Minor;
         cand.Pressure      = rc->Pressure;
 
-        // TEMP DIAG (DebugView): every raw contact's firmware Origin and
-        // the IdentityBreak decision derived from it. Remove once the
-        // tap/gesture misfire repro is captured.
-        DbgPrint("[AmtPtp] cand slot=%u origin=%u X=%u Y=%u IdentityBreak=%u\n",
-                 rc->SlotIndex, rc->Origin, rc->X, rc->Y, cand.IdentityBreak);
-
         if (palm == PALM_LOCAL) {
             cand.PalmLocal = TRUE;
             cand.X = rc->X;
@@ -219,23 +101,7 @@ AmtMatchBuildCandidates(
         size_t bestPoolIdx  = MAX_CONTACTS;
         LONG   bestDistSq   = -1;
 
-        // BUG FIX (right-then-left / left-then-right hand-off teleport):
-        // origin==0 in a solo-finger context means firmware itself is
-        // telling us this touch is a fresh identity, not a continuation
-        // of whatever used to own this hw slot - see multiFingerContextBc
-        // above. Refusing an anchor here forces the "no anchor: full-
-        // confidence birth candidate" branch below, which reports this
-        // candidate's real, live coordinates with no borrowed identity
-        // baggage - AmtMatchCorrespond's own multiFingerContext gate then
-        // decides cleanly whether it's a genuine new touch (usual case)
-        // or, if it does end up spatially coinciding with a stale pool
-        // entry, a proper lift+rebirth rather than a silent teleporting
-        // MOVE under the old ContactID.
-        BOOLEAN refuseAnchor = cand.IdentityBreak && !multiFingerContextBc;
-
         for (size_t p = 0; p < MAX_CONTACTS; p++) {
-            if (refuseAnchor)
-                break;
             if (Pool[p].State != CONTACT_ACTIVE)
                 continue;
             if (Pool[p].LastSlotHint != rc->SlotIndex)
@@ -292,150 +158,10 @@ AmtMatchBuildCandidates(
     }
 }
 
-// Per (candidate,pool) edge, precomputed once before the search.
-typedef struct {
-    BOOLEAN  feasible;       // pool active, in-window spatially and in time
-    LONGLONG cost;           // squared distance, primary key - see AmtMatchSquaredDist
-    BOOLEAN  slotHintMatch;  // secondary key
-    LONG     shapeDist;      // tertiary key (see AmtMatchShapeDistance)
-
-    // TWO-PASS FIX (right-then-left / left-then-right stolen-slot
-    // teleport - see the pass1/pass2 split in AmtMatchCorrespond): TRUE
-    // when this edge can only be trusted via the documented BCM5974
-    // renumbering-glitch reasoning - IdentityBreak set AND either solo
-    // context (no glitch mechanism possible at all, see
-    // multiFingerContext) or a jump beyond
-    // IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP. An implausibleBreak edge must
-    // never be allowed to out-compete a normal (non-implausible) edge
-    // for the same pool slot - see rationale below.
-    BOOLEAN  implausibleBreak;
-} MATCH_EDGE;
-
-// Totals for one full candidate->pool assignment (a leaf of the search).
-// Compared lexicographically: more matches beats fewer regardless of cost
-// (a live continuation should never lose to leaving a candidate unmatched
-// just because "unmatched" is cheaper - unmatched means lift+rebirth, which
-// is the expensive outcome from the user's perspective); then lower total
-// squared distance; then more slot-hint agreement; then lower total shape
-// distance. Unlike the old per-pair epsilon compare, this is a real total
-// order - no intransitive "A ties B, B ties C, A doesn't tie C" artifacts,
-// and no dependence on which pair happened to be visited first.
-typedef struct {
-    UCHAR    matchedCount;
-    LONGLONG totalCost;
-    UCHAR slotHintMatches;
-    LONG  totalShapeDist;
-} MATCH_TOTALS;
-
-static BOOLEAN
-AmtMatchTotalsBetter(_In_ const MATCH_TOTALS* a, _In_ const MATCH_TOTALS* b)
-{
-    if (a->matchedCount     != b->matchedCount)     return a->matchedCount     > b->matchedCount;
-    if (a->totalCost        != b->totalCost)        return a->totalCost        < b->totalCost;
-    if (a->slotHintMatches  != b->slotHintMatches)  return a->slotHintMatches  > b->slotHintMatches;
-    return a->totalShapeDist < b->totalShapeDist;
-}
-
-// Exact max-cardinality, min-cost bipartite assignment via bounded
-// backtracking. Candidates and pool are both capped at PTP_MAX_CONTACT_POINTS
-// (5 on real hardware), so this explores at most (MAX_CONTACTS+1)^Count
-// leaves (<= 6^5 = 7776) - a handful of microseconds, and a fixed, provably
-// terminating bound (no recursion depth beyond Candidates->Count, no
-// allocation). That trivial cost is what buys correctness: unlike the old
-// greedy pass, this always finds the assignment that is actually best by
-// the rules above, so a jitter-sized cost difference between two crossing
-// candidates can no longer make the wrong one "grab" a pool slot first and
-// starve the correct match.
-//
-// BRANCH-AND-BOUND: once a first leaf is found, every subsequent call
-// prunes if this partial assignment provably cannot produce a better
-// leaf than BestTotals - see the two checks below. The bound on
-// remaining matches is deliberately loose (CandCount - Ci, ignoring
-// pool-claimed/feasibility overlap among the remaining candidates) so it
-// stays correct - cheap to compute - as a safe upper bound rather than
-// an exact one: pruning must never discard a subtree that could still
-// win. Doesn't change the result (still the exact same total order as
-// an unpruned search), only how many of the <=7776 leaves get visited.
-static VOID
-AmtMatchSearch(
-    _In_    const MATCH_EDGE (*Edges)[MAX_CONTACTS],
-    _In_    UCHAR             CandCount,
-    _In_    UCHAR              Ci,
-    _Inout_ BOOLEAN*          PoolClaimed,
-    _Inout_ size_t*           Assignment,      // working assignment, per candidate
-    _Inout_ MATCH_TOTALS*     RunningTotals,
-    _Inout_ size_t*           BestAssignment,
-    _Inout_ MATCH_TOTALS*     BestTotals,
-    _Inout_ BOOLEAN*          BestFound
-)
-{
-    if (Ci == CandCount) {
-        if (!*BestFound || AmtMatchTotalsBetter(RunningTotals, BestTotals)) {
-            *BestFound = TRUE;
-            *BestTotals = *RunningTotals;
-            RtlCopyMemory(BestAssignment, Assignment, CandCount * sizeof(size_t));
-        }
-        return;
-    }
-
-    if (*BestFound) {
-        // Safe (possibly loose) upper bound on matchedCount reachable
-        // from here: every remaining candidate matches something.
-        UCHAR maxPossibleMatched =
-            (UCHAR)(RunningTotals->matchedCount + (CandCount - Ci));
-
-        if (maxPossibleMatched < BestTotals->matchedCount) {
-            // Every completion from here scores lower on the primary
-            // (matchedCount) key alone - can never catch up.
-            return;
-        }
-        if (maxPossibleMatched == BestTotals->matchedCount &&
-            RunningTotals->totalCost > BestTotals->totalCost)
-        {
-            // Best case this subtree can tie the primary key, but costs
-            // only accumulate (every Edge cost is >= 0, never
-            // subtracted before a leaf), so totalCost can only grow from
-            // here - already behind BestTotals on the secondary key too,
-            // so no completion of this branch can beat it.
-            return;
-        }
-    }
-
-    // Branch: leave this candidate unmatched (always a valid option).
-    Assignment[Ci] = MATCH_NO_CORRESPONDENCE;
-    AmtMatchSearch(Edges, CandCount, Ci + 1, PoolClaimed, Assignment,
-                   RunningTotals, BestAssignment, BestTotals, BestFound);
-
-    // Branch: try every still-free, feasible pool entry for this candidate.
-    for (size_t p = 0; p < MAX_CONTACTS; p++) {
-        if (PoolClaimed[p] || !Edges[Ci][p].feasible)
-            continue;
-
-        PoolClaimed[p] = TRUE;
-        Assignment[Ci] = p;
-
-        RunningTotals->matchedCount++;
-        RunningTotals->totalCost        += Edges[Ci][p].cost;
-        RunningTotals->slotHintMatches  += Edges[Ci][p].slotHintMatch ? 1 : 0;
-        RunningTotals->totalShapeDist   += Edges[Ci][p].shapeDist;
-
-        AmtMatchSearch(Edges, CandCount, Ci + 1, PoolClaimed, Assignment,
-                       RunningTotals, BestAssignment, BestTotals, BestFound);
-
-        RunningTotals->matchedCount--;
-        RunningTotals->totalCost        -= Edges[Ci][p].cost;
-        RunningTotals->slotHintMatches  -= Edges[Ci][p].slotHintMatch ? 1 : 0;
-        RunningTotals->totalShapeDist   -= Edges[Ci][p].shapeDist;
-
-        PoolClaimed[p] = FALSE;
-    }
-}
-
 VOID
 AmtMatchCorrespond(
     _In_  const MATCH_CANDIDATE_SET*               Candidates,
     _In_reads_(MAX_CONTACTS) const ACTIVE_CONTACT*  Pool,
-    _In_  const struct BCM5974_CONFIG*               DevInfo,
     _In_  LONGLONG                                  NowQpc,
     _In_  LONGLONG                                  PerfFrequencyHz,
     _Out_ MATCH_RESULT*                              OutResult
@@ -443,94 +169,19 @@ AmtMatchCorrespond(
 {
     RtlZeroMemory(OutResult, sizeof(MATCH_RESULT));
 
-    for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
-        OutResult->CorrespondingPoolIndex[ci] = MATCH_NO_CORRESPONDENCE;
-    }
+    BOOLEAN poolClaimed[MAX_CONTACTS];
+    RtlZeroMemory(poolClaimed, sizeof(poolClaimed));
 
-    // ROOT-CAUSE FIX (single-finger sequential teleport/pinch misfire):
-    // the IdentityBreak "glitch" suppression below (IDENTITY_BREAK_MAX_
-    // PLAUSIBLE_JUMP) was written for ONE specific, documented mechanism:
-    // a BCM5974/T2 internal slot RENUMBERING glitch that only happens
-    // "during multi-finger transitions" (2nd/3rd/4th finger joining or
-    // leaving) - see the AUDIT FIX comment below. In that mechanism the
-    // SAME physical finger is still down and still present in the
-    // current frame; only its slot tag glitches for one frame. The
-    // distance-based heuristic (>600 units = "must be the glitch, not a
-    // real new touch") is only valid under that precondition.
-    //
-    // The code never actually checked that precondition, so it also
-    // fired for an unrelated situation with the same surface shape
-    // (IdentityBreak + a large jump): finger A lifts, finger B touches
-    // down elsewhere, and the hardware reuses A's now-free hw slot for B
-    // (LastSlotHint tracks touch ORDER, not which finger - see Match.h).
-    // That is a strictly single-finger-at-a-time sequence (right-then-
-    // left / left-then-right repro), not a multi-finger transition, so
-    // it can't be the documented renumbering glitch - yet the old code
-    // suppressed the identity break anyway, because a far jump looks
-    // identical in both cases. That kept B's real coordinates bound to
-    // A's old ContactID, which is exactly the teleport Windows' PTP
-    // stack reads as an instant pinch/zoom.
-    //
-    // Fix: only trust "large jump -> glitch, suppress" when the pool
-    // actually had >=2 concurrently active contacts going into this
-    // frame, or >=2 are being reported this frame - i.e. a genuine
-    // multi-finger transition, matching the mechanism this heuristic was
-    // built for. Outside that context, origin==0 is honored
-    // unconditionally: a solo finger's slot has nothing else to be
-    // renumbered against, so there's no glitch case left to protect
-    // against, and a big jump simply means a different finger arrived -
-    // exactly what NewIdentity exists for (clean UP on the old id, fresh
-    // DOWN on the new one).
-    UCHAR activePoolCount = 0;
-    for (size_t p = 0; p < MAX_CONTACTS; p++) {
-        if (Pool[p].State == CONTACT_ACTIVE)
-            activePoolCount++;
-    }
-    BOOLEAN multiFingerContext =
-        (activePoolCount >= 2) || (Candidates->Count >= 2);
-
-    // Precompute the dead-reckoned predicted position ONCE per pool entry,
-    // outside the (candidate, pool) double loop below. AmtMatchPredictPosition
-    // depends only on `p` (the pool entry), never on which candidate `ci`
-    // is being considered against it - computing it inside that loop would
-    // redo the exact same 64-bit divide for every candidate that happens
-    // to be a spatial fit for the same fast-moving slot (up to
-    // Candidates->Count times over for the busiest one, vs. once here).
-    // Skipped entirely for a stationary/fresh contact (Velocity==0, the
-    // common case): the result would just be ReportX/Y unchanged anyway,
-    // so this avoids two wasted divides per pool entry in that case too.
-    USHORT predictedX[MAX_CONTACTS];
-    USHORT predictedY[MAX_CONTACTS];
-    for (size_t p = 0; p < MAX_CONTACTS; p++) {
-        if (Pool[p].State != CONTACT_ACTIVE)
-            continue;
-
-        if (Pool[p].VelocityX == 0 && Pool[p].VelocityY == 0) {
-            predictedX[p] = Pool[p].ReportX;
-            predictedY[p] = Pool[p].ReportY;
-        } else {
-            AmtMatchPredictPosition(&Pool[p], NowQpc, PerfFrequencyHz,
-                                    &predictedX[p], &predictedY[p]);
-        }
-    }
-
-    // Precompute DevInfo's calibrated ranges ONCE - these only depend on
-    // DevInfo, which is constant for this whole call, but
-    // AmtMatchShapeDistance used to recompute the same two subtractions
-    // on every (candidate, pool) pair (up to Candidates->Count *
-    // MAX_CONTACTS times).
-    INT widthRange    = DevInfo->w.max - DevInfo->w.min; // Major/Minor share this scale
-    INT pressureRange = DevInfo->p.max - DevInfo->p.min;
-
-    // Build the feasibility/cost edge for every (candidate, pool) pair up
-    // front. PalmLocal candidates never participate - their row is left
-    // all-infeasible so the search skips them, same as the old code's
-    // "continue" before it ever built a pair for them.
-    MATCH_EDGE edges[PTP_MAX_CONTACT_POINTS][MAX_CONTACTS];
-    RtlZeroMemory(edges, sizeof(edges));
+    // Greedy minimum-cost assignment (N,M <= 5).
+    typedef struct { UCHAR candIdx; size_t poolIdx; LONG cost; BOOLEAN slotHintMatch; } PAIR;
+    PAIR pairs[PTP_MAX_CONTACT_POINTS * MAX_CONTACTS];
+    UCHAR pairCount = 0;
 
     for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
         const MATCH_CANDIDATE* cand = &Candidates->Candidates[ci];
+
+        OutResult->CorrespondingPoolIndex[ci] = MATCH_NO_CORRESPONDENCE;
+
         if (cand->PalmLocal)
             continue;
 
@@ -538,311 +189,131 @@ AmtMatchCorrespond(
             if (Pool[p].State != CONTACT_ACTIVE)
                 continue;
 
-            // Feasibility gate stays anchored to the ACTUAL last report
-            // position, unchanged - dead-reckoned prediction (below) only
-            // ever affects ranking among pairs that already pass this.
             INT dx = (INT)cand->X - (INT)Pool[p].ReportX;
             INT dy = (INT)cand->Y - (INT)Pool[p].ReportY;
-            LONGLONG dist = AmtMatchSquaredDist(dx, dy);
+            LONG dist = (LONG)dx * dx + (LONG)dy * dy; // squared distance
 
-            // Spatial rejection - implausible jump, not a real continuation.
-            BOOLEAN spatialReject = dist >
-                (LONGLONG)MATCH_MAX_CONTINUATION_DELTA * MATCH_MAX_CONTINUATION_DELTA;
-
-            // Time-domain rejection. LastSeenQpc=0 -> never updated, skip check.
-            BOOLEAN timeReject = FALSE;
-            if (Pool[p].LastSeenQpc != 0 && PerfFrequencyHz > 0) {
-                LONGLONG deltaTicks = NowQpc - Pool[p].LastSeenQpc;
-                LONGLONG maxTicks   = (MATCH_MAX_TIME_DELTA_100NS * PerfFrequencyHz) / 10000000LL;
-                timeReject = (NowQpc < Pool[p].LastSeenQpc) || (deltaTicks > maxTicks);
-            }
-
-            if (spatialReject || timeReject)
-                continue; // edge stays feasible=FALSE (RtlZeroMemory default)
-
-            // Ranking cost: distance to the dead-reckoned PREDICTED
-            // position (precomputed above), not the stale last-report
-            // position. Collapses to the same `dist` computed above
-            // whenever velocity is 0/unknown (stationary or fresh
-            // contact), so this only changes anything for a contact that
-            // was actually moving at a steady rate. NOT gated by
-            // spatialReject above - a fast, legitimately-moving contact
-            // can predict well past MATCH_MAX_CONTINUATION_DELTA from its
-            // last report, which is exactly the case this ranking cost
-            // exists to get right - only the LONGLONG width
-            // (AmtMatchSquaredDist) needs to keep up with that.
-            INT pdx = (INT)cand->X - (INT)predictedX[p];
-            INT pdy = (INT)cand->Y - (INT)predictedY[p];
-            LONGLONG predictedCost = AmtMatchSquaredDist(pdx, pdy);
-
-            edges[ci][p].feasible      = TRUE;
-            edges[ci][p].cost          = predictedCost;
-            edges[ci][p].slotHintMatch = (cand->SlotIndex == Pool[p].LastSlotHint);
-            edges[ci][p].shapeDist     = AmtMatchShapeDistance(cand, &Pool[p], widthRange, pressureRange);
-
-            // See MATCH_EDGE.implausibleBreak. Mirrors exactly the
-            // trust decision the post-processing loop below makes for
-            // NewIdentity, computed here too so the SEARCH itself can
-            // refuse to let this edge win a pool slot away from a
-            // cheaper, non-implausible competitor - see the pass1/pass2
-            // split below for why the search needs this, not just the
-            // post-hoc decision.
-            if (cand->IdentityBreak) {
-                if (!multiFingerContext) {
-                    edges[ci][p].implausibleBreak = TRUE;
-                } else {
-                    INT ibDx = (INT)cand->X - (INT)Pool[p].ReportX;
-                    INT ibDy = (INT)cand->Y - (INT)Pool[p].ReportY;
-                    if (ibDx < 0) ibDx = -ibDx;
-                    if (ibDy < 0) ibDy = -ibDy;
-                    edges[ci][p].implausibleBreak =
-                        (ibDx > IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP ||
-                         ibDy > IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP);
-                }
-            }
+            pairs[pairCount].candIdx       = ci;
+            pairs[pairCount].poolIdx       = p;
+            pairs[pairCount].cost          = dist;
+            pairs[pairCount].slotHintMatch = (cand->SlotIndex == Pool[p].LastSlotHint);
+            pairCount++;
         }
     }
 
-    // TWO-PASS SEARCH (real fix for the right-then-left / left-then-right
-    // sequential-teleport repro - see the DebugView capture where a far,
-    // IdentityBreak-flagged second-finger candidate won a pool slot away
-    // from the near candidate that was that pool entry's actual, obvious
-    // continuation).
-    //
-    // A single exact search over ALL edges together is provably correct
-    // for "maximize matched count, then minimize cost" - but that is the
-    // wrong objective whenever an implausibleBreak edge is in play: an
-    // implausibleBreak edge exists ONLY to rescue a pool entry that would
-    // otherwise be lost to a genuine BCM5974 renumbering-glitch frame
-    // (see AUDIT FIX below), never to compete on equal footing for a pool
-    // slot that a normal, spatially-sane candidate already fits. But
-    // "matchedCount" alone can't tell those two situations apart - from
-    // the optimizer's point of view, claiming pool0 via the implausible
-    // 3700-unit-away candidate "counts" exactly the same as claiming it
-    // via the plausible 5-unit-away one, and if doing so lets some OTHER
-    // (e.g. stale/duplicate) pool entry also get consumed, the single-
-    // pass search will happily take that trade - stealing pool0's real
-    // continuation and forcing it to birth as a brand new ContactID
-    // instead, which is precisely the teleport/misfire in the repro.
-    //
-    // Fix: split into two independent searches. Pass 1 runs with every
-    // implausibleBreak edge forced infeasible - i.e. "what's the best
-    // assignment achievable using only spatially-sane edges." This lets
-    // every normal candidate claim its obvious match first, with zero
-    // knowledge of or competition from any implausible one. Pass 2 then
-    // retries ONLY the candidates pass 1 left unmatched, against ONLY the
-    // pool entries pass 1 left unclaimed, this time with implausibleBreak
-    // edges allowed - this is exactly the rescue mechanism the glitch
-    // handling was meant to be: it can only ever bind to a pool slot that
-    // nothing better already wanted, never steal one out from under a
-    // better-fitting candidate. The true multi-finger renumbering glitch
-    // (AUDIT FIX below) still works unchanged - that pool entry has no
-    // competing plausible candidate in the first place, so it survives
-    // pass 1 unclaimed and pass 2 rescues it exactly as before.
-    size_t  bestAssignment[PTP_MAX_CONTACT_POINTS];
-    BOOLEAN poolClaimedFinal[MAX_CONTACTS];
-    for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
-        bestAssignment[ci] = MATCH_NO_CORRESPONDENCE;
-    }
-    RtlZeroMemory(poolClaimedFinal, sizeof(poolClaimedFinal));
+    // Greedy matching by ascending cost. Slot-hint tie-breaker within epsilon.
+    BOOLEAN pairUsed[PTP_MAX_CONTACT_POINTS * MAX_CONTACTS];
+    RtlZeroMemory(pairUsed, sizeof(pairUsed));
 
-    if (Candidates->Count > 0) {
-        // --- Pass 1: plausible edges only. ---
-        MATCH_EDGE edgesPass1[PTP_MAX_CONTACT_POINTS][MAX_CONTACTS];
-        RtlCopyMemory(edgesPass1, edges, sizeof(edges));
-        for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
-            for (size_t p = 0; p < MAX_CONTACTS; p++) {
-                if (edgesPass1[ci][p].implausibleBreak)
-                    edgesPass1[ci][p].feasible = FALSE;
-            }
-        }
+    BOOLEAN candClaimed[PTP_MAX_CONTACT_POINTS];
+    RtlZeroMemory(candClaimed, sizeof(candClaimed));
 
-        size_t       assignment1[PTP_MAX_CONTACT_POINTS];
-        BOOLEAN      poolClaimed1[MAX_CONTACTS];
-        MATCH_TOTALS runningTotals1, bestTotals1;
-        BOOLEAN      bestFound1 = FALSE;
-        for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
-            assignment1[ci] = MATCH_NO_CORRESPONDENCE;
-        }
-        RtlZeroMemory(poolClaimed1, sizeof(poolClaimed1));
-        RtlZeroMemory(&runningTotals1, sizeof(runningTotals1));
-        RtlZeroMemory(&bestTotals1, sizeof(bestTotals1));
+    for (UCHAR pick = 0; pick < pairCount; pick++) {
+        LONG    bestCost          = -1;
+        UCHAR   bestIdx           = 0;
+        BOOLEAN bestSlotHintMatch = FALSE;
+        LONG    bestShapeDist     = 0;
+        BOOLEAN found             = FALSE;
 
-        AmtMatchSearch(edgesPass1, Candidates->Count, 0, poolClaimed1, assignment1,
-                       &runningTotals1, bestAssignment, &bestTotals1, &bestFound1);
+        for (UCHAR k = 0; k < pairCount; k++) {
+            if (pairUsed[k]) continue;
+            if (candClaimed[pairs[k].candIdx]) continue;
+            if (poolClaimed[pairs[k].poolIdx]) continue;
 
-        if (bestFound1) {
-            for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
-                if (bestAssignment[ci] != MATCH_NO_CORRESPONDENCE)
-                    poolClaimedFinal[bestAssignment[ci]] = TRUE;
-            }
-        }
-
-        // --- Pass 2: rescue leftovers with implausibleBreak edges,
-        // restricted to candidates pass 1 didn't match and pool entries
-        // pass 1 didn't claim. ---
-        MATCH_EDGE edgesPass2[PTP_MAX_CONTACT_POINTS][MAX_CONTACTS];
-        RtlCopyMemory(edgesPass2, edges, sizeof(edges));
-        for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
-            if (bestAssignment[ci] != MATCH_NO_CORRESPONDENCE) {
-                // Already matched in pass 1 - remove from pass 2 entirely.
-                for (size_t p = 0; p < MAX_CONTACTS; p++) {
-                    edgesPass2[ci][p].feasible = FALSE;
-                }
+            if (!found) {
+                bestCost          = pairs[k].cost;
+                bestIdx           = k;
+                bestSlotHintMatch = pairs[k].slotHintMatch;
+                bestShapeDist     = AmtMatchShapeDistance(
+                    &Candidates->Candidates[pairs[k].candIdx], &Pool[pairs[k].poolIdx]);
+                found             = TRUE;
                 continue;
             }
-            for (size_t p = 0; p < MAX_CONTACTS; p++) {
-                if (poolClaimedFinal[p])
-                    edgesPass2[ci][p].feasible = FALSE;
+
+            LONG delta = pairs[k].cost - bestCost;
+            BOOLEAN withinEpsilon = (delta > -MATCH_TIE_EPSILON_SQ) &&
+                                    (delta < MATCH_TIE_EPSILON_SQ);
+
+            if (pairs[k].cost < bestCost && !withinEpsilon) {
+                bestCost          = pairs[k].cost;
+                bestIdx           = k;
+                bestSlotHintMatch = pairs[k].slotHintMatch;
+                bestShapeDist     = AmtMatchShapeDistance(
+                    &Candidates->Candidates[pairs[k].candIdx], &Pool[pairs[k].poolIdx]);
+            } else if (withinEpsilon && pairs[k].slotHintMatch && !bestSlotHintMatch) {
+                bestCost          = pairs[k].cost;
+                bestIdx           = k;
+                bestSlotHintMatch = TRUE;
+                bestShapeDist     = AmtMatchShapeDistance(
+                    &Candidates->Candidates[pairs[k].candIdx], &Pool[pairs[k].poolIdx]);
+            } else if (withinEpsilon && pairs[k].slotHintMatch == bestSlotHintMatch) {
+                // Cost and slot-hint both tied - fall through to shape.
+                LONG kShapeDist = AmtMatchShapeDistance(
+                    &Candidates->Candidates[pairs[k].candIdx], &Pool[pairs[k].poolIdx]);
+                if (kShapeDist < bestShapeDist) {
+                    bestCost      = pairs[k].cost;
+                    bestIdx       = k;
+                    bestShapeDist = kShapeDist;
+                    // bestSlotHintMatch unchanged - already equal to pairs[k]'s.
+                }
             }
         }
 
-        size_t       assignment2[PTP_MAX_CONTACT_POINTS];
-        size_t       bestAssignment2[PTP_MAX_CONTACT_POINTS];
-        BOOLEAN      poolClaimed2[MAX_CONTACTS];
-        MATCH_TOTALS runningTotals2, bestTotals2;
-        BOOLEAN      bestFound2 = FALSE;
-        for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
-            assignment2[ci]     = MATCH_NO_CORRESPONDENCE;
-            bestAssignment2[ci] = MATCH_NO_CORRESPONDENCE;
+        if (!found)
+            break;
+
+        pairUsed[bestIdx]                 = TRUE;
+        UCHAR  ci = pairs[bestIdx].candIdx;
+        size_t p  = pairs[bestIdx].poolIdx;
+
+        // Reject implausible matches.
+        BOOLEAN spatialReject = pairs[bestIdx].cost >
+            (LONG)MATCH_MAX_CONTINUATION_DELTA * MATCH_MAX_CONTINUATION_DELTA;
+
+        // Time-domain rejection. LastSeenQpc=0 -> never updated, skip time check.
+        BOOLEAN timeReject = FALSE;
+        if (Pool[p].LastSeenQpc != 0 && PerfFrequencyHz > 0) {
+            LONGLONG deltaTicks = NowQpc - Pool[p].LastSeenQpc;
+            LONGLONG maxTicks   = (MATCH_MAX_TIME_DELTA_100NS * PerfFrequencyHz) / 10000000LL;
+            timeReject = (NowQpc < Pool[p].LastSeenQpc) || (deltaTicks > maxTicks);
         }
-        RtlZeroMemory(poolClaimed2, sizeof(poolClaimed2));
-        RtlZeroMemory(&runningTotals2, sizeof(runningTotals2));
-        RtlZeroMemory(&bestTotals2, sizeof(bestTotals2));
 
-        AmtMatchSearch(edgesPass2, Candidates->Count, 0, poolClaimed2, assignment2,
-                       &runningTotals2, bestAssignment2, &bestTotals2, &bestFound2);
-
-        if (bestFound2) {
-            for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
-                if (bestAssignment2[ci] == MATCH_NO_CORRESPONDENCE)
-                    continue;
-                bestAssignment[ci] = bestAssignment2[ci];
-                poolClaimedFinal[bestAssignment2[ci]] = TRUE;
-            }
-        }
-    }
-
-    for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
-        if (bestAssignment[ci] == MATCH_NO_CORRESPONDENCE)
+        // BUG FIX (lost continuation on a rejected best-cost pair): this
+        // used to set candClaimed[ci] = TRUE here, which permanently
+        // burned the CANDIDATE, not just this one pair. pairUsed[bestIdx]
+        // above already makes sure this exact (candidate,pool) pair is
+        // never picked again - that's sufficient. Leaving candClaimed[ci]
+        // FALSE lets the outer greedy loop reconsider this same candidate
+        // against a DIFFERENT, still-unclaimed pool entry on a later
+        // pick, which is the whole point of doing this by ascending cost:
+        // the cheapest pairing can be implausible (a stale/out-of-window
+        // pool entry, or a spurious spatial jump) while a slightly more
+        // expensive, still-legitimate pairing exists for the very same
+        // physical finger. Previously, whichever pair happened to sort
+        // first ate the candidate outright, forcing a spurious lift+rebirth
+        // (new ContactID) for a finger that was still on the pad -
+        // visible as a broken drag, an interrupted multi-finger gesture,
+        // or a finger that drops out of a tap/double-tap sequence Windows
+        // was tracking by ContactID. poolClaimed[p] is intentionally left
+        // untouched either way - a rejected pool entry stays available for
+        // a different candidate to match.
+        if (spatialReject || timeReject) {
             continue;
+        }
 
-        size_t p = bestAssignment[ci];
+        candClaimed[ci] = TRUE;
+        poolClaimed[p]  = TRUE;
 
         OutResult->CorrespondingPoolIndex[ci] = p;
-
-            // AUDIT FIX (spurious origin==0 mid-touch identity churn):
-            // firmware's Origin byte reports 0 ("identity break") in two
-            // very different real situations that look identical here -
-            // (a) a genuine fast lift+re-tap landing back near the same
-            // spot, which Ptpcore.c's NewIdentity(origin==0) path exists
-            // to turn into a clean UP+DOWN pair for Windows' tap/
-            // double-tap recognizer (the intended case), and (b) a T2/
-            // BCM5974 internal slot-reassignment glitch - confirmed via
-            // DebugView repro (SAKURAMBPRO.log): every multi-finger
-            // transition (2nd/3rd/4th finger joining or leaving) can make
-            // the controller re-tag an ALREADY-ACTIVE, never-lifted
-            // finger's slot with origin==0 for exactly one frame, paired
-            // with a garbage position 1000-2500+ raw units from where
-            // that same finger was reporting one frame earlier - nowhere
-            // near a real finger's per-frame travel distance. The old
-            // code trusted the flag unconditionally: forced a kill of the
-            // correctly-tracked contact and a rebirth at that garbage
-            // position, mid-gesture. Each rebirth is a brand-new
-            // ContactID at a teleported position, which resets whatever
-            // velocity/momentum Windows' PTP stack was accumulating for
-            // that finger - repeated throughout a 2-finger scroll, this
-            // is consistent with the reported "very slow scroll, no
-            // inertia" (momentum never has a clean, continuous trajectory
-            // to compute from) and, during quick re-taps, with "double
-            // soft tap doesn't work" (the second tap's REAL finger
-            // position gets discarded in favor of the glitch position).
-            //
-            // Fix: only honor IdentityBreak as authoritative when the
-            // candidate's position is within IDENTITY_BREAK_MAX_PLAUSIBLE_
-            // JUMP of the matched pool entry's last reported position -
-            // i.e. a real "still basically the same spot" re-tap. Beyond
-            // that distance, this candidate already won the spatial
-            // match (bestAssignment) on its own merits - the match search
-            // above only pairs candidates within MATCH_MAX_CONTINUATION_
-            // DELTA (4000) of the pool entry's last position AND inside
-            // MATCH_MAX_TIME_DELTA_100NS of its last-seen time in the
-            // first place - so this is not "accept an implausible jump
-            // instead of rejecting it," it's "stop treating an
-            // already-accepted continuation as a brand-new identity just
-            // because of a firmware flag with no reasoning documented for
-            // why it should override spatial continuity."
-            if (Candidates->Candidates[ci].IdentityBreak) {
-#if AMT_RAW_DISABLE_IDENTITY_BREAK_FIX
-                // RAW MODE: trust the firmware's IdentityBreak flag
-                // unconditionally, exactly like before the plausible-
-                // jump fix below existed - no suppression at all.
-                OutResult->NewIdentity[ci] = TRUE;
-#else
-                if (!multiFingerContext) {
-                    // Solo-finger context: the documented renumbering
-                    // glitch cannot occur (see multiFingerContext
-                    // comment above) - trust firmware unconditionally,
-                    // regardless of jump distance.
-                    OutResult->NewIdentity[ci] = TRUE;
-                } else {
-                    INT ibDx = (INT)Candidates->Candidates[ci].X - (INT)Pool[p].ReportX;
-                    INT ibDy = (INT)Candidates->Candidates[ci].Y - (INT)Pool[p].ReportY;
-                    if (ibDx < 0) ibDx = -ibDx;
-                    if (ibDy < 0) ibDy = -ibDy;
-
-                    OutResult->NewIdentity[ci] =
-                        (ibDx <= IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP &&
-                         ibDy <= IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP);
-
-                    if (!OutResult->NewIdentity[ci]) {
-                        // REAL FIX (single/two-finger sequential teleport,
-                        // right-then-left vs left-then-right repro): this
-                        // branch used to ONLY suppress the identity churn
-                        // (no new ContactID) and stop there - but nothing
-                        // downstream stopped Ptpcore.c's Phase C from
-                        // still feeding this candidate's raw (ibDx/ibDy-
-                        // implausible) X/Y into AmtContactUpdate for pool
-                        // index p. So the pool entry kept its ContactID
-                        // *and* got silently relocated by up to ~4000
-                        // units in one frame anyway - a real, visible
-                        // cursor teleport, just without the extra spurious
-                        // UP/DOWN pair. That teleport is exactly what
-                        // Windows' PTP stack reads as an instant two-
-                        // finger pinch and fires the zoom/context-menu
-                        // gesture for - matching the reported repro.
-                        // Flagging PositionSuppressed here lets Ptpcore.c
-                        // hold the pool entry's existing ReportX/Y instead
-                        // for this one frame, which is correct either way
-                        // this candidate is interpreted: if it's really
-                        // the documented renumbering glitch, the position
-                        // was garbage and should never have been applied;
-                        // if it's a genuinely new second finger that only
-                        // ended up here because it was the sole feasible
-                        // partner left for this pool slot, freezing the
-                        // old finger's position for one frame is still far
-                        // less wrong than teleporting it - and the new
-                        // finger's own real position is not lost, it
-                        // simply births its own contact next frame once it
-                        // stops being the only feasible match for this slot.
-                        OutResult->PositionSuppressed[ci] = TRUE;
-                        DbgPrint("[AmtPtp] IdentityBreak SUPPRESSED (glitch) pool=%Iu "
-                                 "candX=%u candY=%u lastX=%u lastY=%u\n",
-                                 p, Candidates->Candidates[ci].X, Candidates->Candidates[ci].Y,
-                                 Pool[p].ReportX, Pool[p].ReportY);
-                    }
-                }
-#endif
-        } else {
-            OutResult->NewIdentity[ci] = FALSE;
-        }
+        OutResult->NewIdentity[ci] =
+            Candidates->Candidates[ci].IdentityBreak ? TRUE : FALSE;
     }
 
     // Unclaimed -> lift.
     for (size_t p = 0; p < MAX_CONTACTS; p++) {
         if (Pool[p].State != CONTACT_ACTIVE)
             continue;
-        if (!poolClaimedFinal[p]) {
+        if (!poolClaimed[p]) {
             OutResult->UnmatchedPoolIndices[OutResult->UnmatchedCount++] = p;
         }
     }

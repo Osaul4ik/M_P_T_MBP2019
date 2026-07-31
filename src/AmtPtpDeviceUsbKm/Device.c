@@ -59,20 +59,6 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     deviceContext->PtpReportButton = TRUE;
     deviceContext->PtpReportTouch  = TRUE;
 
-    // AUDIT FIX (data race): see the StateLock comment in Device.h.
-    // Parented to the device so WDF tears it down automatically; no
-    // explicit delete needed.
-    {
-        WDF_OBJECT_ATTRIBUTES lockAttributes;
-        WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
-        lockAttributes.ParentObject = device;
-
-        status = WdfSpinLockCreate(&lockAttributes, &deviceContext->StateLock);
-        if (!NT_SUCCESS(status)) {
-            return status;
-        }
-    }
-
     status = WdfDeviceCreateDeviceInterface(
         device, &GUID_DEVINTERFACE_AmtPtpDeviceUsbKm, NULL);
 
@@ -159,19 +145,6 @@ AmtPtpEvtDeviceD0Entry(
 
     pDeviceContext->LastReportTime =
         KeQueryPerformanceCounter(&pDeviceContext->PerfFrequency);
-    // SCANTIME FIX: reseed the free-running ScanTime accumulator alongside
-    // LastReportTime, so each new session starts the hardware-clock
-    // counter back at 0 rather than carrying over a stale wrap point.
-    pDeviceContext->ScanTimeAccumulator = 0;
-
-    // AUDIT FIX (data race): same StateLock as
-    // AmtPtpEvtUsbInterruptPipeReadComplete - the interrupt pipe isn't
-    // started again until after this reset (WdfIoTargetStart below), but
-    // WdfIoTargetStop on the way into D0Exit only guarantees outstanding
-    // I/O is cancelled, not that a completion routine already running on
-    // another CPU has finished touching these fields. Taking the lock here
-    // closes that window.
-    WdfSpinLockAcquire(pDeviceContext->StateLock);
 
     // Reseed ContactID counter and reset the contact pool on D0Entry.
     // Prevents stale ContactIDs from surviving sleep/wake cycles.
@@ -179,7 +152,6 @@ AmtPtpEvtDeviceD0Entry(
     pDeviceContext->NextContactId        = 0;
     pDeviceContext->OverflowCount        = 0;
     pDeviceContext->PrevButtonClicked    = FALSE;
-    pDeviceContext->ButtonDebounceFrames = 0;
     pDeviceContext->ForceTouchActive     = FALSE;
     pDeviceContext->ForceTouchAnchorValid = FALSE;
     pDeviceContext->ForceTouchDragLockout = FALSE;
@@ -195,8 +167,6 @@ AmtPtpEvtDeviceD0Entry(
     // Zero RecentLifts on D0Entry to prevent stale retap-smoothing
     // hints from a previous power session.
     RtlZeroMemory(&pDeviceContext->RecentLifts, sizeof(pDeviceContext->RecentLifts));
-
-    WdfSpinLockRelease(pDeviceContext->StateLock);
 
     // Wellspring-mode failure here is intentionally non-fatal - status is
     // deliberately NOT propagated, only the WdfIoTargetStart result below

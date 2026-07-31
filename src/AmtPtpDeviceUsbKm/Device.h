@@ -9,17 +9,16 @@ EXTERN_C_START
 
 // Force-touch vs hard-tap click arbitration (Ptpcore.c). While the
 // mechanical button is held, the ordinary click report is withheld
-// (state stays PENDING) until either the drag lockout trips (committing
-// HARD_TAP immediately) or the button is released - force touch itself
-// is decided ONLY at release, never live during the hold, so it can
-// never fire underneath / alongside an ordinary click. See
-// ClickArbitration* fields below.
+// until PTPCore can tell whether the press is turning into a force
+// touch (deep press) or staying an ordinary click - so a force touch
+// never also fires a regular click underneath it. See ClickArbitration*
+// fields below.
 typedef enum _CLICK_ARBITRATION_STATE
 {
     CLICK_ARBITRATION_IDLE = 0,    // button not down
     CLICK_ARBITRATION_PENDING,     // button down, still deciding
     CLICK_ARBITRATION_HARD_TAP,    // decided: ordinary click - report it
-    CLICK_ARBITRATION_FORCE_TOUCH  // decided at release: force touch pulse
+    CLICK_ARBITRATION_FORCE_TOUCH  // decided: force touch - suppress click
 } CLICK_ARBITRATION_STATE;
 
 typedef struct _DEVICE_CONTEXT
@@ -31,19 +30,6 @@ typedef struct _DEVICE_CONTEXT
     WDFQUEUE        InputQueue;
     USB_DEVICE_DESCRIPTOR DeviceDescriptor;
     ULONG           UsbDeviceTraits;
-
-    // AUDIT FIX (data race): the USB continuous reader
-    // (AmtPtpConfigContReaderForInterruptEndPoint) keeps more than one read
-    // request pending by default, so AmtPtpEvtUsbInterruptPipeReadComplete
-    // can in principle be re-entered on another CPU before a prior
-    // completion has finished mutating this context - LastReportTime, the
-    // whole ActiveContacts pool, NextContactId, the Overflow*/RecentLifts
-    // state, ClickArbitrationState, ForceTouch*/PendingForceTouchEdge* -
-    // none of which were ever protected by anything. Also guards the state
-    // reset in AmtPtpEvtDeviceD0Entry against the same fields. Acquired at
-    // DISPATCH_LEVEL (USB completion routines are not guaranteed to run at
-    // PASSIVE_LEVEL), hence WDFSPINLOCK rather than WDFWAITLOCK.
-    WDFSPINLOCK     StateLock;
 
     // Device config
     const struct BCM5974_CONFIG* DeviceInfo;
@@ -58,17 +44,6 @@ typedef struct _DEVICE_CONTEXT
     // the current frame in PTPCore.c to detect the 0->1 click edge that
     // drives the forced-rebirth anti-jitter-snap workaround.
     BOOLEAN PrevButtonClicked;
-
-    // BUG FIX (spurious buttonClickEdge from summed multi-finger force):
-    // consecutive-frame counter for the debounce in Ptpcore.c - the raw
-    // button bit must hold TRUE for BUTTON_CLICK_DEBOUNCE_FRAMES straight
-    // frames before a click-edge is honored, so a one-frame threshold
-    // crossing (e.g. a second finger landing on an already-resting first
-    // finger, confirmed via the BTN raw diagnostic in Interrupt.c: clean,
-    // stable byte, not misread data) doesn't trigger the full-pool
-    // rebind. A real click held down for even a few ms comfortably clears
-    // this many consecutive frames.
-    UCHAR ButtonDebounceFrames;
 
     // Force-touch latch (Ptpcore.c). TRUE while some contact's pressure
     // is above FORCE_TOUCH_PRESSURE_THRESHOLD and the button is held;
@@ -122,28 +97,13 @@ typedef struct _DEVICE_CONTEXT
     UCHAR   PendingForceTouchEdgeCount;  // number of queued, undelivered edges
 
     // Click arbitration (Ptpcore.c) - see CLICK_ARBITRATION_STATE above.
-    // PressureCrossed latches TRUE the first frame this press's pressure
-    // exceeds FORCE_TOUCH_PRESSURE_THRESHOLD; reset to FALSE at each new
-    // button-down. StartQpc is the button-down timestamp, used only to
-    // clock CLICK_ARBITRATION_GRACE_MS while PressureCrossed is still
-    // FALSE. Both only meaningful while State == PENDING.
+    // PeakPressure/StartQpc are only meaningful while State == PENDING.
     CLICK_ARBITRATION_STATE ClickArbitrationState;
-    BOOLEAN                 ClickArbitrationPressureCrossed;
+    USHORT                  ClickArbitrationPeakPressure;
     LONGLONG                ClickArbitrationStartQpc;
 
     // Scan time
     LARGE_INTEGER LastReportTime;
-
-    // SCANTIME FIX: Windows PTP spec requires Report.ScanTime to be a
-    // free-running, ever-increasing hardware-clock counter (100us units),
-    // which Windows itself differentiates frame-to-frame to derive
-    // velocity/inertia - NOT a pre-computed inter-frame delta. This
-    // accumulator holds the running total (in 100us units); each frame
-    // adds the elapsed-since-last-report delta onto it, and the low 16
-    // bits are truncated into the USHORT report field, letting it wrap
-    // naturally as the spec expects. Reseeded to 0 at D0Entry alongside
-    // LastReportTime.
-    ULONG ScanTimeAccumulator;
 
     // Palm rejection - session-level latch (sticky "still palm-adjacent"
     // state), owned by PTPCore_ProcessFrame. Per-sample classification

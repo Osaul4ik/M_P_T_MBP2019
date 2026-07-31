@@ -13,102 +13,19 @@
 // press must not fire a synthetic right-click on top of that drag.
 #define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 60
 
-// How long PTPCore will let a press's ordinary click report stay
-// withheld while pressure is still below FORCE_TOUCH_PRESSURE_THRESHOLD,
-// before giving up on it ever crossing and reporting the click live.
-// Bounds the delay for long, pressure-quiet holds (click-and-hold with
-// no drag) - without this, such a hold would never get reported until
-// release, no matter how long it's held. A real force touch ramps past
-// the threshold well under this window in practice, so it rarely even
-// gets the chance to elapse for a genuine force-touch press. Once
-// pressure DOES cross the threshold, this timer no longer applies - see
-// the AUDIT note above the arbitration block below. Tunable.
-#define CLICK_ARBITRATION_GRACE_MS 100
+// How long PTPCore will wait, once the button goes down, for the press
+// to either cross FORCE_TOUCH_PRESSURE_THRESHOLD or start receding
+// before giving up and committing it as an ordinary click. "Some time"
+// per the design note - tunable.
+#define CLICK_ARBITRATION_TIMEOUT_MS 60
 
-// BUG FIX (single-frame noise falsely tainting a solo tap/double-tap as
-// gesture): see GestureCandidateFrames in ActiveContact.h. Number of
-// CONSECUTIVE qualifying frames (gestureThisFrame, post tail-overlap
-// filtering below) required before WasInGesture actually latches. 2 is
-// the minimum that filters a one-frame blip while still tainting a real
-// 2(+)-finger gesture on its 2nd live frame - imperceptible for gestures,
-// which run for many frames, but decisive for a single noisy sample.
-#if AMT_RAW_DISABLE_GESTURE_DEBOUNCE
-// RAW MODE: no debounce - a single qualifying frame latches immediately,
-// same as before either debounce fix existed.
-#define GESTURE_TAINT_DEBOUNCE_FRAMES 1
-#else
-#define GESTURE_TAINT_DEBOUNCE_FRAMES 2
-#endif
-
-// BUG FIX (deliberate fast N-finger tap misread as a gesture): the
-// debounce above only filters a single-FRAME noise blip - it still lets
-// WasInGesture latch the instant aliveCount>=2 has held for
-// GESTURE_TAINT_DEBOUNCE_FRAMES (~16ms at this hardware's ~8ms scan
-// cadence), with zero regard for how long the multi-finger contact
-// actually stays down. Repro logs (SAKURAMBPRO.log) show a user
-// deliberately tapping 2 fingers, over and over, and lifting again
-// 120-230ms later: EVERY one of those pairs got WasInGesture SET within
-// a single extra frame of birth, before there was any way to tell "a
-// quick 2-finger tap" from "the start of a 2-finger scroll" - the two
-// look byte-for-byte identical for the first couple of frames. Once
-// WasInGesture latches, the pair's eventual lift-off is reported via the
-// "gesture-tainted" path (deferred, paired) instead of the "solo" path
-// (immediate, independent) - and Windows' own PTP recognizer leans on
-// exactly that Confident/WasInGesture/ContactID shape to decide tap vs.
-// scroll, so a tainted-but-actually-brief pair becomes a coin flip on
-// the OS side: sometimes still read as a tap/right-click, sometimes
-// silently dropped as an incomplete scroll. That is the intermittent
-// "two-finger tap sometimes doesn't register" symptom.
-//
-// Fix: WasInGesture may only actually LATCH once the contact has been
-// alive for at least GESTURE_TAINT_MIN_HOLD_FRAMES (ACTIVE_CONTACT.
-// FramesAlive, already maintained per-contact by AmtContactUpdate -
-// ActiveContact.c - so this needs no new state). GestureCandidateFrames
-// keeps counting as before (still filters a single-frame noise blip
-// immediately), but the commit is now gated on BOTH conditions. A
-// contact that lifts before crossing this hold takes the "solo" lift
-// path (Phase A) even though a second finger was present the whole
-// time - which is the correct, desired outcome for a genuine fast
-// N-finger tap: each contact reports its own clean DOWN...UP with
-// Confident=1 and WasInGesture=0 throughout, the exact shape Windows'
-// recognizer wants for a tap. 24 frames (~190ms at ~8ms/frame) sits
-// comfortably above every real tap observed in the repro logs
-// (120-230ms) while staying far short of any deliberate scroll (which
-// runs for many hundreds of ms at minimum) - tunable if a given panel's
-// scan cadence or a user's tap cadence differs meaningfully from this.
-#if AMT_RAW_DISABLE_GESTURE_DEBOUNCE
-// RAW MODE: no minimum hold either - latch the instant the frame-count
-// debounce above is satisfied, same as before this fix existed.
-#define GESTURE_TAINT_MIN_HOLD_FRAMES 1
-#else
-#define GESTURE_TAINT_MIN_HOLD_FRAMES 24
-#endif
-
-// BUG FIX (spurious full-pool rebind from summed multi-finger force):
-// this hardware's integrated-button bit is a raw firmware click-force
-// threshold computed over TOTAL pressure across all fingers, not a true
-// mechanical switch - confirmed via the BTN raw diagnostic in
-// Interrupt.c: a clean, stable byte (not a misread offset) that flips
-// to 1 for a handful of frames when a second finger lands on an
-// already-resting first finger, with no felt click and no intent to
-// click. A single qualifying frame used to be enough to fire
-// buttonClickEdge and force-rebind every active contact's ContactID
-// (Phase A.5 below) - which is exactly what a real click needs (Windows'
-// anti-jitter snap must be routed around on the very frame the click
-// lands), but also fires on this kind of momentary, unintended
-// threshold crossing. Require the raw bit to hold for this many
-// CONSECUTIVE frames before honoring it as a real click-edge - matches
-// the same debounce pattern as GESTURE_TAINT_DEBOUNCE_FRAMES above. 3
-// frames (~24ms at this hardware's ~8ms cadence) comfortably clears any
-// deliberate click, which is held for tens of ms at minimum, while
-// filtering the 1-2 frame blips seen in the repro log.
-#if AMT_RAW_DISABLE_BUTTON_DEBOUNCE
-// RAW MODE: honor the button bit the instant it's seen, same as before
-// this debounce fix existed.
-#define BUTTON_CLICK_DEBOUNCE_FRAMES 1
-#else
-#define BUTTON_CLICK_DEBOUNCE_FRAMES 3
-#endif
+// A press is considered to be receding once its pressure falls this many
+// raw units below the highest value seen so far this press (rather than
+// below the immediately preceding frame - the sensor is noisy enough
+// that a single frame-to-frame dip isn't reliable on its own). Tunable;
+// ~3-5 units is enough margin to absorb sensor noise without meaningfully
+// delaying the decision.
+#define CLICK_ARBITRATION_PRESSURE_HYSTERESIS 4
 
 // Recent-lift ring buffer (slot-independent retap memory)
 
@@ -337,29 +254,8 @@ PTPCore_ProcessFrame(
     // Forcing a real Kill->Birth of the live contact's ContactID at its
     // own current position routes this click through the ordinary
     // soft-tap TipSwitch path instead, which isn't subject to that snap.
-    // BUG FIX (spurious buttonClickEdge): debounce the RAW button bit
-    // itself, before edge detection - see BUTTON_CLICK_DEBOUNCE_FRAMES.
-    // ButtonDown must hold for several consecutive frames before it's
-    // treated as "the button is down" for THIS purpose; debouncedButtonDown
-    // (not the raw ButtonDown) is what PrevButtonClicked/buttonClickEdge
-    // are computed from, so a momentary threshold crossing never reaches
-    // Phase A.5's full-pool rebind. Deliberately narrow: force-touch
-    // arbitration/drag-lockout further below stays on the RAW ButtonDown
-    // (see their own "recomputed every frame from the RAW frame" comments)
-    // - that logic already has its own pressure-based gating and a several-
-    // frame delay there would just add latency to a real force-touch press
-    // without fixing anything this bug report is about.
-    if (ButtonDown) {
-        if (pCtx->ButtonDebounceFrames < 255)
-            pCtx->ButtonDebounceFrames++;
-    } else {
-        pCtx->ButtonDebounceFrames = 0;
-    }
-    BOOLEAN debouncedButtonDown =
-        pCtx->ButtonDebounceFrames >= BUTTON_CLICK_DEBOUNCE_FRAMES;
-
-    BOOLEAN buttonClickEdge = debouncedButtonDown && !pCtx->PrevButtonClicked;
-    pCtx->PrevButtonClicked = debouncedButtonDown;
+    BOOLEAN buttonClickEdge = ButtonDown && !pCtx->PrevButtonClicked;
+    pCtx->PrevButtonClicked = ButtonDown;
 
     RtlZeroMemory(OutResult, sizeof(PTP_CORE_FRAME));
     OutResult->TimestampQpc = NowQpc;
@@ -393,7 +289,7 @@ PTPCore_ProcessFrame(
 
     // Cost-based correspondence
     MATCH_RESULT matchResult;
-    AmtMatchCorrespond(&candidates, pCtx->ActiveContacts, pCtx->DeviceInfo,
+    AmtMatchCorrespond(&candidates, pCtx->ActiveContacts,
                        NowQpc, pCtx->PerfFrequency.QuadPart,
                        &matchResult);
 
@@ -437,52 +333,6 @@ PTPCore_ProcessFrame(
 
     // Drain deferred lift-offs
     AmtCoreDrainOverflow(pCtx, OutResult);
-
-    // BUG FIX (fast multi-finger tap misread as single-tap/extra-tap):
-    // real fingers almost never touch down in the exact same raw frame -
-    // there's typically a 1-3 frame stagger between births even for a
-    // single deliberate N-finger tap. The Phase A defer/grace check below
-    // used to gate purely on EACH contact's own FramesAlive vs
-    // MIN_CONTACT_LIFETIME_FRAMES. For a FAST tap (total contact
-    // lifetime under that threshold for at least one finger - the common
-    // case, since a fast tap is short by definition), the finger that
-    // was born earlier reaches the threshold and gets a real
-    // CONTACT_PHASE_UP sooner than a later-born partner still stuck in
-    // the defer branch reporting CONTACT_PHASE_MOVE ("still down"). That
-    // artificially spreads the two lift-off reports across different
-    // frames - purely a driver timing artifact, not physical reality -
-    // which is enough for Windows' PTP tap-arity classifier to
-    // occasionally miscount the gesture (reads it as a lone soft tap, or
-    // as extra separate taps once combined with retap/recent-lift
-    // bookkeeping).
-    //
-    // Fix: when a whole gesture releases at once (aliveCount == 0 this
-    // frame - see below), don't gate each contact's defer decision on its
-    // OWN FramesAlive. Compute the MINIMUM FramesAlive across every
-    // still-tainted (WasInGesture) contact that's unmatched this exact
-    // frame (i.e. the whole group lifting together) and gate all of them
-    // on that shared value instead. This makes every member of the group
-    // cross the MIN_CONTACT_LIFETIME_FRAMES gate on the SAME frame,
-    // regardless of how staggered their individual births were, so their
-    // CONTACT_PHASE_UP reports land together too.
-    UCHAR gestureGroupMinFramesAlive = 0xFF;
-    if (aliveCount == 0) {
-        for (UCHAR ug = 0; ug < matchResult.UnmatchedCount; ug++) {
-            size_t pg = matchResult.UnmatchedPoolIndices[ug];
-            // Skip contacts that are frozen (palm/dead-zone) this frame -
-            // they don't actually lift here (see the palmSuppressedFrame
-            // / palmLocalFrozen branch below), so they aren't part of
-            // this gesture's release-together group and must not drag
-            // the shared minimum down.
-            if (palmSuppressedFrame || palmLocalFrozen[pg])
-                continue;
-            if (pCtx->ActiveContacts[pg].WasInGesture &&
-                pCtx->ActiveContacts[pg].FramesAlive < gestureGroupMinFramesAlive)
-            {
-                gestureGroupMinFramesAlive = pCtx->ActiveContacts[pg].FramesAlive;
-            }
-        }
-    }
 
     // Phase A (lift): unmatched pool entries lift.
     // Gesture-tainted: defer kill on last finger; solo: kill immediately.
@@ -543,25 +393,11 @@ PTPCore_ProcessFrame(
 
         if (pCtx->ActiveContacts[p].WasInGesture) {
             // Gesture-tainted: defer if fresh and last finger.
-            //
-            // AUDIT FIX (staggered-birth tap release skew): gate on the
-            // whole gesture group's shared minimum FramesAlive
-            // (gestureGroupMinFramesAlive, computed above), NOT this
-            // contact's own FramesAlive - see the comment above the
-            // computation for why. Every tainted contact unmatched this
-            // frame shares the same gate value, so they defer (or don't)
-            // in lockstep instead of drifting apart by however many
-            // frames their births happened to be staggered.
-            if (gestureGroupMinFramesAlive < MIN_CONTACT_LIFETIME_FRAMES
+            if (pCtx->ActiveContacts[p].FramesAlive < MIN_CONTACT_LIFETIME_FRAMES
                 && aliveCount == 0)
             {
                 // Defer one frame for gesture recognizer.
                 pCtx->ActiveContacts[p].FramesAlive++;
-
-                DbgPrint("[AmtPtp] DEFER pool=%Iu id=%lu framesAlive=%u groupMin=%u qpc=%I64d\n",
-                         p, pCtx->ActiveContacts[p].ContactID,
-                         pCtx->ActiveContacts[p].FramesAlive,
-                         gestureGroupMinFramesAlive, NowQpc);
 
                 AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
                                    pCtx->ActiveContacts[p].ReportX, pCtx->ActiveContacts[p].ReportY,
@@ -573,8 +409,6 @@ PTPCore_ProcessFrame(
             AmtContactEnterGrace(pCtx->ActiveContacts, p, &oldId, &oldX, &oldY);
             AmtContactExpireGrace(pCtx->ActiveContacts, p);
             // No AmtRecentLiftRecord here - intentional (Issue #4 fix).
-            DbgPrint("[AmtPtp] UP gesture-tainted id=%lu X=%u Y=%u qpc=%I64d\n",
-                     oldId, oldX, oldY, NowQpc);
             AmtCoreEmitContact(pCtx, OutResult, oldId, oldX, oldY, CONTACT_PHASE_UP, TRUE);
 
         } else {
@@ -583,8 +417,6 @@ PTPCore_ProcessFrame(
             // never falls through to this branch.
             AmtContactKill(pCtx->ActiveContacts, p, &oldId, &oldX, &oldY);
             AmtRecentLiftRecord(&pCtx->RecentLifts, NowQpc, oldX, oldY);
-            DbgPrint("[AmtPtp] UP solo id=%lu X=%u Y=%u qpc=%I64d\n",
-                     oldId, oldX, oldY, NowQpc);
             AmtCoreEmitContact(pCtx, OutResult, oldId, oldX, oldY, CONTACT_PHASE_UP, TRUE);
         }
     }
@@ -598,9 +430,6 @@ PTPCore_ProcessFrame(
         if (!matchResult.NewIdentity[ci]) continue;
 
         ULONG  oldId; USHORT oldX, oldY;
-        DbgPrint("[AmtPtp] NewIdentity(origin==0) pool=%Iu oldId=%lu WasInGesture=%u qpc=%I64d\n",
-                 p, pCtx->ActiveContacts[p].ContactID,
-                 pCtx->ActiveContacts[p].WasInGesture, NowQpc);
         if (pCtx->ActiveContacts[p].WasInGesture) {
             AmtContactEnterGrace(pCtx->ActiveContacts, p, &oldId, &oldX, &oldY);
             AmtContactExpireGrace(pCtx->ActiveContacts, p);
@@ -689,62 +518,7 @@ PTPCore_ProcessFrame(
 
         size_t freeIdx = AmtContactPoolFindFree(pCtx->ActiveContacts);
         if (freeIdx == MAX_CONTACTS) {
-            // BUG FIX (silent birth drop under palm/edge-rest pool
-            // pressure): the pool is only MAX_CONTACTS (5) slots, and a
-            // PALM_LOCAL-frozen contact (palmLocalFrozen[] above - e.g. a
-            // wrist/palm edge resting near the bottom dead zone while
-            // typing or gesturing) holds its slot ACTIVE indefinitely for
-            // as long as it's physically touching, since Phase A freezes
-            // it in place rather than killing it. With real fingers also
-            // down, this can exhaust the pool - and this candidate,
-            // representing a genuine new touch, used to just be dropped
-            // here with a bare "continue": no DOWN ever reported, no
-            // retry, nothing. Silent and invisible - exactly matching two
-            // reported symptoms: a quick soft tap or the start of a
-            // double-tap sometimes not registering at all, and the third
-            // finger of a 3-finger swipe sometimes only being recognized
-            // a frame or two late (Windows briefly sees 2 fingers, not 3,
-            // until this candidate finally finds room).
-            //
-            // Reclaim a frozen slot instead of giving up: a PALM_LOCAL-
-            // frozen contact already reports Confidence=0 (Phase A above)
-            // and Windows already ignores it for pointer/gesture purposes
-            // - so ending it early to make room for a REAL touch costs
-            // nothing Windows was actually using. If the resting palm/
-            // wrist is still there next frame, it simply re-qualifies as
-            // PALM_LOCAL again and gets reborn frozen under a fresh
-            // ContactID (Kill->Birth, the same sanctioned identity-churn
-            // pattern used everywhere else in this file) - invisible to
-            // Windows either way. Only reclaims a FROZEN slot - if all 5
-            // are genuine, live, non-frozen touches, there is truly
-            // nothing safe to free, and this candidate is still dropped
-            // (unreachable in practice: that would mean 6 simultaneous
-            // real contacts, beyond this hardware's own reporting limit).
-            size_t reclaimIdx = MAX_CONTACTS;
-            for (size_t rp = 0; rp < MAX_CONTACTS; rp++) {
-                if (pCtx->ActiveContacts[rp].State == CONTACT_ACTIVE &&
-                    palmLocalFrozen[rp]) {
-                    reclaimIdx = rp;
-                    break;
-                }
-            }
-
-            if (reclaimIdx == MAX_CONTACTS) {
-                continue;
-            }
-
-            ULONG  reclaimedId; USHORT reclaimedX, reclaimedY;
-            AmtContactKill(pCtx->ActiveContacts, reclaimIdx,
-                           &reclaimedId, &reclaimedX, &reclaimedY);
-            AmtCoreEmitContact(pCtx, OutResult, reclaimedId, reclaimedX, reclaimedY,
-                               CONTACT_PHASE_UP, TRUE);
-            // Clear the stale flag: this index is about to be reborn as a
-            // real, non-frozen touch below - if a LATER candidate in this
-            // same Phase B loop also needs to reclaim a slot, it must not
-            // mistake this freshly-birthed real contact for still being
-            // the frozen palm/edge entry it used to be.
-            palmLocalFrozen[reclaimIdx] = FALSE;
-            freeIdx = reclaimIdx;
+            continue;
         }
 
         USHORT liftX, liftY;
@@ -753,18 +527,6 @@ PTPCore_ProcessFrame(
                                     pCtx->PerfFrequency.QuadPart,
                                     cand->X, cand->Y, &liftX, &liftY);
 
-        DbgPrint("[AmtPtp] BIRTH X=%u Y=%u looksLikeRetap=%u liftX=%u liftY=%u qpc=%I64d\n",
-                 cand->X, cand->Y, looksLikeRetap, liftX, liftY, NowQpc);
-
-#if AMT_RAW_DISABLE_RETAP_SMOOTHING
-        // RAW MODE: always a plain birth, never seeded from the recent-
-        // lift record - looksLikeRetap is still computed and printed
-        // above (so the BIRTH diagnostic line is unaffected), just not
-        // acted on.
-        AmtContactBirth(
-            pCtx->ActiveContacts, freeIdx, &pCtx->NextContactId,
-            cand->X, cand->Y, cand->SlotIndex);
-#else
         if (looksLikeRetap) {
             // RetapSeeded: seed survives first AmtContactUpdate.
             AmtContactBirthWithRetapSmoothing(
@@ -775,7 +537,6 @@ PTPCore_ProcessFrame(
                 pCtx->ActiveContacts, freeIdx, &pCtx->NextContactId,
                 cand->X, cand->Y, cand->SlotIndex);
         }
-#endif
 
         // NOTE: WasInGesture is NOT decided here. Phase C below runs
         // immediately after for this exact same candidate (candidates
@@ -899,136 +660,39 @@ PTPCore_ProcessFrame(
             shouldTaint = otherCandidateUntainted;
         }
 
-        // BUG FIX (single-frame noise taint): don't latch WasInGesture off
-        // one qualifying frame alone - see GESTURE_TAINT_DEBOUNCE_FRAMES.
-        // Only touches contacts not already tainted; an already-tainted
-        // contact keeps re-qualifying every gestureThisFrame frame same as
-        // before (no behavior change for an established gesture).
-        //
-        // BUG FIX (fast deliberate tap misread as gesture): the frame-
-        // count debounce alone only filters a 1-frame blip - it still let
-        // WasInGesture latch within ~16ms of a 2nd finger landing, with no
-        // regard for how long the contact actually stays down. Added
-        // second gate, FramesAlive >= GESTURE_TAINT_MIN_HOLD_FRAMES, so a
-        // pair that lifts again quickly (a real N-finger tap) never
-        // latches at all and takes the immediate "solo" lift path instead
-        // of the deferred "gesture-tainted" one - see the comment on
-        // GESTURE_TAINT_MIN_HOLD_FRAMES above for the full rationale and
-        // the repro-log timings behind the chosen threshold.
-        if (!pCtx->ActiveContacts[p].WasInGesture) {
-            if (shouldTaint) {
-                if (pCtx->ActiveContacts[p].GestureCandidateFrames < 255)
-                    pCtx->ActiveContacts[p].GestureCandidateFrames++;
-                if (pCtx->ActiveContacts[p].GestureCandidateFrames >=
-                        GESTURE_TAINT_DEBOUNCE_FRAMES &&
-                    pCtx->ActiveContacts[p].FramesAlive >=
-                        GESTURE_TAINT_MIN_HOLD_FRAMES)
-                {
-                    pCtx->ActiveContacts[p].WasInGesture = TRUE;
-                    DbgPrint("[AmtPtp] WasInGesture SET pool=%Iu id=%lu "
-                             "framesAlive=%u qpc=%I64d\n",
-                             p, pCtx->ActiveContacts[p].ContactID,
-                             pCtx->ActiveContacts[p].FramesAlive, NowQpc);
-                }
-            } else {
-                pCtx->ActiveContacts[p].GestureCandidateFrames = 0;
-            }
+        if (shouldTaint) {
+            pCtx->ActiveContacts[p].WasInGesture = TRUE;
         }
 
-        // REAL FIX (position-teleport half of the right-then-left /
-        // left-then-right repro - see Match.c's PositionSuppressed
-        // comment): a match accepted only through IdentityBreak
-        // suppression must not let this candidate's raw X/Y become this
-        // pool entry's new reported position. Feed the entry's OWN last
-        // reported position instead for this one frame - everything else
-        // (major/minor/pressure/slot hint/timestamp) still updates
-        // normally, so tracking resumes cleanly from a real position next
-        // frame instead of from a one-frame teleport that Windows' PTP
-        // stack already saw and acted on.
-        USHORT updateX = matchResult.PositionSuppressed[ci]
-                            ? pCtx->ActiveContacts[p].ReportX
-                            : cand->X;
-        USHORT updateY = matchResult.PositionSuppressed[ci]
-                            ? pCtx->ActiveContacts[p].ReportY
-                            : cand->Y;
-
         USHORT repX, repY;
-        AmtContactUpdate(&pCtx->ActiveContacts[p], updateX, updateY,
+        AmtContactUpdate(&pCtx->ActiveContacts[p], cand->X, cand->Y,
                          cand->Major, cand->Minor, cand->Pressure,
                          cand->SlotIndex, NowQpc, pCtx->PerfFrequency.QuadPart,
                          (BOOLEAN)(aliveCount == 1), gestureThisFrame,
                          &repX, &repY);
 
-        // AUDIT FIX (tap/click Confidence false-negative - generalized):
-        // TipDropApplied means "X/Y is stale/bridged," not "this isn't a
-        // real finger" - grep confirms its ONLY consumer in the entire
-        // driver is this exact line, and it is set to 1 in exactly one
-        // place (Match.c's isStationary tip-drop branch): an ALREADY-
-        // ACTIVE, previously-matched pool entry (bestPoolIdx found) whose
-        // reported ellipse (Major/Minor) has dropped below
-        // AmtMatchCandidateTip's threshold while the contact is holding
-        // still. A brand-new/no-anchor candidate always forces
-        // TipDropApplied=0 (Match.c: "No anchor: full-confidence birth
-        // candidate"), so this branch structurally can never fire for a
-        // genuinely new/unverified touch - only for a finger this driver
-        // already knows is real.
-        //
-        // That is precisely the shape of a tap's OWN final live frame(s):
-        // pressure eases right before/at liftoff, the contact ellipse
-        // naturally shrinks, and the finger is essentially stationary by
-        // definition (it's a tap, not a swipe) - isStationary=TRUE. A
-        // previous fix (below, superseded) only exempted the
-        // buttonClickEdge rebind case from this, but any ordinary tap -
-        // solo, N-finger, or force-touch/hard-tap, whichever finger count
-        // - hits the exact same branch on its way out and got Confident=0
-        // reported for it. Windows' PTP stack silently discards non-
-        // confident contacts for pointer/click purposes, so the tap's
-        // last frame(s) before UP could get dropped from the recognizer's
-        // view - intermittently, depending on exactly which frame the
-        // ellipse dipped on. Scrolling never hits this: a moving finger
-        // always takes the dxMove/dyMove "live position" branch, which
-        // unconditionally sets TipDropApplied=0 regardless of ellipse
-        // size (Match.c) - consistent with taps/clicks being flaky while
-        // scroll stayed stable.
-        //
-        // Fix: since TipDropApplied structurally only ever describes an
-        // already-verified, already-tracked real finger (never a fresh/
-        // ambiguous candidate), it must not gate Confidence for ANY
-        // continuing contact - not just the rebind case. It still fully
-        // controls whether the bridged/frozen position vs the live one is
-        // reported (Match.c's cand.X/cand.Y assignment, untouched here) -
-        // only its (mis)use as a confidence signal is removed.
-        BOOLEAN reportConfident = TRUE;
-
-        // DIAG (Confidence false-negative confirmation): this used to be
-        // the exact condition that forced Confident=0 before the fix
-        // above. Left as a visibility print (not a behavior change) so a
-        // DebugView capture of a failed tap can confirm this branch was
-        // actually hit on the tap's final frame(s) - remove once
-        // confirmed fixed on real hardware.
-        if (cand->TipDropApplied != 0) {
-            DbgPrint("[AmtPtp] TIPDROP stationary-bridge pool=%Iu id=%lu "
-                     "X=%u Y=%u (would have forced Confident=0 pre-fix) qpc=%I64d\n",
-                     p, pCtx->ActiveContacts[p].ContactID, repX, repY, NowQpc);
-        }
-
-        // DIAG (soft-tap/double-tap investigation): DOWN is the one phase
-        // that was never logged anywhere - UP has two prints (solo/
-        // gesture-tainted), BIRTH has one, but a tap's DOWN edge, its
-        // Confident bit, and the WasInGesture state it starts with were
-        // all invisible. Windows' own PTP recognizer decides tap vs
-        // double-tap vs click purely from the Confident/ContactID/
-        // ScanTime sequence we hand it - if a DOWN reports Confident=0,
-        // or WasInGesture=1 (retap smoothing/tail-overlap taint), the
-        // recognizer can silently drop that tap without anything else in
-        // this driver seeing an error. Remove once the soft-double-tap
-        // report is resolved.
-        if (justBorn) {
-            DbgPrint("[AmtPtp] DOWN id=%lu X=%u Y=%u Confident=%u WasInGesture=%u RetapSeeded=%u qpc=%I64d\n",
-                     pCtx->ActiveContacts[p].ContactID, repX, repY, reportConfident,
-                     pCtx->ActiveContacts[p].WasInGesture,
-                     pCtx->ActiveContacts[p].RetapSeeded, NowQpc);
-        }
+        // AUDIT FIX (click Confidence false-negative): TipDropApplied
+        // means "X/Y is stale/bridged," not "this isn't a real finger" -
+        // but Phase C was reusing it as-is for Confident on EVERY report,
+        // including a buttonClickEdge rebind's DOWN. A physical mechanical
+        // click on this hardware momentarily flexes the pad and shrinks
+        // the reported touch ellipse (Major/Minor), often dropping it
+        // below AmtMatchCandidateTip's threshold right at the click - and
+        // since a deliberate click is almost always thrown while the
+        // finger is held still, that lands in the "isStationary" tip-drop
+        // branch (Match.c) which sets TipDropApplied=1. That falsely
+        // reported the freshly-rebound ContactID's DOWN as Confident=
+        // FALSE, and Windows' PTP stack discards non-confident contacts
+        // for pointer/click purposes - so the click never registered
+        // unless the finger was lifted and touched again (a real birth,
+        // on a later frame once the ellipse recovered above threshold).
+        // A rebound contact is by definition an already-tracked, real
+        // finger (identity swap only, per AmtContactRebindIdentity) - so
+        // its Confidence must not be gated by the tip-threshold heuristic
+        // meant for brand-new/continuing touch candidates.
+        BOOLEAN reportConfident = rebindThisFrame[p]
+            ? TRUE
+            : (BOOLEAN)(cand->TipDropApplied == 0);
 
         AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
                            repX, repY,
@@ -1114,129 +778,93 @@ PTPCore_ProcessFrame(
 
     // Click arbitration: force-touch vs ordinary hard-tap. Decides BEFORE
     // the force-touch check below so both see the same, already-updated
-    // state this frame.
-    //
-    // Force touch itself is never decided - or reported - while the
-    // button is still held. It is resolved from two one-way latches
-    // accumulated over the press:
-    //   - ForceTouchDragLockout (set elsewhere above, once the finger
-    //     passes FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the button-down
-    //     anchor) - if this ever trips, the press is a hard-tap/drag and
-    //     is committed as HARD_TAP immediately, the instant it trips,
-    //     regardless of pressure;
-    //   - ClickArbitrationPressureCrossed - latched TRUE the first frame
-    //     framePeakPressure exceeds FORCE_TOUCH_PRESSURE_THRESHOLD.
-    // While PressureCrossed is FALSE, reporting the ordinary click early
-    // and retracting it later if pressure does end up crossing the
-    // threshold would itself show up in Windows as a real, brief
-    // left-click that shouldn't have happened, right before the
-    // force-touch right-click - trading one glitch for a worse one. So
-    // as long as there's still a chance this press crosses the
-    // threshold, the click stays withheld.
-    //
-    // That "still a chance" window is bounded by
-    // CLICK_ARBITRATION_GRACE_MS, not by pressure hysteresis or by
-    // waiting for release: a genuine force touch ramps pressure past the
-    // threshold within well under this window in practice, so once it
-    // elapses with pressure still below threshold, this press is judged
-    // decisively not a force touch - HARD_TAP commits right then and
-    // there, live, same as an ordinary click would report. This is what
-    // makes long, pressure-quiet holds (click-and-hold with no drag) work
-    // normally again: they no longer sit unreported for the entire
-    // duration of the hold, only for this one bounded grace window at
-    // the very start. Once PressureCrossed goes TRUE, the grace timer is
-    // irrelevant - that press is a force-touch candidate for the rest of
-    // the hold and its outcome (FORCE_TOUCH, or HARD_TAP if it later
-    // drags) is still only ever revealed at release, exactly as before.
+    // state this frame. Once the button is held, this press stays
+    // CLICK_ARBITRATION_PENDING until one of four things happens:
+    //   - the drag lockout trips (finger has moved past
+    //     FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the button-down anchor,
+    //     e.g. dragging a window) -> HARD_TAP, unconditionally, even if
+    //     pressure ALSO crosses the force-touch threshold in this exact
+    //     same frame. Movement wins over pressure: a press that's moving
+    //     is a drag, full stop, regardless of how hard it's pressed.
+    //     Checked FIRST, ahead of the pressure check below, specifically
+    //     for that same-frame race;
+    //   - pressure crosses FORCE_TOUCH_PRESSURE_THRESHOLD (and the drag
+    //     lockout has NOT tripped) -> FORCE_TOUCH, the ordinary click is
+    //     suppressed for the rest of the press;
+    //   - pressure falls CLICK_ARBITRATION_PRESSURE_HYSTERESIS units or
+    //     more below the highest pressure seen so far this press, before
+    //     ever reaching the threshold -> the press has peaked and is on
+    //     its way back down -> HARD_TAP, immediately. Compared against
+    //     the running PEAK rather than the previous frame's raw sample:
+    //     the sensor is noisy (252, 250, 251, 252, 251...), so a single
+    //     frame-to-frame dip is not a reliable "it's receding" signal -
+    //     only falling meaningfully below the best value seen is;
+    //   - none of the above within CLICK_ARBITRATION_TIMEOUT_MS (pressure
+    //     climbing slowly or just wobbling) -> give up waiting -> HARD_TAP.
+    // The decision then latches for the remainder of the press (reset to
+    // IDLE only on button release), so a later pressure swing OR later
+    // movement can't flip it - once FORCE_TOUCH is decided, moving the
+    // finger while still pressing is a right-click-drag (e.g. dragging
+    // out a selection) and must NOT cancel the force touch; only the
+    // pressure dropping back down (or the button releasing) ends it -
+    // see forceTouchNow below, which is intentionally NOT gated on the
+    // drag lockout once FORCE_TOUCH is already latched.
     if (!ButtonDown) {
-        if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
-            pCtx->ClickArbitrationState = pCtx->ClickArbitrationPressureCrossed
-                ? CLICK_ARBITRATION_FORCE_TOUCH
-                : CLICK_ARBITRATION_HARD_TAP;
-        } else {
-            pCtx->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
-        }
+        pCtx->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
     } else {
-        // BUG FIX: gate the fresh-press reset on buttonClickEdge (the
-        // authoritative rising-edge signal computed above, tracked via
-        // PrevButtonClicked every frame) rather than on
-        // ClickArbitrationState still reading IDLE. The two are usually
-        // the same thing, but not guaranteed: the IDLE reset above only
-        // runs on a frame where ButtonDown is FALSE, so a release
-        // immediately followed by a re-press with no intervening
-        // not-down frame in between (two presses landing in the same, or
-        // adjacent, USB interrupt completions) would leave a stale
-        // FORCE_TOUCH or HARD_TAP state sitting in ClickArbitrationState
-        // from the PREVIOUS press when this new one begins. Without this
-        // fix, that stale state would either resume being treated as
-        // still-decided (dropping the entire new press - no click, no
-        // force touch, nothing reported for it) rather than starting a
-        // fresh PENDING decision. buttonClickEdge doesn't have this gap:
-        // it's derived from PrevButtonClicked, which is unconditionally
-        // updated every single frame regardless of ButtonDown's value.
-        if (buttonClickEdge) {
-            pCtx->ClickArbitrationState           = CLICK_ARBITRATION_PENDING;
-            pCtx->ClickArbitrationPressureCrossed = FALSE;
-            pCtx->ClickArbitrationStartQpc        = NowQpc;
+        if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_IDLE) {
+            pCtx->ClickArbitrationState         = CLICK_ARBITRATION_PENDING;
+            pCtx->ClickArbitrationStartQpc      = NowQpc;
+            pCtx->ClickArbitrationPeakPressure  = framePeakPressure;
         }
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
-            if (framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
-                pCtx->ClickArbitrationPressureCrossed = TRUE;
-            }
+            if (framePeakPressure > pCtx->ClickArbitrationPeakPressure)
+                pCtx->ClickArbitrationPeakPressure = framePeakPressure;
+
+            INT dropFromPeak = (INT)pCtx->ClickArbitrationPeakPressure -
+                                (INT)framePeakPressure;
+
             if (pCtx->ForceTouchDragLockout) {
-                // Movement wins, unconditionally, the instant it trips -
-                // a press that's moving is a drag, full stop, regardless
-                // of how hard it's pressed or whether it already crossed
-                // the force-touch threshold earlier this same press.
+                // Movement beats pressure, even in a same-frame tie -
+                // checked before the threshold test below on purpose.
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
-            } else if (!pCtx->ClickArbitrationPressureCrossed) {
+            } else if (framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
+                pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
+            } else if (dropFromPeak >= CLICK_ARBITRATION_PRESSURE_HYSTERESIS) {
+                pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
+            } else {
                 LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
-                LONGLONG graceTicks = (pCtx->PerfFrequency.QuadPart > 0)
-                    ? (pCtx->PerfFrequency.QuadPart * CLICK_ARBITRATION_GRACE_MS) / 1000
-                    : 0; // no usable clock - fail open to a live click below
-                if (elapsedTicks >= graceTicks) {
+                LONGLONG timeoutTicks = (pCtx->PerfFrequency.QuadPart > 0)
+                    ? (pCtx->PerfFrequency.QuadPart * CLICK_ARBITRATION_TIMEOUT_MS) / 1000
+                    : 0; // no usable clock - fail open to a plain click below
+                if (elapsedTicks >= timeoutTicks) {
                     pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
                 }
             }
         }
-        // else: HARD_TAP already latched - hold it. (FORCE_TOUCH is never
-        // latched while ButtonDown - see the release branch above - so
-        // there is nothing to hold or downgrade here for that case.)
+        // else: HARD_TAP or FORCE_TOUCH already latched - hold it.
     }
 
     *OutButtonClickReport =
         (pCtx->ClickArbitrationState == CLICK_ARBITRATION_HARD_TAP);
 
-    // Force-touch is a discrete pulse now, not a held state - and it is
-    // emitted as a complete down+up PAIR on the exact same frame that
-    // resolves a press to FORCE_TOUCH (release, see the branch above).
-    //
-    // BUG FIX: an earlier version of this spread the pulse across two
-    // frames - DownEdge on the resolution frame, UpEdge deferred to
-    // whatever PTPCore_ProcessFrame call happened to come next (via
-    // ForceTouchActive latch/diff, the same pattern the old held-state
-    // design used). That's fine while the pad is still active, but by
-    // definition this resolution only happens at release, typically with
-    // no finger on the pad and the button no longer down - there is no
-    // guarantee another USB interrupt completion arrives promptly enough
-    // (or at all, before the pad goes idle) to carry that deferred
-    // UpEdge. Interrupt.c also drops a completion outright if no HID
-    // read request happens to be queued at that moment
-    // (WdfIoQueueRetrieveNextRequest failing at the top of the handler),
-    // which is an extra way a lone "next frame" up-edge could simply
-    // never arrive. Net effect: Button2 could get stuck reported as held
-    // down in Windows until the pad happened to see more activity.
-    // Emitting both edges together removes the dependency on any future
-    // frame entirely - PendingForceTouchEdgeQueue in Interrupt.c already
-    // enqueues DownEdge and UpEdge as independent booleans and was
-    // already built to carry a down+up pair through to mouhid.sys in
-    // order even when both fire close together, so this needs no changes
-    // on that side. ForceTouchActive is unused by this path now (nothing
-    // is ever "held") - kept FALSE at all times.
-    BOOLEAN forceTouchPulse =
-        (pCtx->ClickArbitrationState == CLICK_ARBITRATION_FORCE_TOUCH);
+    // Force-touch: once click arbitration has latched FORCE_TOUCH for
+    // this press, it stays engaged unconditionally until the button is
+    // released - it does NOT re-check pressure frame-to-frame anymore.
+    // Pressure naturally wobbles while the finger holds/drags (sensor
+    // noise, grip changes), and re-testing it here every frame caused a
+    // spurious re-trigger: a momentary dip back under the threshold
+    // dropped ForceTouchActive (sending a synthetic right-click-UP),
+    // then the next frame's recovery sent a right-click-DOWN again -
+    // a second, unwanted force-touch trigger mid-press. A real re-trigger
+    // must only happen after a genuine release (button up resets
+    // ClickArbitrationState to IDLE, so the next press starts PENDING
+    // and must cross the threshold again on its own).
+    BOOLEAN forceTouchNow =
+        ButtonDown && (pCtx->ClickArbitrationState == CLICK_ARBITRATION_FORCE_TOUCH);
 
-    *OutForceTouchDownEdge = forceTouchPulse;
-    *OutForceTouchUpEdge   = forceTouchPulse;
-    pCtx->ForceTouchActive = FALSE;
+
+    *OutForceTouchDownEdge = forceTouchNow && !pCtx->ForceTouchActive;
+    *OutForceTouchUpEdge   = !forceTouchNow && pCtx->ForceTouchActive;
+    pCtx->ForceTouchActive = forceTouchNow;
 }

@@ -151,18 +151,6 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     if (NumBytesTransferred < headerSize ||
         (NumBytesTransferred - headerSize) % fingerSize != 0) {
-        // DIAG (raw-frame-loss investigation): this used to return
-        // silently - a malformed/truncated transfer vanished with no
-        // trace anywhere in the log, before even the BTN/xferBytes print
-        // below. If multi-finger taps are being dropped upstream of
-        // AmtInputParseFrame, this is the first place to check: a
-        // genuine N-finger transfer that arrives short/misaligned would
-        // show up here instead of ever reaching raw_n. Remove once the
-        // multi-finger-drop investigation is resolved.
-        DbgPrint("[AmtPtp] XFER malformed xferBytes=%Iu headerSize=%Iu "
-                 "fingerSize=%Iu qpc=%I64d\n",
-                 NumBytesTransferred, headerSize, fingerSize,
-                 KeQueryPerformanceCounter(NULL).QuadPart);
         return;
     }
 
@@ -184,69 +172,19 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     RtlZeroMemory(&Report, sizeof(PTP_REPORT));
     Report.ReportID = REPORTID_MULTITOUCH;
 
-    // Captured under StateLock below, delivered after it's released.
-    WDFREQUEST mouseRequest     = NULL;
-    BOOLEAN    haveMouseEdge    = FALSE;
-    BOOLEAN    edgeButton2State = FALSE;
-
-    // AUDIT FIX (lock-hold-time reduction, cont'd): pCtx->DeviceInfo,
-    // pCtx->PtpReportTouch and pCtx->PtpReportButton are written exactly
-    // once - at PrepareHardware/CreateDevice, on PASSIVE_LEVEL, before the
-    // interrupt pipe's continuous reader is ever configured/started - and
-    // are never mutated again for the life of the device. That means frame
-    // parsing (AmtInputParseFrame: up to PTP_MAX_CONTACT_POINTS finger
-    // records, clamp/normalize per contact - the single heaviest piece of
-    // per-scan work here) doesn't touch anything mutable and doesn't need
-    // StateLock. It's hoisted above the lock together with the QPC read
-    // (a HW counter, not device state) and the button-bit snapshot. Only
-    // the read-modify-write of LastReportTime and PTPCore's contact-pool
-    // update below actually need to be serialized.
-    // BUG FIX: KeQueryPerformanceCounter's RETURN VALUE is the current tick
-    // count; the out-param (NULL here - pCtx->PerfFrequency was already
-    // latched once in D0Entry, see Device.c) is the counter FREQUENCY,
-    // which is constant for the life of the device. The previous code
-    // discarded the return value and overwrote Now with the frequency
-    // instead, so Now.QuadPart never advanced between interrupt
-    // completions - every dtTicks/PerfDelta/elapsedTicks computed from it
-    // downstream (velocity classification, the 700ms retap window, the
-    // force-touch arbitration grace timer, Match.c's time-domain contact
-    // rejection) was permanently 0.
-    Now = KeQueryPerformanceCounter(NULL);
+    KeQueryPerformanceCounter(&Now);
+    PerfDelta = Now.QuadPart - pCtx->LastReportTime.QuadPart;
+    if (pCtx->PerfFrequency.QuadPart > 0)
+        PerfDelta = PerfDelta * 10000LL / pCtx->PerfFrequency.QuadPart;
+    else
+        PerfDelta /= 100LL;
+    if (PerfDelta > 0xFFFF) PerfDelta = 0xFFFF;
+    if (PerfDelta < 0)      PerfDelta = 0;
+    Report.ScanTime = (USHORT)PerfDelta;
+    pCtx->LastReportTime = Now;
 
     BOOLEAN buttonSnapshot =
         pCtx->PtpReportButton && TouchBuffer[pCtx->DeviceInfo->tp_button];
-
-    // DIAG (spurious buttonClickEdge investigation): buttonSnapshot comes
-    // straight from a fixed offset (tp_button) into the raw HID report,
-    // completely independent of finger-tracking logic - if it's going
-    // TRUE without a real physical/force click (confirmed: user felt no
-    // click during the "hold + add second finger" repro), the cause is
-    // either (a) genuine firmware behavior - T2 Force Touch trackpads
-    // threshold on *summed* force across all fingers, so a second finger
-    // landing on an already-resting first finger can cross the click
-    // threshold without either finger feeling individually "hard-pressed"
-    // - or (b) tp_button pointing at the wrong byte, misread once a
-    // second finger's record is present. Printing the exact byte at
-    // tp_button plus its immediate neighbors (offset-by-one is the usual
-    // symptom of (b)) alongside NumBytesTransferred/raw finger count
-    // distinguishes the two: a firmware/threshold cause should show a
-    // clean, plausible button-byte value (0/1-ish) that flips exactly
-    // when total pressure crosses some level; a wrong-offset cause should
-    // show a byte that only "looks like a click" by coincidence (e.g.
-    // tracks X/Y/pressure data from the second finger instead) and won't
-    // correlate with anything the user is actually pressing.
-    // Remove once the spurious-click investigation is resolved.
-    {
-        LONG btnOff = pCtx->DeviceInfo->tp_button;
-        UCHAR bPrev = (btnOff > 0) ? TouchBuffer[btnOff - 1] : 0xFF;
-        UCHAR bCur  = TouchBuffer[btnOff];
-        UCHAR bNext = (size_t)(btnOff + 1) < NumBytesTransferred
-                        ? TouchBuffer[btnOff + 1] : 0xFF;
-        DbgPrint("[AmtPtp] BTN raw off=%ld prev=0x%02x cur=0x%02x next=0x%02x "
-                 "snapshot=%u xferBytes=%Iu qpc=%I64d\n",
-                 btnOff, bPrev, bCur, bNext, buttonSnapshot,
-                 NumBytesTransferred, Now.QuadPart);
-    }
 
     // RawFrame construction (InputAdapter - no decisions)
     RAW_FRAME rawFrame;
@@ -255,117 +193,18 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     if (pCtx->PtpReportTouch) {
         raw_n = (NumBytesTransferred - headerSize) / fingerSize;
-
-        // DIAG (raw-frame-loss investigation): this is the finger-record
-        // count as computed straight from NumBytesTransferred, before the
-        // PTP_MAX_CONTACT_POINTS clamp below and before AmtInputParseFrame's
-        // per-finger major/minor filter. If a multi-finger tap shows up
-        // here with the expected count but fewer contacts survive past
-        // Input.c, the loss is in the major<=0/minor<=0 filter (see the
-        // per-finger DIAG in Input.c). If it's already short HERE, the
-        // transfer itself never carried the extra fingers - nothing this
-        // driver's matching/confidence logic can compensate for. Remove
-        // once the multi-finger-drop investigation is resolved.
-        DbgPrint("[AmtPtp] RAWN raw_n=%Iu xferBytes=%Iu headerSize=%Iu "
-                 "fingerSize=%Iu qpc=%I64d\n",
-                 raw_n, NumBytesTransferred, headerSize, fingerSize,
-                 Now.QuadPart);
-
         if (raw_n > PTP_MAX_CONTACT_POINTS) raw_n = PTP_MAX_CONTACT_POINTS;
 
-        // REVERTED (regression, confirmed on real MacBookPro16,1/T2
-        // PID 0x0340 hardware): a prior "AUDIT FIX" here additionally
-        // reclamped raw_n to (NumBytesTransferred - headerSize - tp_delta)
-        // / fingerSize, on the theory that tp_delta bytes are extra wire
-        // payload that must come out of the finger-data budget. That's
-        // wrong for this hardware's actual transfer shape - with
-        // USBD_SHORT_TRANSFER_OK (continuous reader config), the device
-        // sends exactly headerSize + N*fingerSize bytes for N active
-        // contacts (confirmed by the modulo check above: it requires
-        // (NumBytesTransferred - headerSize) to be an exact multiple of
-        // fingerSize, which only holds if tp_delta contributes ZERO extra
-        // transferred bytes). tp_delta is purely a f_base pointer offset
-        // (below) into memory already accounted for by headerSize, not
-        // additional payload. Subtracting it from an exact multiple of
-        // fingerSize before dividing floors the result down by one
-        // whenever 0 < tp_delta < fingerSize (true here: delta=2,
-        // fingerSize=30) - N=1 -> maxFingers=0 (finger dropped entirely),
-        // N=2 -> 1, N=3 -> 2. f_base below does read tp_delta bytes past
-        // NumBytesTransferred for the LAST finger record - that part is
-        // real, but bounded-safe (WDFMEMORY is allocated for the full
-        // tp_datalen transfer length regardless of actual bytes received)
-        // and only touches TRACKPAD_FINGER's trailing field, not
-        // major/minor/abs_x/abs_y (all read from earlier, always-valid
-        // offsets). Reducing the reported finger COUNT is the wrong fix
-        // for that - do not reintroduce this reclamp.
+        if (raw_n * fingerSize > (NumBytesTransferred - headerSize)) {
+            WdfRequestComplete(Request, STATUS_DATA_ERROR);
+            return;
+        }
 
         UCHAR* f_base = TouchBuffer + headerSize + pCtx->DeviceInfo->tp_delta;
         AmtInputParseFrame(f_base, fingerSize, raw_n, pCtx->DeviceInfo,
                            Now.QuadPart, &rawFrame);
     }
     // else: empty RawFrame -> PTPCore_ProcessFrame lifts all active contacts.
-
-    // AUDIT FIX (data race): everything from here down either reads or
-    // mutates shared DEVICE_CONTEXT state (LastReportTime, the whole
-    // PTPCore contact pool via PTPCore_ProcessFrame, and the force-touch
-    // edge queue further below) - see the StateLock comment in Device.h
-    // for why this is necessary even though completions look sequential
-    // on paper.
-    //
-    // AUDIT FIX (lock-hold-time reduction): this used to also stay held
-    // across WdfMemoryCopyFromBuffer/WdfRequestComplete for BOTH the touch
-    // report and the force-touch mouse report, AND across frame parsing
-    // (hoisted above, see comment there). WdfRequestComplete walks the
-    // completed IRP back up the whole stack (HIDCLASS, mouhid.sys, any
-    // upper filters) - its duration is not bounded by this driver, so
-    // running it under a DISPATCH_LEVEL spinlock on every single USB
-    // interrupt completion needlessly extended how long this CPU spends at
-    // raised IRQL, on the hot path, for every scan. The lock below now
-    // covers ONLY the DEVICE_CONTEXT reads/writes: LastReportTime, PTPCore's
-    // contact pool, and the force-touch edge FIFO push + gated pop
-    // (WdfIoQueueRetrieveNextRequest for the second/mouse request stays
-    // inside the lock - it's a bounded, purely-internal queue dequeue, not
-    // a completion callout, and whether it succeeds gates the pop, so the
-    // two must stay atomic together - see AUDIT FIX #1/#2 below). Once the
-    // lock is released, Report/mouseRequest/edgeButton2State are plain
-    // local state - delivering them doesn't need pCtx anymore.
-    WdfSpinLockAcquire(pCtx->StateLock);
-
-    // SCANTIME FIX: the Windows PTP spec defines ScanTime as a
-    // free-running, ever-increasing hardware-clock sample (100us units) -
-    // Windows differentiates it ACROSS frames itself to derive velocity
-    // and inertia. The previous code sent the pre-computed inter-frame
-    // delta instead (always ~the same small value at a steady scan rate),
-    // so consecutive ScanTime values looked nearly IDENTICAL rather than
-    // monotonically increasing - Windows' own frame-to-frame diff of two
-    // near-equal deltas collapsed to ~0, which reads as "no motion" no
-    // matter how fast the finger was actually moving. That produced the
-    // slow/non-inertial scroll and likely corrupted the double-tap timing
-    // judgement too.
-    //
-    // Fix: accumulate elapsed time onto a running ULONG counter and only
-    // truncate the low 16 bits into the report field. USHORT wraparound
-    // here is expected/required by spec, not a bug - Windows' consumer is
-    // written to handle it.
-    PerfDelta = Now.QuadPart - pCtx->LastReportTime.QuadPart;
-    if (pCtx->PerfFrequency.QuadPart > 0)
-        PerfDelta = PerfDelta * 10000LL / pCtx->PerfFrequency.QuadPart;
-    else
-        PerfDelta /= 100LL;
-    if (PerfDelta < 0) PerfDelta = 0;
-
-    pCtx->ScanTimeAccumulator += (ULONG)PerfDelta;
-    Report.ScanTime = (USHORT)(pCtx->ScanTimeAccumulator & 0xFFFF);
-    pCtx->LastReportTime = Now;
-
-    // DIAG (soft-tap/double-tap investigation): ScanTime is now the
-    // truncated low 16 bits of a free-running accumulator (see fix above),
-    // not a per-frame delta - it should print as a steadily increasing
-    // (and eventually wrapping) sequence across consecutive interrupts,
-    // not a string of near-identical values. Remove once the
-    // soft-double-tap report is resolved.
-    DbgPrint("[AmtPtp] ScanTime=%u accum=%lu qpc=%I64d\n",
-             Report.ScanTime, pCtx->ScanTimeAccumulator, Now.QuadPart);
 
     // PTPCore orchestration
     PTP_CORE_FRAME coreFrame;
@@ -387,6 +226,18 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     if (buttonClickReport) {
         Report.IsButtonClicked = TRUE;
     }
+
+    AmtReportCheckInvariants(&Report);
+
+    Status = WdfMemoryCopyFromBuffer(
+        RequestMemory, 0, (PVOID)&Report, sizeof(PTP_REPORT));
+    if (!NT_SUCCESS(Status)) {
+        WdfRequestComplete(Request, Status);
+        return;
+    }
+
+    WdfRequestSetInformation(Request, sizeof(PTP_REPORT));
+    WdfRequestComplete(Request, STATUS_SUCCESS);
 
     // Force-touch -> synthetic right-click, delivered on the SEPARATE
     // Mouse top-level collection (REPORTID_STANDARDMOUSE) - see
@@ -418,91 +269,38 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         AmtForceTouchEdgeEnqueue(pCtx, FALSE);
     }
 
-    // Gated pop: WdfIoQueueRetrieveNextRequest's success/failure decides
-    // whether an edge is actually consumed this pass, so the check, the
-    // dequeue attempt, and the pop must stay one atomic step - this is the
-    // one WDF call that stays inside the lock (see the lock-hold-time
-    // comment above for why). mouseRequest/edgeButton2State are captured
-    // here for delivery after the lock is released below; on failure
-    // (no second request available yet) the queue is left untouched for a
-    // later completion to retry, same as before.
     if (pCtx->PendingForceTouchEdgeCount > 0) {
-        NTSTATUS mouseStatus = WdfIoQueueRetrieveNextRequest(pCtx->InputQueue, &mouseRequest);
-        if (NT_SUCCESS(mouseStatus)) {
-            edgeButton2State = pCtx->PendingForceTouchEdgeQueue[pCtx->PendingForceTouchEdgeHead];
+        BOOLEAN edgeButton2State =
+            pCtx->PendingForceTouchEdgeQueue[pCtx->PendingForceTouchEdgeHead];
 
+        WDFREQUEST mouseRequest;
+        Status = WdfIoQueueRetrieveNextRequest(pCtx->InputQueue, &mouseRequest);
+        if (NT_SUCCESS(Status)) {
+            WDFMEMORY mouseRequestMemory;
+            Status = WdfRequestRetrieveOutputMemory(mouseRequest, &mouseRequestMemory);
+            if (NT_SUCCESS(Status)) {
+                PTP_FORCETOUCH_MOUSE_REPORT mouseReport;
+                RtlZeroMemory(&mouseReport, sizeof(mouseReport));
+                mouseReport.ReportID = REPORTID_STANDARDMOUSE;
+                mouseReport.Button2  = edgeButton2State ? 1 : 0;
+
+                Status = WdfMemoryCopyFromBuffer(
+                    mouseRequestMemory, 0, (PVOID)&mouseReport, sizeof(mouseReport));
+                if (NT_SUCCESS(Status)) {
+                    WdfRequestSetInformation(mouseRequest, sizeof(mouseReport));
+                }
+            }
+            WdfRequestComplete(mouseRequest, Status);
+
+            // Delivered (or at least handed to Windows - matches prior
+            // behavior of completing the request either way): pop it off
+            // the head of the queue.
             pCtx->PendingForceTouchEdgeHead =
                 (UCHAR)((pCtx->PendingForceTouchEdgeHead + 1) % PENDING_FORCE_TOUCH_EDGE_CAPACITY);
             pCtx->PendingForceTouchEdgeCount--;
-
-            haveMouseEdge = TRUE;
         }
         // else: still no second request available this pass - leave the
         // queue untouched and retry on the next interrupt completion.
-    }
-
-    WdfSpinLockRelease(pCtx->StateLock);
-    // ---- end of critical section: pCtx is no longer touched below ----
-
-    AmtReportCheckInvariants(&Report);
-
-    // Touch/digitizer report delivery - independent of the mouse edge
-    // below (a copy failure here, essentially unreachable in practice
-    // since RequestMemory's size is guaranteed by the IOCTL_HID_READ_REPORT
-    // contract, must not block delivering an already-dequeued force-touch
-    // edge - the two requests are unrelated once off InputQueue).
-    //
-    // AUDIT FIX (hot-path copy): WdfMemoryCopyFromBuffer re-validates
-    // Offset/Length against the memory object's tracked size on every call,
-    // on top of the framework's own object-handle checks - overhead paid
-    // per interrupt completion for a size that's fixed at compile time.
-    // WdfMemoryGetBuffer hands back the raw pointer + actual size once;
-    // the size check below is the same safety guarantee
-    // WdfMemoryCopyFromBuffer would have enforced, just done directly.
-    {
-        size_t bufferSize = 0;
-        PVOID  buffer = WdfMemoryGetBuffer(RequestMemory, &bufferSize);
-        if (buffer != NULL && bufferSize >= sizeof(PTP_REPORT)) {
-            RtlCopyMemory(buffer, &Report, sizeof(PTP_REPORT));
-            WdfRequestSetInformation(Request, sizeof(PTP_REPORT));
-            Status = STATUS_SUCCESS;
-        } else {
-            Status = STATUS_BUFFER_TOO_SMALL;
-        }
-    }
-    // AUDIT FIX (scheduling latency): IO_NO_INCREMENT (plain
-    // WdfRequestComplete) leaves the thread that's waiting on this IRP
-    // (HIDCLASS / whatever ultimately reads the digitizer input) at its
-    // normal priority, same as any other completed I/O. mouclass.sys/
-    // kbdclass.sys boost their completions for exactly this reason - the
-    // consumer of a fresh input sample should get scheduled promptly, not
-    // wait its ordinary turn. This changes nothing about the data or the
-    // locking above - just how eagerly the waiting thread gets to run
-    // once the report is ready.
-    WdfRequestCompleteWithPriorityBoost(Request, Status, IO_MOUSE_INCREMENT);
-
-    if (haveMouseEdge) {
-        NTSTATUS  mouseCompleteStatus;
-        WDFMEMORY mouseRequestMemory;
-
-        mouseCompleteStatus = WdfRequestRetrieveOutputMemory(mouseRequest, &mouseRequestMemory);
-        if (NT_SUCCESS(mouseCompleteStatus)) {
-            PTP_FORCETOUCH_MOUSE_REPORT mouseReport;
-            RtlZeroMemory(&mouseReport, sizeof(mouseReport));
-            mouseReport.ReportID = REPORTID_STANDARDMOUSE;
-            mouseReport.Button2  = edgeButton2State ? 1 : 0;
-
-            size_t mouseBufferSize = 0;
-            PVOID  mouseBuffer = WdfMemoryGetBuffer(mouseRequestMemory, &mouseBufferSize);
-            if (mouseBuffer != NULL && mouseBufferSize >= sizeof(mouseReport)) {
-                RtlCopyMemory(mouseBuffer, &mouseReport, sizeof(mouseReport));
-                WdfRequestSetInformation(mouseRequest, sizeof(mouseReport));
-                mouseCompleteStatus = STATUS_SUCCESS;
-            } else {
-                mouseCompleteStatus = STATUS_BUFFER_TOO_SMALL;
-            }
-        }
-        WdfRequestCompleteWithPriorityBoost(mouseRequest, mouseCompleteStatus, IO_MOUSE_INCREMENT);
     }
 }
 

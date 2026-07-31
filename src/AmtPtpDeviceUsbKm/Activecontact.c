@@ -78,16 +78,6 @@ AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal, _In_ INT alphaNum
     return (USHORT)blended;
 }
 
-// Saturating LONG clamp - see the call site in AmtContactUpdate for why
-// a plain truncating cast isn't safe here.
-static inline LONG
-AmtContactClampVelocity(_In_ LONGLONG Value)
-{
-    if (Value > MAXLONG) return MAXLONG;
-    if (Value < MINLONG) return MINLONG;
-    return (LONG)Value;
-}
-
 // Classifies how fast a contact is moving, in normalized device units/sec,
 // by comparing the incoming raw sample against the contact's last
 // committed Hyst baseline (the same baseline AmtContactEvaluateDeadzone
@@ -244,10 +234,7 @@ AmtContactBirth(
     c->LastMajor           = 0;
     c->LastMinor           = 0;
     c->LastPressure        = 0;
-    c->VelocityX           = 0; // no prior sample yet - see AmtContactUpdate
-    c->VelocityY           = 0;
     c->FramesAlive         = 1; // birth frame counts as 1
-    c->GestureCandidateFrames = 0;
 }
 
 // Seeds EMA baseline to lift position so cursor doesn't jump on re-tap.
@@ -285,10 +272,7 @@ AmtContactBirthWithRetapSmoothing(
     c->LastMajor           = 0;
     c->LastMinor           = 0;
     c->LastPressure        = 0;
-    c->VelocityX           = 0; // no prior sample yet - see AmtContactUpdate
-    c->VelocityY           = 0;
     c->FramesAlive         = 1;
-    c->GestureCandidateFrames = 0;
 }
 
 BOOLEAN
@@ -444,21 +428,6 @@ AmtContactCommitSample(
 {
     USHORT repX, repY;
 
-#if AMT_RAW_DISABLE_POSITION_SMOOTHING
-    // RAW MODE: report the raw candidate position unconditionally - no
-    // deadzone hold, no EMA smoothing, no scroll-delta scaling. Whatever
-    // the matcher handed this contact this frame is what gets reported.
-    (VOID)passedDeadzone;
-    (VOID)aliveCountIsOne;
-    (VOID)gestureActive;
-    (VOID)velocityIsSlow;
-    (VOID)alphaNum;
-    (VOID)commitIsRetapSeededFirstSample;
-    repX = candX;
-    repY = candY;
-    Contact->ScrollRemX = 0;
-    Contact->ScrollRemY = 0;
-#else
     if (!passedDeadzone) {
         repX = Contact->ReportX;
         repY = Contact->ReportY;
@@ -540,36 +509,15 @@ AmtContactCommitSample(
                 Contact->ScrollRemY = 0;
             }
 
+            if (Contact->WasInGesture && aliveCountIsOne) {
+                Contact->WasInGesture = FALSE;
+            }
         } else {
             Contact->ScrollRemX = 0;
             Contact->ScrollRemY = 0;
             repX = AmtContactSmoothCoord(candX, Contact->ReportX, alphaNum);
             repY = AmtContactSmoothCoord(candY, Contact->ReportY, alphaNum);
         }
-    }
-#endif
-
-    // BUG FIX (intermittent double-tap failure): WasInGesture used to
-    // only get cleared inside the skipEma (fast/medium velocity) branch
-    // above. A solo finger that picked up a spurious taint earlier in
-    // its life (a one-frame sensor blip briefly reporting a second
-    // contact - noise, a ghost touch, a grazed palm edge) would then
-    // carry that taint all the way to lift-off if its final frames
-    // before lifting were slow or stationary (velocityIsSlow, or never
-    // passing the hysteresis deadzone) - both very common right before
-    // a deliberate tap, since people naturally slow down to place the
-    // finger precisely. A gesture-tainted lift is never recorded into
-    // RecentLifts (Phase A in Ptpcore.c), so the retap-smoothing that a
-    // following quick double-tap depends on silently didn't fire -
-    // explaining why the same movement-then-double-tap sequence worked
-    // most of the time but occasionally failed for no visible reason.
-    // Clearing here, unconditionally on aliveCountIsOne, decouples the
-    // taint's lifetime from which velocity/deadzone branch this exact
-    // frame happened to take - it only depends on "is this finger alone
-    // right now," which is what the taint is actually tracking.
-    if (Contact->WasInGesture && aliveCountIsOne) {
-        Contact->WasInGesture = FALSE;
-        Contact->GestureCandidateFrames = 0;
     }
 
     Contact->ReportX = repX;
@@ -615,39 +563,8 @@ AmtContactUpdate(
     CONTACT_VELOCITY_BUCKET velocity = AmtContactClassifyVelocity(
         rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz);
 
-    // BUG FIX (intermittent multi-finger swipe reversal drop): deadzone
-    // used to be selected purely from this contact's own per-frame
-    // velocity bucket, with no gestureActive override - unlike skipEma
-    // below, which already special-cases gestureActive regardless of
-    // velocity. During a multi-finger swipe (e.g. 3-finger left-then-
-    // right), real fingers don't reverse direction in perfect lockstep:
-    // at the moment of the turn, whichever finger's instantaneous
-    // velocity happens to pass through near-zero in THIS frame gets
-    // classified VELOCITY_SLOW and picks up the strictest threshold
-    // (XY_DEADZONE_UNITS_SLOW), freezing its reported position for 1-2
-    // frames while the other fingers - already past their own turning
-    // point - keep moving. That produces a transient position mismatch
-    // between fingers of the same gesture right at the direction
-    // change, which is exactly when Windows' multi-finger swipe
-    // recognizer is most sensitive to the group moving coherently -
-    // so the reversal is occasionally dropped/not recognized. Fix:
-    // while a gesture is active, always use the FAST (zero) deadzone,
-    // the same way EMA is unconditionally skipped for gesture frames -
-    // deadzone lag has no legitimate purpose during a gesture (unlike
-    // solo pointer placement, where the SLOW bucket filters real
-    // sensor tremor), so there's no tradeoff to make here per-finger.
-    INT deadzoneThreshold = gestureActive
-        ? XY_DEADZONE_UNITS_FAST
-        : AmtContactDeadzoneForVelocity(velocity);
+    INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity);
     INT alphaNum          = AmtContactAlphaForVelocity(velocity);
-
-    // Prediction input (see Match.c's dead-reckoned matching cost): the
-    // report position BEFORE this frame's commit, so the velocity below
-    // measures actual reported motion (post deadzone/EMA), not raw
-    // sensor jitter. Read before AmtContactCommitSample overwrites
-    // Contact->ReportX/Y.
-    USHORT prevReportX = Contact->ReportX;
-    USHORT prevReportY = Contact->ReportY;
 
     if (Contact->PendingFirstSample) {
         if (retapSeededFirstSample) {
@@ -666,37 +583,6 @@ AmtContactUpdate(
                            gestureActive, (BOOLEAN)(velocity == VELOCITY_SLOW),
                            alphaNum, retapSeededFirstSample,
                            OutX, OutY);
-
-    // Refresh per-axis velocity from the actual reported motion this
-    // frame (post deadzone/EMA, so it agrees with what Match.c will
-    // predict from). Same "no reliable dt" guard as
-    // AmtContactClassifyVelocity above (prevQpc==0 covers birth/rebind;
-    // dtTicks<=0 covers a nonpositive delta) - both fall back to 0,
-    // which makes AmtMatchCorrespond's prediction transparently collapse
-    // to the un-predicted last-position cost instead of extrapolating
-    // from stale/bogus velocity.
-    //
-    // AmtContactClampVelocity saturates rather than lets the final cast
-    // to LONG silently wrap: dtTicks isn't bounded from below here (only
-    // >0 is required), so a pathologically small interval between two
-    // updates - a duplicate/near-back-to-back call, a clock hiccup -
-    // could otherwise produce a 64-bit intermediate far outside LONG's
-    // range; a raw truncating cast could wrap that into a garbage,
-    // possibly wrong-signed velocity that would then predict motion in
-    // the wrong direction next frame instead of just an extreme one.
-    // Saturating instead means the worst case is a clamped-at-the-edge
-    // prediction (AmtMatchClampCoord in Match.c already clamps any
-    // resulting position to a valid coordinate either way), never a
-    // sign flip.
-    if (dtTicks > 0 && PerfFrequencyHz > 0) {
-        Contact->VelocityX = AmtContactClampVelocity(
-            ((LONGLONG)(*OutX - (INT)prevReportX) * PerfFrequencyHz) / dtTicks);
-        Contact->VelocityY = AmtContactClampVelocity(
-            ((LONGLONG)(*OutY - (INT)prevReportY) * PerfFrequencyHz) / dtTicks);
-    } else {
-        Contact->VelocityX = 0;
-        Contact->VelocityY = 0;
-    }
 
     Contact->LastSlotHint = slotHint;
     Contact->LastSeenQpc  = nowQpc;

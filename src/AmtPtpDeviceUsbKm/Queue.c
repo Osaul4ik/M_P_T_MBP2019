@@ -40,27 +40,8 @@ AmtPtpDeviceUsbKmQueueInitialize(
     }
 
     // Manual queue for touch read requests.
-    //
-    // AUDIT FIX (EvtIoStop wired to the wrong queue): EvtIoStop was
-    // previously only ever set on the DEFAULT queue's config above, but the
-    // requests that actually need Purge/Suspend handling are the
-    // IOCTL_HID_READ_REPORT requests sitting HERE, in InputQueue -
-    // AmtPtpDispatchReadReportRequests (below) forwards them out of the
-    // default queue with WdfRequestForwardToIoQueue the moment they arrive,
-    // so by the time the default queue's EvtIoStop could ever see one, it
-    // has already left that queue. The default queue's own requests
-    // (GET_DESCRIPTOR/GET_ATTRIBUTES/GET_REPORT_DESCRIPTOR/GET_FEATURE/
-    // SET_FEATURE, all handled synchronously in
-    // AmtPtpDeviceUsbKmEvtIoDeviceControl) never stay pending long enough
-    // for EvtIoStop to matter there. Registering the same callback here
-    // too means a request parked in InputQueue waiting on
-    // AmtPtpEvtUsbInterruptPipeReadComplete is now actually acknowledged
-    // (Suspend) or completed with STATUS_CANCELLED (Purge) instead of
-    // relying on undocumented default framework purge behavior for a
-    // manual, non-power-managed queue.
     WDF_IO_QUEUE_CONFIG_INIT(&queueConfig, WdfIoQueueDispatchManual);
     queueConfig.PowerManaged = WdfFalse;
-    queueConfig.EvtIoStop    = AmtPtpDeviceUsbKmEvtIoStop;
 
     status = WdfIoQueueCreate(
         Device,
@@ -164,11 +145,7 @@ AmtPtpDeviceUsbKmEvtIoStop(
     _In_ WDFREQUEST Request,
     _In_ ULONG ActionFlags
 )
-// Shared EvtIoStop for BOTH queues (see AmtPtpDeviceUsbKmQueueInitialize):
-// the default power-managed queue (Suspend on D0 exit, Purge on removal)
-// and the manual, non-power-managed InputQueue (Purge on removal/stop only
-// - a manual queue isn't power-managed, so Suspend is not expected for it,
-// but ActionFlags is still checked rather than assumed).
+// Called before device leaves D0 for power-managed queues.
 //
 // AUDIT FIX: this previously only traced and returned, which violates the
 // WDF contract - EvtIoStop MUST complete, cancel, or explicitly acknowledge
@@ -187,20 +164,9 @@ AmtPtpDeviceUsbKmEvtIoStop(
     }
 
     // Purge: device is being removed/stopped for good - the request must
-    // actually be completed so the I/O manager can proceed.
-    //
-    // BUG FIX: this used to call WdfRequestCancelSentRequest, which is for
-    // a request the driver itself sent onward to a lower I/O target via
-    // WdfRequestSend. This request was never sent anywhere - it sits in
-    // InputQueue after being forwarded here with WdfRequestForwardToIoQueue
-    // (see AmtPtpDispatchReadReportRequests) and is waiting to be picked up
-    // by AmtPtpEvtUsbInterruptPipeReadComplete. WdfRequestCancelSentRequest
-    // does not complete a request like this, so the request was left
-    // neither completed nor cancelled - exactly the framework hang the
-    // AUDIT FIX comment above (EvtIoStop's completion contract) exists to
-    // avoid. Completing it directly is correct here.
+    // actually be cancelled so the I/O manager can proceed.
     if (ActionFlags & WdfRequestStopActionPurge) {
-        WdfRequestComplete(Request, STATUS_CANCELLED);
+        WdfRequestCancelSentRequest(Request);
         return;
     }
 }
