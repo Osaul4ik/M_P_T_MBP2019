@@ -14,7 +14,7 @@
 // (see the click arbitration block below): a press that has moved this
 // far is a window/file/selection drag, full stop, no matter how hard it
 // was pressed at any point during the hold.
-#define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 70
+#define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 250
 
 // Absolute wall-clock safety-net cap: once the button goes down, no press
 // stays PENDING longer than this no matter what, even one that keeps
@@ -22,7 +22,7 @@
 // FAST_RESOLVE in a row. The common case resolves much sooner, via either
 // the stall fast-exit below (ordinary flat/light press) or the drop-from-
 // peak hysteresis (a press that peaked and is now receding). Tunable.
-#define CLICK_ARBITRATION_TIMEOUT_MS 60
+#define CLICK_ARBITRATION_TIMEOUT_MS 90
 
 // A press is considered to be receding once its pressure falls this many
 // raw units below the highest value seen so far this press (rather than
