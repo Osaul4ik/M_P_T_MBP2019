@@ -12,15 +12,20 @@
 // Status (re-enabling one at a time, tuning against the current fixed
 // pipeline before moving to the next):
 //   [x] AMT_RAW_DISABLE_GESTURE_DEBOUNCE   - re-enabled (0)
-//   [ ] AMT_RAW_DISABLE_RETAP_SMOOTHING    - still raw (1)
-//   [ ] AMT_RAW_DISABLE_BUTTON_DEBOUNCE    - still raw (1)
-//   [ ] AMT_RAW_DISABLE_IDENTITY_BREAK_FIX - still raw (1)
-//   [ ] AMT_RAW_DISABLE_POSITION_SMOOTHING - still raw (1)
+//   [x] AMT_RAW_DISABLE_RETAP_SMOOTHING    - re-enabled (0): double-tap
+//       re-seeding (SAKURAMBPRO.log symptom: "double tap doesn't work")
+//   [x] AMT_RAW_DISABLE_BUTTON_DEBOUNCE    - re-enabled (0): Fix B, spurious
+//       buttonClickEdge full-pool rebind from summed multi-finger pressure
+//   [x] AMT_RAW_DISABLE_IDENTITY_BREAK_FIX - re-enabled (0): Fix A, spurious
+//       origin==0 mid-touch identity churn on finger-count transitions
+//   [ ] AMT_RAW_DISABLE_POSITION_SMOOTHING - still raw (1): unrelated to the
+//       tap-recognition bugs above (EMA/jitter smoothing only) - leave raw
+//       until A/B/retap are confirmed fixed on hardware, per the staged plan
 #define AMT_RAW_DISABLE_GESTURE_DEBOUNCE   0
-#define AMT_RAW_DISABLE_RETAP_SMOOTHING    1
-#define AMT_RAW_DISABLE_BUTTON_DEBOUNCE    1
-#define AMT_RAW_DISABLE_IDENTITY_BREAK_FIX 1
-#define AMT_RAW_DISABLE_POSITION_SMOOTHING 1
+#define AMT_RAW_DISABLE_RETAP_SMOOTHING    0
+#define AMT_RAW_DISABLE_BUTTON_DEBOUNCE    0
+#define AMT_RAW_DISABLE_IDENTITY_BREAK_FIX 0
+#define AMT_RAW_DISABLE_POSITION_SMOOTHING 0
 
 #include <ntddk.h>
 #include <wdf.h>
