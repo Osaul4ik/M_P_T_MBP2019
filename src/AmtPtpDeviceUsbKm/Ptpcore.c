@@ -637,6 +637,16 @@ PTPCore_ProcessFrame(
         // gesture - that's the actual tail-overlap case, and must NOT
         // cause the new birth to be tainted.
         //
+        // FIX (3rd-finger-join taint loss): the rule above breaks the
+        // opposite, equally-real case - a 3rd finger touching down onto
+        // an ALREADY-ESTABLISHED, still fully-live 2-finger gesture, both
+        // of whose fingers are tainted and still physically down. Here
+        // EVERY co-alive partner is already-tainted, so the untainted-
+        // partner rule alone (see below) would refuse to taint the join.
+        // Disambiguated by COUNT, not just presence: a dying tail is
+        // exactly one straggler; a still-active multi-finger gesture has
+        // two-or-more participants concurrently down. See below.
+        //
         // Pre-existing (non-true-birth) contacts are unaffected - this
         // now correctly includes button-click rebinds, not just
         // ordinary continuing contacts: they keep getting (re-)tainted
@@ -647,17 +657,41 @@ PTPCore_ProcessFrame(
 
         if (shouldTaint && candidateIsTrueBirth[ci]) {
             BOOLEAN otherCandidateUntainted = FALSE;
+            UCHAR   taintedCoAliveCount     = 0;
             for (UCHAR oc = 0; oc < candidates.Count; oc++) {
                 if (oc == ci || candidates.Candidates[oc].PalmLocal) continue;
                 if (matchResult.CorrespondingPoolIndex[oc] == MATCH_NO_CORRESPONDENCE)
                     continue;
                 if (!candidateWasTainted[oc]) {
                     otherCandidateUntainted = TRUE;
-                    break;
+                } else {
+                    taintedCoAliveCount++;
                 }
             }
 
-            shouldTaint = otherCandidateUntainted;
+            // FIX (3rd-finger-join taint loss): the tail-overlap check
+            // above (otherCandidateUntainted) can't tell apart two
+            // situations that look identical from "is there an untainted
+            // co-alive partner": (a) an old gesture down to its LAST
+            // finger, still matched-continuing this exact frame, next to
+            // an unrelated new solo tap - the tail-overlap case the audit
+            // fix above was written for, where the new birth must NOT be
+            // tainted; and (b) a genuine 3rd finger touching down onto an
+            // ALREADY-ESTABLISHED, still fully-live 2-finger gesture
+            // (e.g. scroll), where both existing fingers are tainted and
+            // still physically down - here the new birth SHOULD be
+            // tainted, or the whole contact drops out of the gesture and
+            // gets processed as a stray solo contact once it lifts.
+            //
+            // The distinguishing signal is the COUNT of already-tainted
+            // co-alive partners, not just their existence: a dying tail
+            // has exactly one straggler left; a still-active multi-finger
+            // gesture has two or more participants concurrently down.
+            // Two-or-more tainted co-alive partners can only mean the
+            // latter, so force-taint the birth in that case regardless
+            // of whether some OTHER untainted candidate also happens to
+            // be present this frame.
+            shouldTaint = otherCandidateUntainted || (taintedCoAliveCount >= 2);
         }
 
         if (shouldTaint) {
