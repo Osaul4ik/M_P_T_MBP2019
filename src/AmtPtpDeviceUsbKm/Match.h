@@ -40,6 +40,23 @@ typedef struct _MATCH_RESULT
     // Identity broken (lift + birth) despite correspondence.
     BOOLEAN NewIdentity[PTP_MAX_CONTACT_POINTS];
 
+    // TRUE when this candidate is matched (CorrespondingPoolIndex valid),
+    // carries IdentityBreak, and the break was suppressed (NewIdentity ==
+    // FALSE) ONLY because it fell inside the wide multi-finger-glitch
+    // window (> IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP, still <
+    // MATCH_MAX_CONTINUATION_DELTA) - see AmtMatchCorrespond. In BOTH
+    // readings of that situation - a genuine BCM5974 renumbering glitch
+    // (the candidate's coordinates are one-frame garbage) or a second,
+    // genuinely new finger that happened to be the only feasible partner
+    // left for this pool slot (no cheap match blocked it) - the
+    // candidate's raw X/Y must NOT be trusted as this pool entry's new
+    // position: the caller (Ptpcore.c Phase C) must hold the pool entry's
+    // existing ReportX/Y instead of feeding it cand->X/Y, so a suppressed
+    // break can never itself become a silent multi-thousand-unit cursor
+    // teleport - which is exactly what happens if it's left unguarded,
+    // regardless of which of the two interpretations was true this frame.
+    BOOLEAN PositionSuppressed[PTP_MAX_CONTACT_POINTS];
+
     // Pool indices with no corresponding candidate (should lift).
     size_t  UnmatchedPoolIndices[MAX_CONTACTS];
     UCHAR   UnmatchedCount;

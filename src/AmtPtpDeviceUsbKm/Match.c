@@ -298,6 +298,17 @@ typedef struct {
     LONGLONG cost;           // squared distance, primary key - see AmtMatchSquaredDist
     BOOLEAN  slotHintMatch;  // secondary key
     LONG     shapeDist;      // tertiary key (see AmtMatchShapeDistance)
+
+    // TWO-PASS FIX (right-then-left / left-then-right stolen-slot
+    // teleport - see the pass1/pass2 split in AmtMatchCorrespond): TRUE
+    // when this edge can only be trusted via the documented BCM5974
+    // renumbering-glitch reasoning - IdentityBreak set AND either solo
+    // context (no glitch mechanism possible at all, see
+    // multiFingerContext) or a jump beyond
+    // IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP. An implausibleBreak edge must
+    // never be allowed to out-compete a normal (non-implausible) edge
+    // for the same pool slot - see rationale below.
+    BOOLEAN  implausibleBreak;
 } MATCH_EDGE;
 
 // Totals for one full candidate->pool assignment (a leaf of the search).
@@ -568,42 +579,157 @@ AmtMatchCorrespond(
             edges[ci][p].cost          = predictedCost;
             edges[ci][p].slotHintMatch = (cand->SlotIndex == Pool[p].LastSlotHint);
             edges[ci][p].shapeDist     = AmtMatchShapeDistance(cand, &Pool[p], widthRange, pressureRange);
+
+            // See MATCH_EDGE.implausibleBreak. Mirrors exactly the
+            // trust decision the post-processing loop below makes for
+            // NewIdentity, computed here too so the SEARCH itself can
+            // refuse to let this edge win a pool slot away from a
+            // cheaper, non-implausible competitor - see the pass1/pass2
+            // split below for why the search needs this, not just the
+            // post-hoc decision.
+            if (cand->IdentityBreak) {
+                if (!multiFingerContext) {
+                    edges[ci][p].implausibleBreak = TRUE;
+                } else {
+                    INT ibDx = (INT)cand->X - (INT)Pool[p].ReportX;
+                    INT ibDy = (INT)cand->Y - (INT)Pool[p].ReportY;
+                    if (ibDx < 0) ibDx = -ibDx;
+                    if (ibDy < 0) ibDy = -ibDy;
+                    edges[ci][p].implausibleBreak =
+                        (ibDx > IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP ||
+                         ibDy > IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP);
+                }
+            }
         }
     }
 
-    // Exact search over the whole assignment - see AmtMatchSearch.
-    size_t assignment[PTP_MAX_CONTACT_POINTS];
-    size_t bestAssignment[PTP_MAX_CONTACT_POINTS];
-    for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
-        assignment[ci] = MATCH_NO_CORRESPONDENCE;
-    }
-
-    BOOLEAN      poolClaimed[MAX_CONTACTS];
-    RtlZeroMemory(poolClaimed, sizeof(poolClaimed));
-
-    MATCH_TOTALS runningTotals;
-    RtlZeroMemory(&runningTotals, sizeof(runningTotals));
-    MATCH_TOTALS bestTotals;
-    RtlZeroMemory(&bestTotals, sizeof(bestTotals));
-    BOOLEAN bestFound = FALSE;
-
-    if (Candidates->Count > 0) {
-        AmtMatchSearch(edges, Candidates->Count, 0, poolClaimed, assignment,
-                       &runningTotals, bestAssignment, &bestTotals, &bestFound);
-    }
-
+    // TWO-PASS SEARCH (real fix for the right-then-left / left-then-right
+    // sequential-teleport repro - see the DebugView capture where a far,
+    // IdentityBreak-flagged second-finger candidate won a pool slot away
+    // from the near candidate that was that pool entry's actual, obvious
+    // continuation).
+    //
+    // A single exact search over ALL edges together is provably correct
+    // for "maximize matched count, then minimize cost" - but that is the
+    // wrong objective whenever an implausibleBreak edge is in play: an
+    // implausibleBreak edge exists ONLY to rescue a pool entry that would
+    // otherwise be lost to a genuine BCM5974 renumbering-glitch frame
+    // (see AUDIT FIX below), never to compete on equal footing for a pool
+    // slot that a normal, spatially-sane candidate already fits. But
+    // "matchedCount" alone can't tell those two situations apart - from
+    // the optimizer's point of view, claiming pool0 via the implausible
+    // 3700-unit-away candidate "counts" exactly the same as claiming it
+    // via the plausible 5-unit-away one, and if doing so lets some OTHER
+    // (e.g. stale/duplicate) pool entry also get consumed, the single-
+    // pass search will happily take that trade - stealing pool0's real
+    // continuation and forcing it to birth as a brand new ContactID
+    // instead, which is precisely the teleport/misfire in the repro.
+    //
+    // Fix: split into two independent searches. Pass 1 runs with every
+    // implausibleBreak edge forced infeasible - i.e. "what's the best
+    // assignment achievable using only spatially-sane edges." This lets
+    // every normal candidate claim its obvious match first, with zero
+    // knowledge of or competition from any implausible one. Pass 2 then
+    // retries ONLY the candidates pass 1 left unmatched, against ONLY the
+    // pool entries pass 1 left unclaimed, this time with implausibleBreak
+    // edges allowed - this is exactly the rescue mechanism the glitch
+    // handling was meant to be: it can only ever bind to a pool slot that
+    // nothing better already wanted, never steal one out from under a
+    // better-fitting candidate. The true multi-finger renumbering glitch
+    // (AUDIT FIX below) still works unchanged - that pool entry has no
+    // competing plausible candidate in the first place, so it survives
+    // pass 1 unclaimed and pass 2 rescues it exactly as before.
+    size_t  bestAssignment[PTP_MAX_CONTACT_POINTS];
     BOOLEAN poolClaimedFinal[MAX_CONTACTS];
+    for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
+        bestAssignment[ci] = MATCH_NO_CORRESPONDENCE;
+    }
     RtlZeroMemory(poolClaimedFinal, sizeof(poolClaimedFinal));
 
-    if (bestFound) {
+    if (Candidates->Count > 0) {
+        // --- Pass 1: plausible edges only. ---
+        MATCH_EDGE edgesPass1[PTP_MAX_CONTACT_POINTS][MAX_CONTACTS];
+        RtlCopyMemory(edgesPass1, edges, sizeof(edges));
         for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
-            if (bestAssignment[ci] == MATCH_NO_CORRESPONDENCE)
+            for (size_t p = 0; p < MAX_CONTACTS; p++) {
+                if (edgesPass1[ci][p].implausibleBreak)
+                    edgesPass1[ci][p].feasible = FALSE;
+            }
+        }
+
+        size_t       assignment1[PTP_MAX_CONTACT_POINTS];
+        BOOLEAN      poolClaimed1[MAX_CONTACTS];
+        MATCH_TOTALS runningTotals1, bestTotals1;
+        BOOLEAN      bestFound1 = FALSE;
+        for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
+            assignment1[ci] = MATCH_NO_CORRESPONDENCE;
+        }
+        RtlZeroMemory(poolClaimed1, sizeof(poolClaimed1));
+        RtlZeroMemory(&runningTotals1, sizeof(runningTotals1));
+        RtlZeroMemory(&bestTotals1, sizeof(bestTotals1));
+
+        AmtMatchSearch(edgesPass1, Candidates->Count, 0, poolClaimed1, assignment1,
+                       &runningTotals1, bestAssignment, &bestTotals1, &bestFound1);
+
+        if (bestFound1) {
+            for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
+                if (bestAssignment[ci] != MATCH_NO_CORRESPONDENCE)
+                    poolClaimedFinal[bestAssignment[ci]] = TRUE;
+            }
+        }
+
+        // --- Pass 2: rescue leftovers with implausibleBreak edges,
+        // restricted to candidates pass 1 didn't match and pool entries
+        // pass 1 didn't claim. ---
+        MATCH_EDGE edgesPass2[PTP_MAX_CONTACT_POINTS][MAX_CONTACTS];
+        RtlCopyMemory(edgesPass2, edges, sizeof(edges));
+        for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
+            if (bestAssignment[ci] != MATCH_NO_CORRESPONDENCE) {
+                // Already matched in pass 1 - remove from pass 2 entirely.
+                for (size_t p = 0; p < MAX_CONTACTS; p++) {
+                    edgesPass2[ci][p].feasible = FALSE;
+                }
                 continue;
+            }
+            for (size_t p = 0; p < MAX_CONTACTS; p++) {
+                if (poolClaimedFinal[p])
+                    edgesPass2[ci][p].feasible = FALSE;
+            }
+        }
 
-            size_t p = bestAssignment[ci];
-            poolClaimedFinal[p] = TRUE;
+        size_t       assignment2[PTP_MAX_CONTACT_POINTS];
+        size_t       bestAssignment2[PTP_MAX_CONTACT_POINTS];
+        BOOLEAN      poolClaimed2[MAX_CONTACTS];
+        MATCH_TOTALS runningTotals2, bestTotals2;
+        BOOLEAN      bestFound2 = FALSE;
+        for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
+            assignment2[ci]     = MATCH_NO_CORRESPONDENCE;
+            bestAssignment2[ci] = MATCH_NO_CORRESPONDENCE;
+        }
+        RtlZeroMemory(poolClaimed2, sizeof(poolClaimed2));
+        RtlZeroMemory(&runningTotals2, sizeof(runningTotals2));
+        RtlZeroMemory(&bestTotals2, sizeof(bestTotals2));
 
-            OutResult->CorrespondingPoolIndex[ci] = p;
+        AmtMatchSearch(edgesPass2, Candidates->Count, 0, poolClaimed2, assignment2,
+                       &runningTotals2, bestAssignment2, &bestTotals2, &bestFound2);
+
+        if (bestFound2) {
+            for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
+                if (bestAssignment2[ci] == MATCH_NO_CORRESPONDENCE)
+                    continue;
+                bestAssignment[ci] = bestAssignment2[ci];
+                poolClaimedFinal[bestAssignment2[ci]] = TRUE;
+            }
+        }
+    }
+
+    for (UCHAR ci = 0; ci < Candidates->Count; ci++) {
+        if (bestAssignment[ci] == MATCH_NO_CORRESPONDENCE)
+            continue;
+
+        size_t p = bestAssignment[ci];
+
+        OutResult->CorrespondingPoolIndex[ci] = p;
 
             // AUDIT FIX (spurious origin==0 mid-touch identity churn):
             // firmware's Origin byte reports 0 ("identity break") in two
@@ -670,6 +796,36 @@ AmtMatchCorrespond(
                          ibDy <= IDENTITY_BREAK_MAX_PLAUSIBLE_JUMP);
 
                     if (!OutResult->NewIdentity[ci]) {
+                        // REAL FIX (single/two-finger sequential teleport,
+                        // right-then-left vs left-then-right repro): this
+                        // branch used to ONLY suppress the identity churn
+                        // (no new ContactID) and stop there - but nothing
+                        // downstream stopped Ptpcore.c's Phase C from
+                        // still feeding this candidate's raw (ibDx/ibDy-
+                        // implausible) X/Y into AmtContactUpdate for pool
+                        // index p. So the pool entry kept its ContactID
+                        // *and* got silently relocated by up to ~4000
+                        // units in one frame anyway - a real, visible
+                        // cursor teleport, just without the extra spurious
+                        // UP/DOWN pair. That teleport is exactly what
+                        // Windows' PTP stack reads as an instant two-
+                        // finger pinch and fires the zoom/context-menu
+                        // gesture for - matching the reported repro.
+                        // Flagging PositionSuppressed here lets Ptpcore.c
+                        // hold the pool entry's existing ReportX/Y instead
+                        // for this one frame, which is correct either way
+                        // this candidate is interpreted: if it's really
+                        // the documented renumbering glitch, the position
+                        // was garbage and should never have been applied;
+                        // if it's a genuinely new second finger that only
+                        // ended up here because it was the sole feasible
+                        // partner left for this pool slot, freezing the
+                        // old finger's position for one frame is still far
+                        // less wrong than teleporting it - and the new
+                        // finger's own real position is not lost, it
+                        // simply births its own contact next frame once it
+                        // stops being the only feasible match for this slot.
+                        OutResult->PositionSuppressed[ci] = TRUE;
                         DbgPrint("[AmtPtp] IdentityBreak SUPPRESSED (glitch) pool=%Iu "
                                  "candX=%u candY=%u lastX=%u lastY=%u\n",
                                  p, Candidates->Candidates[ci].X, Candidates->Candidates[ci].Y,
@@ -677,9 +833,8 @@ AmtMatchCorrespond(
                     }
                 }
 #endif
-            } else {
-                OutResult->NewIdentity[ci] = FALSE;
-            }
+        } else {
+            OutResult->NewIdentity[ci] = FALSE;
         }
     }
 

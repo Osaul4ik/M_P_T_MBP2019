@@ -935,8 +935,25 @@ PTPCore_ProcessFrame(
             }
         }
 
+        // REAL FIX (position-teleport half of the right-then-left /
+        // left-then-right repro - see Match.c's PositionSuppressed
+        // comment): a match accepted only through IdentityBreak
+        // suppression must not let this candidate's raw X/Y become this
+        // pool entry's new reported position. Feed the entry's OWN last
+        // reported position instead for this one frame - everything else
+        // (major/minor/pressure/slot hint/timestamp) still updates
+        // normally, so tracking resumes cleanly from a real position next
+        // frame instead of from a one-frame teleport that Windows' PTP
+        // stack already saw and acted on.
+        USHORT updateX = matchResult.PositionSuppressed[ci]
+                            ? pCtx->ActiveContacts[p].ReportX
+                            : cand->X;
+        USHORT updateY = matchResult.PositionSuppressed[ci]
+                            ? pCtx->ActiveContacts[p].ReportY
+                            : cand->Y;
+
         USHORT repX, repY;
-        AmtContactUpdate(&pCtx->ActiveContacts[p], cand->X, cand->Y,
+        AmtContactUpdate(&pCtx->ActiveContacts[p], updateX, updateY,
                          cand->Major, cand->Minor, cand->Pressure,
                          cand->SlotIndex, NowQpc, pCtx->PerfFrequency.QuadPart,
                          (BOOLEAN)(aliveCount == 1), gestureThisFrame,
