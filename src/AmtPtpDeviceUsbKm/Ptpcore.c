@@ -8,10 +8,13 @@
 
 // Movement past this distance (normalized units - same coordinate space
 // as RETAP_MAX_DISTANCE in ActiveContact.h) from the button-down anchor
-// latches ForceTouchDragLockout for the rest of the press: once the user
-// is visibly dragging (e.g. moving a window) after a hard tap, a deeper
-// press must not fire a synthetic right-click on top of that drag.
-#define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 60
+// latches ForceTouchDragLockout for the rest of the press. Unlike before,
+// this is no longer just a guard against ENTERING force touch - it can
+// also retroactively CANCEL a force touch that has already been decided
+// (see the click arbitration block below): a press that has moved this
+// far is a window/file/selection drag, full stop, no matter how hard it
+// was pressed at any point during the hold.
+#define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 70
 
 // How long PTPCore will wait, once the button goes down, for the press
 // to either cross FORCE_TOUCH_PRESSURE_THRESHOLD or start receding
@@ -780,17 +783,10 @@ PTPCore_ProcessFrame(
     // the force-touch check below so both see the same, already-updated
     // state this frame. Once the button is held, this press stays
     // CLICK_ARBITRATION_PENDING until one of four things happens:
-    //   - the drag lockout trips (finger has moved past
-    //     FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the button-down anchor,
-    //     e.g. dragging a window) -> HARD_TAP, unconditionally, even if
-    //     pressure ALSO crosses the force-touch threshold in this exact
-    //     same frame. Movement wins over pressure: a press that's moving
-    //     is a drag, full stop, regardless of how hard it's pressed.
-    //     Checked FIRST, ahead of the pressure check below, specifically
-    //     for that same-frame race;
     //   - pressure crosses FORCE_TOUCH_PRESSURE_THRESHOLD (and the drag
     //     lockout has NOT tripped) -> FORCE_TOUCH, the ordinary click is
-    //     suppressed for the rest of the press;
+    //     suppressed for the rest of the press - UNLESS a later frame
+    //     trips the drag lockout, see below;
     //   - pressure falls CLICK_ARBITRATION_PRESSURE_HYSTERESIS units or
     //     more below the highest pressure seen so far this press, before
     //     ever reaching the threshold -> the press has peaked and is on
@@ -801,14 +797,21 @@ PTPCore_ProcessFrame(
     //     only falling meaningfully below the best value seen is;
     //   - none of the above within CLICK_ARBITRATION_TIMEOUT_MS (pressure
     //     climbing slowly or just wobbling) -> give up waiting -> HARD_TAP.
-    // The decision then latches for the remainder of the press (reset to
-    // IDLE only on button release), so a later pressure swing OR later
-    // movement can't flip it - once FORCE_TOUCH is decided, moving the
-    // finger while still pressing is a right-click-drag (e.g. dragging
-    // out a selection) and must NOT cancel the force touch; only the
-    // pressure dropping back down (or the button releasing) ends it -
-    // see forceTouchNow below, which is intentionally NOT gated on the
-    // drag lockout once FORCE_TOUCH is already latched.
+    //
+    // REWORK (force-touch-vs-drag): the drag lockout (movement past
+    // FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the button-down anchor) is
+    // now checked on EVERY frame, ahead of everything else, and applies
+    // even to a press that has already latched FORCE_TOUCH - not just
+    // during PENDING. A genuine force touch is only ever confirmed if the
+    // finger never moves past the lockout distance for the WHOLE press,
+    // right up to release; move too far at any point - before pressure
+    // crosses the threshold, after it crosses, or even after force touch
+    // has already fired - and this press is unconditionally a HARD_TAP
+    // (window/file/selection drag) instead. This is a one-way downgrade:
+    // once HARD_TAP, nothing later in the same press (pressure or
+    // distance) can turn it back into FORCE_TOUCH. Reset to IDLE only on
+    // button release, so the next press re-arms and must earn FORCE_TOUCH
+    // again on its own.
     if (!ButtonDown) {
         pCtx->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
     } else {
@@ -817,18 +820,20 @@ PTPCore_ProcessFrame(
             pCtx->ClickArbitrationStartQpc      = NowQpc;
             pCtx->ClickArbitrationPeakPressure  = framePeakPressure;
         }
-        if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
+
+        if (pCtx->ForceTouchDragLockout) {
+            // Movement past the lockout distance always wins, this frame
+            // or any later one - including retroactively cancelling a
+            // FORCE_TOUCH decision already made earlier this same press.
+            pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
+        } else if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
             if (framePeakPressure > pCtx->ClickArbitrationPeakPressure)
                 pCtx->ClickArbitrationPeakPressure = framePeakPressure;
 
             INT dropFromPeak = (INT)pCtx->ClickArbitrationPeakPressure -
                                 (INT)framePeakPressure;
 
-            if (pCtx->ForceTouchDragLockout) {
-                // Movement beats pressure, even in a same-frame tie -
-                // checked before the threshold test below on purpose.
-                pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
-            } else if (framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
+            if (framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
             } else if (dropFromPeak >= CLICK_ARBITRATION_PRESSURE_HYSTERESIS) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
@@ -842,24 +847,30 @@ PTPCore_ProcessFrame(
                 }
             }
         }
-        // else: HARD_TAP or FORCE_TOUCH already latched - hold it.
+        // else: FORCE_TOUCH already latched and drag lockout hasn't
+        // tripped (checked above) - hold it. HARD_TAP is likewise held
+        // (no branch flips it back).
     }
 
     *OutButtonClickReport =
         (pCtx->ClickArbitrationState == CLICK_ARBITRATION_HARD_TAP);
 
     // Force-touch: once click arbitration has latched FORCE_TOUCH for
-    // this press, it stays engaged unconditionally until the button is
-    // released - it does NOT re-check pressure frame-to-frame anymore.
-    // Pressure naturally wobbles while the finger holds/drags (sensor
-    // noise, grip changes), and re-testing it here every frame caused a
-    // spurious re-trigger: a momentary dip back under the threshold
-    // dropped ForceTouchActive (sending a synthetic right-click-UP),
-    // then the next frame's recovery sent a right-click-DOWN again -
-    // a second, unwanted force-touch trigger mid-press. A real re-trigger
-    // must only happen after a genuine release (button up resets
-    // ClickArbitrationState to IDLE, so the next press starts PENDING
-    // and must cross the threshold again on its own).
+    // this press, it stays engaged until the button is released OR the
+    // drag lockout retroactively downgrades ClickArbitrationState to
+    // HARD_TAP above (real window/file drag) - it does NOT re-check
+    // pressure frame-to-frame anymore. Pressure naturally wobbles while
+    // the finger holds/drags (sensor noise, grip changes), and re-testing
+    // pressure here every frame caused a spurious re-trigger: a momentary
+    // dip back under the threshold dropped ForceTouchActive (sending a
+    // synthetic right-click-UP), then the next frame's recovery sent a
+    // right-click-DOWN again - a second, unwanted force-touch trigger
+    // mid-press. A real re-trigger must only happen after a genuine
+    // release (button up resets ClickArbitrationState to IDLE, so the
+    // next press starts PENDING and must cross the threshold again on
+    // its own) - the drag-lockout downgrade is the one deliberate
+    // exception, and it falls straight out of ClickArbitrationState no
+    // longer reading FORCE_TOUCH below, same as any other HARD_TAP.
     BOOLEAN forceTouchNow =
         ButtonDown && (pCtx->ClickArbitrationState == CLICK_ARBITRATION_FORCE_TOUCH);
 
