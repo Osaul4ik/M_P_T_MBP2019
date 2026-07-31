@@ -14,6 +14,14 @@
 // (see the click arbitration block below): a press that has moved this
 // far is a window/file/selection drag, full stop, no matter how hard it
 // was pressed at any point during the hold.
+// TUNING: raised from 70 to 250 (2026-07-31) - at this hardware's ~120-125
+// raw units/mm (see LOGICAL_MAXIMUM comment in AppleDefinition.h vs the
+// MacBook Pro 16" 2019's ~160x99mm physical pad), 70 units was ~0.55-0.6mm
+// - tighter than typical finger micro-tremor during a deliberate firm
+// press, so legitimate force-touch attempts were getting downgraded to
+// HARD_TAP by their own tremor alone. 250 units is ~2mm: forgiving enough
+// to absorb tremor/grip-shift during a press, still well short of a
+// genuine intentional drag (window/file/selection).
 #define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 250
 
 // Absolute wall-clock safety-net cap: once the button goes down, no press
@@ -22,6 +30,13 @@
 // FAST_RESOLVE in a row. The common case resolves much sooner, via either
 // the stall fast-exit below (ordinary flat/light press) or the drop-from-
 // peak hysteresis (a press that peaked and is now receding). Tunable.
+// TUNING: raised from 60 to 90 (2026-07-31) - now that the stall fast-exit
+// above resolves an ordinary press in ~3 frames (~24ms), this cap no
+// longer gates typical click latency at all; it only ever matters for a
+// press that keeps climbing slowly/unevenly toward the threshold without
+// stalling. Widening it gives a deliberately slow (not sharp/sudden)
+// force-touch press more room to actually reach the threshold, with no
+// downside for the common case.
 #define CLICK_ARBITRATION_TIMEOUT_MS 90
 
 // A press is considered to be receding once its pressure falls this many
@@ -858,7 +873,28 @@ PTPCore_ProcessFrame(
     // distance) can turn it back into FORCE_TOUCH. Reset to IDLE only on
     // button release, so the next press re-arms and must earn FORCE_TOUCH
     // again on its own.
+    //
+    // FIX (fast-click loss): a physical press+release shorter than
+    // whatever PENDING needed to resolve (threshold cross, hysteresis
+    // drop, stall fast-exit, or the CLICK_ARBITRATION_TIMEOUT_MS safety
+    // net) used to vanish entirely - ButtonDown going FALSE force-reset
+    // ClickArbitrationState straight to IDLE below, so *OutButtonClickReport
+    // (computed from ClickArbitrationState after this block) read FALSE on
+    // every single frame of that press: never PENDING->HARD_TAP because
+    // release cut it off first, never TRUE on the release frame itself
+    // because IDLE isn't HARD_TAP either. A press that ends while still
+    // PENDING never got the chance to reach FORCE_TOUCH_PRESSURE_THRESHOLD,
+    // so it is by definition not a force touch - report it as an ordinary
+    // click on this exact release frame via releasedFastClick below,
+    // instead of silently dropping it. FORCE_TOUCH/HARD_TAP presses don't
+    // need this: they already reported themselves TRUE on an earlier held
+    // frame before release ever arrived.
+    BOOLEAN releasedFastClick = FALSE;
+
     if (!ButtonDown) {
+        if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
+            releasedFastClick = TRUE;
+        }
         pCtx->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
     } else {
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_IDLE) {
@@ -930,6 +966,7 @@ PTPCore_ProcessFrame(
     }
 
     *OutButtonClickReport =
+        releasedFastClick ||
         (pCtx->ClickArbitrationState == CLICK_ARBITRATION_HARD_TAP);
 
     // Force-touch: once click arbitration has latched FORCE_TOUCH for
