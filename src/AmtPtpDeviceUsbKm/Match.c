@@ -124,10 +124,22 @@ AmtMatchBuildCandidates(
         }
 
         if (bestPoolIdx == MAX_CONTACTS) {
-            // No anchor: full-confidence birth candidate.
+            // No anchor: brand-new, below-tip-threshold contact - X/Y are
+            // live (not stale, so TipDropApplied=0), but its existence is
+            // unverified (Unconfirmed=1). Birthed so a genuine soft tap
+            // still gets tracked from frame 1 and can be confirmed as
+            // soon as it matches this same pool entry again next frame
+            // (below, the anchor-found branch) - but NOT reported
+            // Confident to Windows yet, so a one-off noise blip (sensor
+            // static, residual moisture/oil buildup - never anchors to
+            // anything on a later frame because there's nothing real
+            // there to re-match) can no longer masquerade as an extra
+            // finger for multi-finger tap/gesture disambiguation. See
+            // MATCH_CANDIDATE.Unconfirmed and PTPCore.c reportConfident.
             cand.X              = rc->X;
             cand.Y              = rc->Y;
             cand.TipDropApplied = 0;
+            cand.Unconfirmed    = 1;
             OutCandidates->Candidates[OutCandidates->Count++] = cand;
             continue;
         }
@@ -145,14 +157,21 @@ AmtMatchBuildCandidates(
         cand.Y = isStationary ? Pool[bestPoolIdx].ReportY : rc->Y;
 
         // AUDIT FIX: this was previously hardcoded to 0 in both branches,
-        // silently disabling the documented "Confidence=FALSE on stale
-        // bridged position" contract (see Match.h / Interrupt.c's
-        // outC->Confident = (cand->TipDropApplied == 0)). Only the
+        // silently disabling the documented "position is stale on a
+        // stationary bridge" contract (see Match.h). Only the
         // stationary/anchor branch actually reports a stale position
         // (Pool[bestPoolIdx].ReportX/Y instead of the live rc->X/Y), so
-        // only that branch should mark low confidence. The moving branch
-        // reports the real live coordinate and stays full-confidence.
+        // only that branch marks the position stale. The moving branch
+        // reports the real live coordinate.
         cand.TipDropApplied = isStationary ? 1 : 0;
+
+        // Unconfirmed stays FALSE (RtlZeroMemory default) here in BOTH
+        // the stationary and moving sub-cases: this candidate matched an
+        // existing pool anchor, so - unlike the no-anchor birth case
+        // above - its existence is already established, regardless of
+        // whether it's holding still this exact frame. Confidence must
+        // not depend on TipDropApplied/isStationary anymore (a real tap
+        // is expected to sit nearly still) - see MATCH_CANDIDATE.Unconfirmed.
 
         OutCandidates->Candidates[OutCandidates->Count++] = cand;
     }

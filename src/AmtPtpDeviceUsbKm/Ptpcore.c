@@ -735,28 +735,30 @@ PTPCore_ProcessFrame(
                          (BOOLEAN)(aliveCount == 1), gestureThisFrame,
                          &repX, &repY);
 
-        // AUDIT FIX (click Confidence false-negative): TipDropApplied
-        // means "X/Y is stale/bridged," not "this isn't a real finger" -
-        // but Phase C was reusing it as-is for Confident on EVERY report,
-        // including a buttonClickEdge rebind's DOWN. A physical mechanical
-        // click on this hardware momentarily flexes the pad and shrinks
-        // the reported touch ellipse (Major/Minor), often dropping it
-        // below AmtMatchCandidateTip's threshold right at the click - and
-        // since a deliberate click is almost always thrown while the
-        // finger is held still, that lands in the "isStationary" tip-drop
-        // branch (Match.c) which sets TipDropApplied=1. That falsely
-        // reported the freshly-rebound ContactID's DOWN as Confident=
-        // FALSE, and Windows' PTP stack discards non-confident contacts
-        // for pointer/click purposes - so the click never registered
-        // unless the finger was lifted and touched again (a real birth,
-        // on a later frame once the ellipse recovered above threshold).
-        // A rebound contact is by definition an already-tracked, real
-        // finger (identity swap only, per AmtContactRebindIdentity) - so
-        // its Confidence must not be gated by the tip-threshold heuristic
-        // meant for brand-new/continuing touch candidates.
+        // AUDIT FIX (click Confidence false-negative) + FIX (soft-tap
+        // Confidence flicker): Confidence must track whether this
+        // contact's EXISTENCE is established, not whether its position
+        // this exact frame is stale/bridged (TipDropApplied) or whether
+        // it happens to be holding still (isStationary, Match.c) - a
+        // deliberate soft tap or a held mechanical click both sit nearly
+        // motionless by nature, and penalizing that was exactly backwards:
+        // it used to report Confident=TRUE only on a contact's single
+        // ambiguous first frame (unverified birth) and Confident=FALSE on
+        // every steady frame after, for as long as it stayed still - the
+        // worst possible ordering for a short-lived tap, and the direct
+        // cause of soft 2-finger taps intermittently reading as 1 or 3
+        // fingers to Windows' PTP stack, and solo soft taps intermittently
+        // not registering at all. See MATCH_CANDIDATE.Unconfirmed
+        // (Match.h/Match.c) - TRUE only for a genuinely brand-new,
+        // below-tip-threshold, no-pool-anchor candidate (can't yet rule
+        // out sensor noise); FALSE for everything else, including an
+        // anchored bridge candidate whether moving or stationary, and
+        // including a buttonClickEdge rebind (always an already-tracked,
+        // real finger by construction - identity swap only, per
+        // AmtContactRebindIdentity).
         BOOLEAN reportConfident = rebindThisFrame[p]
             ? TRUE
-            : (BOOLEAN)(cand->TipDropApplied == 0);
+            : (BOOLEAN)(cand->Unconfirmed == 0);
 
         AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
                            repX, repY,

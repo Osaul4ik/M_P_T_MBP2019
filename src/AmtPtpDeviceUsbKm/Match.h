@@ -19,7 +19,25 @@ typedef struct _MATCH_CANDIDATE
     USHORT  Pressure;       // raw ADC units - matching tie-break only
     BOOLEAN PalmLocal;       // excluded from matching/reporting
     BOOLEAN IdentityBreak;   // firmware origin==0 signal
-    UCHAR   TipDropApplied;  // non-zero when X/Y is stale (debounce bridge)
+    UCHAR   TipDropApplied;  // non-zero when X/Y is stale (debounce bridge).
+                             // Position provenance only - does NOT drive
+                             // Confidence anymore, see Unconfirmed below.
+
+    // FIX (soft-tap Confidence flicker / phantom-finger birth): whether
+    // this candidate's very EXISTENCE (not just its position) is still
+    // unverified. TRUE only for a below-tip-threshold candidate with no
+    // pool anchor - i.e. this exact physical contact has never been
+    // observed before and is too small on its own to be sure it isn't
+    // sensor noise. FALSE for every other case, INCLUDING an anchored
+    // below-threshold bridge candidate (isStationary or not) - once a
+    // contact has matched an existing pool entry at all, its existence is
+    // established and it should read as a confident finger to Windows'
+    // PTP stack regardless of whether it happens to be holding still this
+    // exact frame (a real tap/soft-press is *expected* to be nearly
+    // stationary - penalizing stillness here was backwards). See
+    // AmtMatchBuildCandidates for where this is set, and PTPCore.c's
+    // reportConfident derivation for where it's consumed.
+    BOOLEAN Unconfirmed;
 } MATCH_CANDIDATE;
 
 typedef struct _MATCH_CANDIDATE_SET
