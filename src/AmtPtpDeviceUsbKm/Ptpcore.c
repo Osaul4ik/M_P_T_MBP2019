@@ -327,9 +327,25 @@ PTPCore_ProcessFrame(
                        &matchResult);
 
     // Per-frame multi-finger check (feeds the taint gate below)
+    //
+    // FIX (same root cause as reportConfident below): an Unconfirmed
+    // candidate (Match.c - brand-new, below-tip-threshold, no pool
+    // anchor, existence not yet verified) must not count as a "finger"
+    // here either. Before this fix, a single-frame noise blob landing in
+    // the same frame as a genuine solo tap's birth inflated aliveCount to
+    // 2, which (a) set gestureThisFrame=TRUE and (b) fed the
+    // otherCandidateUntainted/taintedCoAliveCount check further down,
+    // together capable of falsely tainting an otherwise ordinary solo tap
+    // as WasInGesture. A gesture-tainted lift deliberately skips
+    // AmtRecentLiftRecord (see the Phase A comment below), so the next
+    // fast tap right after it can't find a nearby recent lift and loses
+    // its retap smoothing - a plausible contributor to "second tap of a
+    // fast double-tap sometimes doesn't register" on top of the
+    // Confidence-flicker fix above.
     UCHAR aliveCount = 0;
     for (UCHAR ci = 0; ci < candidates.Count; ci++) {
-        if (!candidates.Candidates[ci].PalmLocal)
+        if (!candidates.Candidates[ci].PalmLocal &&
+            !candidates.Candidates[ci].Unconfirmed)
             aliveCount++;
     }
 

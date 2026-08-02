@@ -45,7 +45,11 @@ typedef struct _PTP_CORE_CONTACT
     USHORT         X;
     USHORT         Y;
     CONTACT_PHASE  Phase;
-    BOOLEAN        Confident;     // FALSE if position carried over (tip-drop)
+    BOOLEAN        Confident;     // FALSE only for a brand-new, unverified
+                                   // below-tip-threshold contact with no
+                                   // pool anchor yet (Match.c Unconfirmed) -
+                                   // NOT tied to stale/bridged position
+                                   // anymore, see Match.h MATCH_CANDIDATE.
     BOOLEAN        PalmSuspect;   // local-palm classification; suppressed
                                   // contacts don't appear in PTP_CORE_FRAME
 } PTP_CORE_CONTACT, *PPTP_CORE_CONTACT;
