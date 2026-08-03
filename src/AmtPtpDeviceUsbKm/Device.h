@@ -79,6 +79,25 @@ typedef struct _DEVICE_CONTEXT
     USHORT  ForceTouchAnchorY;
     BOOLEAN ForceTouchDragLockout;
 
+    // TUNING (2026-08-03): the total-distance-from-anchor check above only
+    // catches a drag once it has traveled FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE
+    // in total - which takes several frames of physical motion. Pressure,
+    // on the other hand, can cross FORCE_TOUCH_PRESSURE_THRESHOLD in as
+    // little as one frame on a hard, deliberate press. A press-and-
+    // immediately-drag-fast gesture can therefore win the race: force
+    // touch latches (and its down-edge is already sent to Windows) BEFORE
+    // accumulated distance ever trips the lockout - the later retroactive
+    // downgrade stops the driver's own force-touch state, but it cannot
+    // un-send a right-click the OS already received, so the context menu
+    // still opens. ForceTouchLastX/Y track the same nearest-to-anchor
+    // contact's position one frame at a time, so a single frame's motion
+    // (not just the cumulative total) can trip the lockout - catching a
+    // fast drag-with-force-press before pressure ever gets the chance to
+    // confirm it. Reset alongside the anchor.
+    USHORT  ForceTouchLastX;
+    USHORT  ForceTouchLastY;
+    BOOLEAN ForceTouchLastValid;
+
     // AUDIT FIX: force-touch synthetic right-click delivery (Interrupt.c)
     // opportunistically claims a SECOND pending IOCTL_HID_READ_REPORT
     // request off InputQueue the moment a down/up edge fires. If no

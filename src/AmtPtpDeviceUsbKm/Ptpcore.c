@@ -34,6 +34,26 @@
 // drag get reclassified much sooner.
 #define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 160
 
+// Single-frame (frame-to-frame) motion threshold - separate from, and
+// deliberately much smaller than, FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE above.
+// That check only trips once TOTAL movement since button-down exceeds 160
+// units, which takes several frames to accumulate. This one catches a
+// single frame's motion in isolation, so a drag that starts out fast
+// trips the lockout almost immediately - before a hard, simultaneous
+// press has a chance to cross FORCE_TOUCH_PRESSURE_THRESHOLD first (see
+// ForceTouchLastX/Y in Device.h for the failure mode this fixes: a fast
+// press-and-drag opening a context menu even though the user was clearly
+// dragging, not force-clicking).
+// TUNING: 45 units/frame (~0.35mm at this hardware's ~120-125 units/mm,
+// i.e. roughly 40-45mm/s at ~120Hz scan rate) - comfortably above finger
+// tremor/grip-shift during a stationary press (which the 160-unit TOTAL
+// budget above already absorbs over many frames), but well below any
+// deliberate drag's per-frame travel. Revisit if real-device testing
+// shows a slow-but-intentional drag getting caught by this too early, or
+// a fast force-touch press-in-place false-tripping it (grip shift during
+// the press itself, not real drag intent).
+#define FORCE_TOUCH_FAST_FRAME_DELTA 45
+
 // Absolute wall-clock safety-net cap: once the button goes down, no press
 // stays PENDING longer than this no matter what, even one that keeps
 // inching up without ever stalling for CLICK_ARBITRATION_STALL_FRAMES_
@@ -811,6 +831,7 @@ PTPCore_ProcessFrame(
     if (!ButtonDown) {
         pCtx->ForceTouchAnchorValid = FALSE;
         pCtx->ForceTouchDragLockout = FALSE;
+        pCtx->ForceTouchLastValid   = FALSE;
     } else {
         // AUDIT FIX: previously gated on (buttonClickEdge && ContactCount>0),
         // so if the exact click-edge frame happened to report zero raw
@@ -844,8 +865,9 @@ PTPCore_ProcessFrame(
             // though the actual pressing finger never moved. Nearest-match
             // each frame instead: only the contact closest to the anchor is
             // compared against the threshold.
-            LONG bestDistSq = -1;
-            INT  bestDx = 0, bestDy = 0;
+            LONG   bestDistSq = -1;
+            INT    bestDx = 0, bestDy = 0;
+            USHORT bestX = 0, bestY = 0;
             for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
                 INT dx = (INT)RawFrame->Contacts[fi].X - (INT)pCtx->ForceTouchAnchorX;
                 INT dy = (INT)RawFrame->Contacts[fi].Y - (INT)pCtx->ForceTouchAnchorY;
@@ -854,6 +876,8 @@ PTPCore_ProcessFrame(
                     bestDistSq = distSq;
                     bestDx     = dx;
                     bestDy     = dy;
+                    bestX      = RawFrame->Contacts[fi].X;
+                    bestY      = RawFrame->Contacts[fi].Y;
                 }
             }
 
@@ -864,6 +888,29 @@ PTPCore_ProcessFrame(
                     ady > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE) {
                     pCtx->ForceTouchDragLockout = TRUE;
                 }
+
+                // FIX (press-hard-and-immediately-drag-fast opens a
+                // context menu): see ForceTouchLastX/Y comment in
+                // Device.h. A fast drag can cover FORCE_TOUCH_FAST_
+                // FRAME_DELTA in a single frame long before it covers
+                // the full FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the
+                // anchor - checking frame-to-frame motion here catches
+                // that fast onset immediately, before pressure gets the
+                // chance to confirm FORCE_TOUCH on an earlier frame than
+                // the total-distance check above would ever trip.
+                if (pCtx->ForceTouchLastValid) {
+                    INT fdx = (INT)bestX - (INT)pCtx->ForceTouchLastX;
+                    if (fdx < 0) fdx = -fdx;
+                    INT fdy = (INT)bestY - (INT)pCtx->ForceTouchLastY;
+                    if (fdy < 0) fdy = -fdy;
+                    if (fdx > FORCE_TOUCH_FAST_FRAME_DELTA ||
+                        fdy > FORCE_TOUCH_FAST_FRAME_DELTA) {
+                        pCtx->ForceTouchDragLockout = TRUE;
+                    }
+                }
+                pCtx->ForceTouchLastX     = bestX;
+                pCtx->ForceTouchLastY     = bestY;
+                pCtx->ForceTouchLastValid = TRUE;
             }
         }
     }
