@@ -52,11 +52,12 @@ The driver has been extensively tested on this device and is optimized specifica
 
 ---
 
-# Installation
-
-1. Run InstallCert.bat as Admin
-1. Install the WellspringPTP driver.
-2. Reboot if required.
+### 📦 Installation
+0. Extract the archive.
+1. Run TestMode.bat, enter 1, and press Enter to enable Test Mode.
+2. Restart your computer.
+3. Run InstallSert.bat to install the certificate.
+4. Right-click AmtPtpDeviceUsbKm.inf and select "Install".
 
 > **Note**
 > The driver currently requires Windows Test Mode because it is not digitally signed.
@@ -82,8 +83,8 @@ This step is important before installing another Apple touchpad driver (Trackpad
 * ✅ Scroll improvements
 * ✅ Cursor jump fixes
 * ✅ Force Touch implementation
-* ❌  Driver optimization
-* ❌  Code audit
+* ✅  Driver optimization
+* ✅  Code audit
   
 
 # Credits
