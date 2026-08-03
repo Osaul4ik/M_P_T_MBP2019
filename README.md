@@ -74,7 +74,6 @@ This step is important before installing another Apple touchpad driver (Trackpad
 ---
 
 # Development Status
-# USBKM Driver (MacBook Pro 16,1)
 
 * ✅ Contact lifecycle redesign
 * ✅ Stable contact matching
