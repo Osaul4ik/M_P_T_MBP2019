@@ -37,7 +37,7 @@ The driver has been extensively tested on **MacBook Pro 16,1 (2019) and Air 2015
 
 * Apple MacBook Pro 16,1 (2019, T2)
 
-### Testing
+### Testing (Untested, use at your own risk)
 
 MacBook Pro:
 - MacBook Pro 2015 13" (12,1) — Force Touch, no Touch Bar
