@@ -76,10 +76,11 @@ MacBook 12" (2015-2017) — SPI, not USB
 
 ---
 
-### 📦 Installation
+# 📦 Installation
 0. Extract the archive.
 1. Run TestMode.bat, enter 1, and press Enter to enable Test Mode.
-2. Restart your computer.
+2. **Restart your computer.** (Really)
+
 3. Run InstallSert.bat to install the certificate.
 4. Right-click AmtPtpDeviceUsbKm.inf and select "Install".
 
