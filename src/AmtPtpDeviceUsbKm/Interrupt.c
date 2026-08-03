@@ -1,5 +1,4 @@
-// Interrupt.c: USB completion -> RawFrame -> PTPCore_ProcessFrame -> PTP_REPORT.
-// No lifecycle decisions here.
+// Route USB input through PTPCore into HID reports.
 
 #include "Driver.h"
 #include "PTPCore.h"
@@ -23,7 +22,7 @@ AmtReportCheckInvariants(_In_ const PTP_REPORT* Report)
 #define AmtReportCheckInvariants(Report) ((VOID)0)
 #endif
 
-// Serialize PTP_CORE_FRAME to PTP_REPORT. Pure formatting.
+// Copy core-frame contacts into the final report.
 static VOID
 AmtSerializeCoreFrameToReport(
     _In_  const PTP_CORE_FRAME* CoreFrame,
@@ -46,16 +45,7 @@ AmtSerializeCoreFrameToReport(
     Report->ContactCount = n;
 }
 
-// Push a new force-touch edge onto the tail of the pending-edge FIFO
-// (Device.h: PendingForceTouchEdgeQueue). Edges only ever fire on a real
-// down/up state change (PTPCore_ProcessFrame), so they arrive strictly
-// alternating - the capacity-4 margin means this overflow path is not
-// expected to be hit in practice. If it somehow is (an extremely slow
-// mouhid.sys read cadence backing up several full press/release cycles),
-// the OLDEST queued edge is dropped to make room: a several-cycles-stale
-// edge is less useful to the user than the newest one, and dropping from
-// the head keeps the queue's ordering-by-recency invariant intact for
-// everything already queued.
+// Queue a force-touch edge for later delivery.
 static VOID
 AmtForceTouchEdgeEnqueue(
     _Inout_ PDEVICE_CONTEXT pCtx,
@@ -84,14 +74,7 @@ AmtPtpConfigContReaderForInterruptEndPoint(_In_ PDEVICE_CONTEXT DeviceContext)
     NTSTATUS status;
     size_t   transferLength = 0;
 
-    // transferLength is DeviceInfo->tp_datalen - already computed once by
-    // the DATAFORMAT macro in AppleDefinition.h as HEADER_TYPEn +
-    // FSIZE_TYPEn*MAX_FINGERS for the table entry's tp_type. Recomputing
-    // the same formula by hand here would just be a second place that
-    // formula lives, with no independent check behind it (Bcm5974ConfigTable
-    // is a static compile-time table, not attacker/hardware controlled) -
-    // this switch exists only to confirm tp_type is one of the enumerators
-    // WdfUsbTargetPipeConfigContinuousReader's caller expects.
+    // Confirm the device uses a supported packet layout.
     switch (DeviceContext->DeviceInfo->tp_type) {
     case TYPE1:
     case TYPE2:
@@ -169,40 +152,24 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         return;
     }
 
-    // AUDIT FIX: the continuous reader can have more than one read pending,
-    // so this callback can re-enter on another CPU before a prior call has
-    // finished with LastReportTime/ScanTimeAccumulator/ActiveContacts[]/
-    // ClickArbitrationState/ForceTouch*/PendingForceTouchEdge* (and
-    // everything PTPCore_ProcessFrame derives from them). Hold StateLock
-    // (raises to DISPATCH_LEVEL) across the whole state-mutating body;
-    // every exit path below releases it before returning.
+    // AUDIT FIX: the continuous reader can re-enter on another CPU. Hold
+    // StateLock (DISPATCH_LEVEL) across the whole state-mutating body.
     WdfSpinLockAcquire(pCtx->StateLock);
 
     RtlZeroMemory(&Report, sizeof(PTP_REPORT));
     Report.ReportID = REPORTID_MULTITOUCH;
 
-    // BUG FIX: KeQueryPerformanceCounter's RETURN VALUE is the current tick
-    // count; the out-param is the counter FREQUENCY, which is constant for
-    // the life of the device (already latched once in D0Entry, see
-    // Device.c). The previous code discarded the return value and
-    // overwrote Now with the frequency instead, so Now.QuadPart never
-    // advanced between interrupt completions - every dtTicks/PerfDelta
-    // computed from it downstream was permanently 0.
+    // BUG FIX: KQPC's RETURN VALUE is the tick count; the out-param is the
+    // FREQUENCY (constant, latched at D0Entry). Previously Now was being
+    // overwritten with the frequency, so time deltas were permanently 0.
     Now = KeQueryPerformanceCounter(NULL);
 
-    // SCANTIME FIX: the Windows PTP spec defines ScanTime as a
-    // free-running, ever-increasing hardware-clock sample (100us units) -
-    // Windows differentiates it ACROSS frames itself to derive velocity
-    // and inertia. Sending the pre-computed inter-frame delta directly
-    // (always ~the same small value at a steady scan rate) makes
-    // consecutive ScanTime values look nearly IDENTICAL rather than
-    // monotonically increasing - Windows' own frame-to-frame diff of two
-    // near-equal deltas collapses to ~0, which reads as "no motion" no
-    // matter how fast the finger is actually moving.
-    //
-    // Fix: accumulate elapsed time onto a running ULONG counter and only
-    // truncate the low 16 bits into the report field. USHORT wraparound
-    // here is expected/required by spec, not a bug.
+    // SCANTIME FIX: Windows PTP expects a free-running, ever-increasing
+    // 100us clock, and differentiates it across frames itself. Sending
+    // the pre-computed inter-frame delta made consecutive values nearly
+    // identical, collapsing Windows' velocity/inertia derivation to ~0.
+    // Accumulate elapsed time onto a running ULONG and truncate the low
+    // 16 bits into the report field (USHORT wraparound is expected).
     PerfDelta = Now.QuadPart - pCtx->LastReportTime.QuadPart;
     if (pCtx->PerfFrequency.QuadPart > 0)
         PerfDelta = PerfDelta * 10000LL / pCtx->PerfFrequency.QuadPart;
@@ -248,11 +215,9 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // Serialize to PTP_REPORT
     AmtSerializeCoreFrameToReport(&coreFrame, &Report);
 
-    // Arbitrated by PTPCore (Ptpcore.c click arbitration), not the raw
-    // button bit directly: withheld while a press is still deciding
-    // between an ordinary click and a force touch, and permanently
-    // suppressed for presses that resolve to force touch - so a force
-    // touch never also reports a regular click underneath it.
+    // Arbitrated by PTPCore, not the raw button bit: withheld while a
+    // press is deciding between click and force-touch, and permanently
+    // suppressed for force-touch presses (so no click fires underneath).
     if (buttonClickReport) {
         Report.IsButtonClicked = TRUE;
     }
@@ -278,27 +243,15 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // InputQueue (mouhid.sys keeps its own read continuously queued
     // there, same as the touch/digitizer client does).
     //
-    // AUDIT FIX #1: previously, if no second request was available this
-    // exact pass, the edge was dropped outright - a reproducible way to
-    // lose a force-touch click depending on mouhid.sys's read cadence.
+    // AUDIT FIX #1: edges were dropped if no mouse request was available
+    // that pass - depending on mouhid.sys's read cadence.
+    // AUDIT FIX #2: latching only the latest edge lost fast down+up pairs
+    // (the up overwrote the down, so Button2 never appeared to move).
+    // Edges are now queued (PendingForceTouchEdgeQueue) and delivered in
+    // order, one per available mouse request per completion.
     //
-    // AUDIT FIX #2: the very first fix latched only the SINGLE most
-    // recent undelivered edge ("fresh edge supersedes the stale one").
-    // That loses the click just as surely when the finger presses hard
-    // and releases fast enough that BOTH the down and the up edge arrive
-    // before a mouse request is ever available: the up simply overwrites
-    // the down in the latch, and Windows never sees Button2 move at all -
-    // the whole force-touch click silently vanishes. Edges are now queued
-    // (PendingForceTouchEdgeQueue, Device.h) and delivered strictly in
-    // order, one per available mouse request per interrupt completion, so
-    // a fast down+up still reaches Windows as two reports - possibly a
-    // frame or two late - instead of cancelling out.
-    //
-    // SIMPLIFICATION (2026-08-03): PTPCore_ProcessFrame now decides the
-    // whole force-touch click at once, on the button-release frame (see
-    // OutForceTouchClick, PTPCore.h) - down and up are never reported as
-    // separate edges on separate frames anymore, so there is nothing left
-    // to test independently here.
+    // SIMPLIFICATION (2026-08-03): PTPCore now decides the whole click on
+    // the release frame (OutForceTouchClick) - nothing to test here.
     if (forceTouchClick) {
         AmtForceTouchEdgeEnqueue(pCtx, TRUE);
         AmtForceTouchEdgeEnqueue(pCtx, FALSE);
@@ -327,15 +280,12 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
             }
             WdfRequestComplete(mouseRequest, Status);
 
-            // Delivered (or at least handed to Windows - matches prior
-            // behavior of completing the request either way): pop it off
-            // the head of the queue.
+            // Delivered (or handed to Windows): pop it off the head.
             pCtx->PendingForceTouchEdgeHead =
                 (UCHAR)((pCtx->PendingForceTouchEdgeHead + 1) % PENDING_FORCE_TOUCH_EDGE_CAPACITY);
             pCtx->PendingForceTouchEdgeCount--;
         }
-        // else: still no second request available this pass - leave the
-        // queue untouched and retry on the next interrupt completion.
+        // else: no second request yet - retry on the next completion.
     }
 
     WdfSpinLockRelease(pCtx->StateLock);

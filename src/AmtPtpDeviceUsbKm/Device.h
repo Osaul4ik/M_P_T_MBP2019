@@ -7,12 +7,7 @@
 
 EXTERN_C_START
 
-// Force-touch vs hard-tap click arbitration (Ptpcore.c). While the
-// mechanical button is held, the ordinary click report is withheld
-// until PTPCore can tell whether the press is turning into a force
-// touch (deep press) or staying an ordinary click - so a force touch
-// never also fires a regular click underneath it. See ClickArbitration*
-// fields below.
+// Hold ordinary click reports until the press is classified.
 typedef enum _CLICK_ARBITRATION_STATE
 {
     CLICK_ARBITRATION_IDLE = 0,    // button not down
@@ -23,17 +18,7 @@ typedef enum _CLICK_ARBITRATION_STATE
 
 typedef struct _DEVICE_CONTEXT
 {
-    // AUDIT FIX: the continuous USB reader can have more than one read
-    // pending at once, so AmtPtpEvtUsbInterruptPipeReadComplete
-    // (Interrupt.c) is not guaranteed to run to completion on one CPU
-    // before the next completion starts on another. Every field below
-    // that function reads/writes without doing its own synchronization
-    // (LastReportTime, ScanTimeAccumulator, ActiveContacts[],
-    // ClickArbitrationState, ForceTouch*, PendingForceTouchEdge*, and
-    // everything PTPCore_ProcessFrame touches through them) must only be
-    // touched while holding this lock. Created in
-    // AmtPtpDeviceUsbKmCreateDevice; acquired/released around the whole
-    // state-mutating body of AmtPtpEvtUsbInterruptPipeReadComplete.
+    // Protect shared frame-processing state across concurrent USB completions.
     WDFSPINLOCK     StateLock;
 
     // USB
@@ -53,91 +38,39 @@ typedef struct _DEVICE_CONTEXT
     BOOLEAN PtpReportTouch;
     BOOLEAN PtpReportButton;
 
-    // Previous frame's physical integrated-button state. Compared against
-    // the current frame in PTPCore.c to detect the 0->1 click edge that
-    // drives the forced-rebirth anti-jitter-snap workaround.
+    // Track the prior button state for click-edge detection.
     BOOLEAN PrevButtonClicked;
 
-    // Force-touch drag lockout (Ptpcore.c). Anchor position latched at
-    // the button-down edge; if a contact wanders past
-    // FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the anchor while the button
-    // stays held, ForceTouchDragLockout latches TRUE for the rest of the
-    // press. Feeds the click arbitration decision below - moving before
-    // the force-touch pressure threshold was ever crossed commits the
-    // press to an ordinary hard-tap click (e.g. dragging a window).
-    // Once the press has already been arbitrated as a force touch, this
-    // flag is ignored - dragging while holding a force touch is a
-    // right-click-drag and must not cancel it. Reset on button release.
+    // Lock out force-touch if the press drags away from the anchor.
     BOOLEAN ForceTouchAnchorValid;
     USHORT  ForceTouchAnchorX;
     USHORT  ForceTouchAnchorY;
     BOOLEAN ForceTouchDragLockout;
 
-    // AUDIT FIX: force-touch synthetic right-click delivery (Interrupt.c)
-    // opportunistically claims a SECOND pending IOCTL_HID_READ_REPORT
-    // request off InputQueue the moment a down/up edge fires. If no
-    // second request happened to be queued that exact pass, the edge
-    // used to be silently dropped - a real, reproducible way to lose a
-    // force-touch click depending on mouhid.sys's read cadence.
-    //
-    // AUDIT FIX #2: a single "last edge wins" latch (the previous design)
-    // only preserves the edge across ONE missed pass - if a second edge
-    // (the matching up, for a fast press-and-release) arrives before a
-    // mouse request becomes available, it overwrites the first and the
-    // pair collapses to "nothing happened" - Windows never sees Button2
-    // move at all, silently swallowing the whole click. A real FIFO fixes
-    // this: each edge is queued and delivered in order, one per available
-    // request per interrupt completion, so a fast down+up still reaches
-    // Windows as two reports (possibly a frame or two late) instead of
-    // cancelling out.
-    //
-    // Edges only ever fire on a genuine state change (Interrupt.c), so
-    // they strictly alternate down/up/down/up - capacity 4 (two full
-    // press-release cycles backed up) is a comfortable margin for any
-    // realistic mouhid.sys read cadence. On the vanishingly unlikely case
-    // the queue is completely full, the OLDEST pending edge is dropped to
-    // make room for the newest - a stale edge from several read-cycles
-    // ago is less relevant to the user than the most recent one.
+    // Queue synthetic right-click edges until they can be delivered.
 #define PENDING_FORCE_TOUCH_EDGE_CAPACITY 4
     BOOLEAN PendingForceTouchEdgeQueue[PENDING_FORCE_TOUCH_EDGE_CAPACITY]; // each entry: Button2 state (1=down, 0=up)
     UCHAR   PendingForceTouchEdgeHead;   // index of the oldest queued edge
     UCHAR   PendingForceTouchEdgeCount;  // number of queued, undelivered edges
 
-    // Click arbitration (Ptpcore.c) - see CLICK_ARBITRATION_STATE above.
-    // PeakPressure/StartQpc/StallFrames are only meaningful while State ==
-    // PENDING.
+    // Click-arbitration state and timing.
     CLICK_ARBITRATION_STATE ClickArbitrationState;
     USHORT                  ClickArbitrationPeakPressure;
     LONGLONG                ClickArbitrationStartQpc;
-    // Consecutive frames PeakPressure has NOT grown (press has plateaued,
-    // not actively climbing toward FORCE_TOUCH_PRESSURE_THRESHOLD). Lets
-    // an ordinary flat/light press resolve to HARD_TAP well before the
-    // full CLICK_ARBITRATION_TIMEOUT_MS safety-net timeout - only a press
-    // that keeps climbing needs the full window measured out.
+    // Frames PeakPressure has NOT grown; lets a flat/light press resolve
+    // to HARD_TAP before the full safety-net timeout.
     UCHAR                   ClickArbitrationStallFrames;
 
     // Scan time
     LARGE_INTEGER LastReportTime;
 
-    // SCANTIME FIX: Windows PTP spec requires Report.ScanTime to be a
-    // free-running, ever-increasing hardware-clock counter (100us units),
-    // which Windows itself differentiates frame-to-frame to derive
-    // velocity/inertia - NOT a pre-computed inter-frame delta. This
-    // accumulator holds the running total (in 100us units); each frame
-    // adds the elapsed-since-last-report delta onto it, and the low 16
-    // bits are truncated into the USHORT report field, letting it wrap
-    // naturally as the spec expects. Reseeded to 0 at D0Entry alongside
-    // LastReportTime.
+    // Running scan-time counter for the PTP report.
     ULONG ScanTimeAccumulator;
 
-    // Palm rejection - session-level latch (sticky "still palm-adjacent"
-    // state), owned by PTPCore_ProcessFrame. Per-sample classification
-    // lives in Palm.c.
+    // Session-level palm latch used by PTPCore.
     BOOLEAN PalmDetected;
 
-    // Contact pool (PTPCore / ActiveContact). Pool POSITION is NOT
-    // identity - ContactID is. See ActiveContact.h for the full
-    // rationale (this replaces the old slot-indexed TRACK[] array).
+    // Contact pool for PTPCore and ActiveContact.
     // ---------------------------------------------------------------
     ACTIVE_CONTACT ActiveContacts[MAX_CONTACTS];
 
@@ -148,11 +81,7 @@ typedef struct _DEVICE_CONTEXT
     // QPC frequency cached at D0Entry
     LARGE_INTEGER PerfFrequency;
 
-    // Overflow report queue - when PTPCore_ProcessFrame produces more
-    // contact events (lift-offs, or DOWN/MOVE reports that lost the race
-    // for a report slot) than remaining PTP_CORE_FRAME capacity, deferred
-    // entries are drained at the front of the next frame. See
-    // AmtCoreEmitContact/AmtCoreDrainOverflow in PTPCore.c.
+    // Deferred overflow queue for contact events.
     // ---------------------------------------------------------------
     ULONG         OverflowContactID[PTP_MAX_CONTACT_POINTS];
     USHORT        OverflowX[PTP_MAX_CONTACT_POINTS];
@@ -161,10 +90,7 @@ typedef struct _DEVICE_CONTEXT
     BOOLEAN       OverflowConfident[PTP_MAX_CONTACT_POINTS];
     UCHAR         OverflowCount;
 
-    // Recent-lift memory for retap smoothing (PTPCore.h /
-    // RECENT_LIFT_RING). Deliberately NOT slot-indexed - see PTPCore.h
-    // for why the old SlotLastLiftQpc/X/Y[PTP_MAX_CONTACT_POINTS]
-    // arrays were a slot-as-identity mistake.
+    // Recent-lift memory for retap smoothing.
     // ---------------------------------------------------------------
     RECENT_LIFT_RING RecentLifts;
 
@@ -172,11 +98,7 @@ typedef struct _DEVICE_CONTEXT
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 
-// AUDIT: WdfUsbTargetDeviceSendControlTransferSynchronously in
-// AmtPtpSetWellspringMode previously ran with no send-options/timeout, so a
-// stalled/malicious USB device or hub could block the calling thread
-// (including the D0Entry power-up path) forever. 5s is generous for a
-// single control transfer but keeps a hard upper bound.
+// Bound the Wellspring control transfer with a timeout.
 #define WELLSPRING_CONTROL_TRANSFER_TIMEOUT_SEC   5
 
 NTSTATUS

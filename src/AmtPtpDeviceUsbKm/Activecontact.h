@@ -1,9 +1,5 @@
-// ActiveContact.h - Contact lifecycle FSM. Pool-slot addressed (not hw slot).
-// ContactID is the only identity; LastSlotHint is a matching hint only.
-//
-// State machine: FREE -> ACTIVE -> FREE | GRACE -> FREE
-// ContactID monotonic, never reused while warm.
-// Frame determinism: Phase A (lift) -> Phase B (birth) -> Phase C (update).
+// Contact lifecycle and pool state for active touch tracking.
+// Pool slots are separate from hardware slots.
 
 #pragma once
 
@@ -19,7 +15,7 @@ typedef enum _CONTACT_STATE
     CONTACT_GRACE,     // same-frame quarantine after gesture lift
 } CONTACT_STATE;
 
-// One pool entry. Pool position != identity - ContactID is.
+// One pool entry; pool slot is not the identity.
 typedef struct _ACTIVE_CONTACT
 {
     CONTACT_STATE State;
@@ -40,22 +36,13 @@ typedef struct _ACTIVE_CONTACT
     // Causes EMA skip on first solo frame (aliveCountIsOne).
     BOOLEAN WasInGesture;
 
-    // TRUE on first frame after birth. Bypasses deadzone+EMA so first
-    // DOWN report always carries the real finger position - UNLESS
-    // RetapSeeded is also TRUE (see below), in which case the seeded
-    // Hyst/Report baseline from BirthWithRetapSmoothing is preserved
-    // and the deadzone+EMA path runs normally on this first sample.
+    // First-sample flag; skips the initial deadzone/EMA path when needed.
     BOOLEAN PendingFirstSample;
 
-    // Prevents first-frame clobber of EMA seed from
-    // AmtContactBirthWithRetapSmoothing.
+    // Keeps the retap seed from being overwritten on the first sample.
     BOOLEAN RetapSeeded;
 
-    // Fractional remainder from scroll-delta scaling (SCROLL_SCALE_NUM/DEN),
-    // carried frame-to-frame within one continuous gesture so a ~30% slowdown
-    // doesn't zero out via integer truncation at slow scroll speeds (same
-    // idea as a Bresenham error term). Reset to 0 whenever gestureActive is
-    // FALSE - it must not leak into an unrelated later scroll.
+    // Carries fractional scroll error across frames within one gesture.
     LONG ScrollRemX;
     LONG ScrollRemY;
 
@@ -63,10 +50,8 @@ typedef struct _ACTIVE_CONTACT
     USHORT   LastSlotHint;    // hw slot matched to last frame; speeds up matching
     LONGLONG LastSeenQpc;     // QPC of last successful match; grace/retap timing
 
-    // Last raw touch geometry/pressure, used ONLY as a matching tie-break
-    // (AmtMatchShapeDistance in Match.c) when two candidates are equally
-    // close spatially AND tied on slot-hint - never read for identity,
-    // FSM, or reporting. 0 until the first AmtContactUpdate call.
+    // Geometry/pressure, used ONLY as a matching tie-break (Match.c).
+    // 0 until the first AmtContactUpdate call.
     USHORT   LastMajor;
     USHORT   LastMinor;
     USHORT   LastPressure;
@@ -98,13 +83,7 @@ AmtContactBirth(
     _In_    USHORT          slotHint
 );
 
-// Re-binds an ACTIVE contact to a fresh ContactID in place, without
-// touching position/EMA/hysteresis/gesture-taint state. Used only for
-// the button-click synthetic rebirth workaround (see PTPCore.c) - it
-// is NOT a birth: PendingFirstSample/RetapSeeded/FramesAlive/WasInGesture
-// are deliberately left untouched so smoothing continuity survives the
-// identity swap. Returns the OLD ContactID for the synthetic lift-off.
-// Precondition: Pool[index].State == CONTACT_ACTIVE.
+// Rebind an active contact to a new identity without resetting smoothing state.
 VOID
 AmtContactRebindIdentity(
     _Inout_ PACTIVE_CONTACT Pool,
@@ -113,7 +92,7 @@ AmtContactRebindIdentity(
     _Out_   ULONG*          OldContactID
 );
 
-// AmtContactBirth + EMA baseline seed from lift position + RetapSeeded=TRUE.
+// Birth a contact with a retap-based seed.
 VOID
 AmtContactBirthWithRetapSmoothing(
     _Inout_ PACTIVE_CONTACT Pool,
@@ -124,8 +103,7 @@ AmtContactBirthWithRetapSmoothing(
     _In_    USHORT          slotHint
 );
 
-// Is touch-down near a recent lift in time (RETAP_WINDOW_100NS) AND space
-// (RETAP_MAX_DISTANCE)? FALSE -> raw unsmoothed birth (always correct).
+// Check whether a down event is near a recent lift.
 #define RETAP_WINDOW_100NS      (700LL * 10000LL)  // 700 ms
 #define RETAP_MAX_DISTANCE      600                // normalized units
 
@@ -140,7 +118,7 @@ AmtContactIsRecentLiftNearby(
     _In_ USHORT   CandY
 );
 
-// ACTIVE/GRACE -> FREE. Returns old ContactID/X/Y for lift-off report.
+// Lift a contact and return its last state.
 VOID
 AmtContactKill(
     _Inout_ PACTIVE_CONTACT Pool,
@@ -150,8 +128,7 @@ AmtContactKill(
     _Out_   USHORT*         OldY
 );
 
-// ACTIVE -> GRACE. Used when WasInGesture at lift-off.
-// Same-frame quarantine only - never re-binds ContactID.
+// Move an active contact into grace state for one frame.
 VOID
 AmtContactEnterGrace(
     _Inout_ PACTIVE_CONTACT Pool,
@@ -161,13 +138,11 @@ AmtContactEnterGrace(
     _Out_   USHORT*         OldY
 );
 
-// GRACE -> FREE. Called same frame after EnterGrace. No report emitted.
+// Drop a grace contact and clear its slot.
 VOID
 AmtContactExpireGrace(_Inout_ PACTIVE_CONTACT Pool, _In_ size_t index);
 
-// 2-pass deadzone evaluator. Pass 1: read-only check vs HystX/Y.
-// Pass 2 (in AmtContactUpdate): commits HystX/Y, then EMA blends.
-// ThresholdUnits <= 0 always passes (deadzone disabled).
+// Check whether a candidate passes the deadzone test.
 BOOLEAN
 AmtContactEvaluateDeadzone(
     _In_ const ACTIVE_CONTACT* Contact,
@@ -176,23 +151,7 @@ AmtContactEvaluateDeadzone(
     _In_ INT                   ThresholdUnits
 );
 
-// Per-frame ACTIVE contact update (Phase C). Deadzone + EMA.
-// GestureActive (aliveCount>=2 this frame) skips EMA smoothing so
-// genuine multi-finger movement (2-finger scroll, etc.) reports true
-// raw position instead of a damped one - see XY_DEADZONE_UNITS in
-// ActiveContact.c for the shared deadzone threshold's history.
-//
-// Deadzone threshold and solo-movement EMA alpha are both velocity-
-// adaptive (see AmtContactClassifyVelocity in ActiveContact.c): a
-// contact sitting nearly still gets more filtering (higher deadzone,
-// more smoothing) to suppress sensor noise, and one moving fast gets
-// less (down to zero deadzone) so it doesn't lag behind the real
-// finger. PerfFrequencyHz is QPC ticks/sec (DEVICE_CONTEXT.PerfFrequency)
-// - needed to convert the raw/HystX,Y delta into units/sec. Velocity is
-// classified as VELOCITY_UNKNOWN (falls back to the original fixed
-// threshold/alpha, unchanged from prior behavior) whenever there's no
-// reliable previous timestamp to measure against - first sample after
-// birth, or PerfFrequencyHz <= 0.
+// Update an active contact for one frame using deadzone and EMA.
 VOID
 AmtContactUpdate(
     _Inout_ PACTIVE_CONTACT Contact,

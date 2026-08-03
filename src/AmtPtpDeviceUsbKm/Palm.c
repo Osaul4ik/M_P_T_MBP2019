@@ -1,29 +1,11 @@
-// Palm.c - Palm classification. See Palm.h.
-//
-// Scoring logic copied verbatim from the old AmtClassifyPalm (Match.c) -
-// the thresholds here were tuned against real hardware behavior and are
-// deliberately NOT touched by this refactor. Only the function boundary
-// changed: this now takes raw geometry fields directly instead of a
-// TRACKPAD_FINGER pointer, so it has zero dependency on the wire format.
+// Classify palm vs finger using simple geometry heuristics.
 
 #include "Driver.h"
 #include "Palm.h"
 
 #define PALM_LARGE_MAJOR    380
-#define PALM_LARGE_RATIO    180  // major*100/minor. Real palm is elongated
-                                 // (wide flat blob); a fat but round finger
-                                 // pad has Major and Minor growing together,
-                                 // so ratio stays near 100-150. Without this
-                                 // gate a finger pad that crosses
-                                 // PALM_LARGE_MAJOR was blanking the whole
-                                 // frame (PALM_LARGE) even with zero
-                                 // corroboration - unlike PALM_LOCAL below,
-                                 // which already requires ratio/edge signal.
-#define PALM_SCORE_THRESH   55   // was 45 - raised so a wide/flat fingertip
-                                 // pad (large Major, but not elongated/
-                                 // edge-adjacent like a real palm) needs
-                                 // more corroborating signal before it's
-                                 // suppressed.
+#define PALM_LARGE_RATIO    180  // Real palms are elongated; round pads are not.
+#define PALM_SCORE_THRESH   55   // Require stronger evidence before suppressing a wide pad.
 #define PALM_MIN_MAJOR  80   // мінімальний major для підозри на долоню
 #define PALM_MIN_MINOR  40   // мінімальний minor для підозри на долоню
 
@@ -54,10 +36,7 @@ AmtPalmClassify(
         return PALM_NONE;
 
     if (major >= PALM_LARGE_MAJOR) {
-        // minor <= 0 means the sensor gave no shape info at all for this
-        // contact - treat as palm (can't prove it's a round finger pad).
-        // Otherwise require the elongation ratio, so a fat round pad falls
-        // through to the score path below instead of an instant blank.
+        // Treat missing shape data as palm; otherwise require a strong elongation signal.
         if (minor <= 0)
             return PALM_LARGE;
 
@@ -81,14 +60,7 @@ AmtPalmClassify(
         INT xRange   = DevInfo->x.max - DevInfo->x.min;
         INT yRange   = DevInfo->y.max - DevInfo->y.min;
 
-        // Per-side edge score divisors (smaller divisor = wider zone).
-        // Top stays tight - legitimate taps/scroll gestures land close
-        // to the top edge often enough that widening it would cost
-        // real input. Left/right and bottom are widened - palm contact
-        // is far more likely there.
-        //
-        // Confirmed on real hardware: NormY grows from the physical
-        // TOP (0) to the physical BOTTOM (yRange).
+        // Edge weighting favors the top edge for taps and widens the lower edges for palms.
         #define EDGE_DIVISOR_TOP     28   // tight zone, near NormY=0
         #define EDGE_DIVISOR_LEFT    12
         #define EDGE_DIVISOR_RIGHT   12

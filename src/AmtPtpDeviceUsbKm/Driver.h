@@ -13,7 +13,7 @@
 
 EXTERN_C_START
 
-// WDFDRIVER Events
+// WDF driver events.
 
 DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD AmtPtpDeviceUsbKmEvtDeviceAdd;

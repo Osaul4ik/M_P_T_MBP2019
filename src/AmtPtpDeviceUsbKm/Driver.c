@@ -16,7 +16,7 @@ DriverEntry(
     _In_ PDRIVER_OBJECT  DriverObject,
     _In_ PUNICODE_STRING RegistryPath
     )
-// Initialises WPP tracing and registers EvtDevice callback.
+// Initialize tracing and register the device callback.
 {
     WDF_DRIVER_CONFIG config;
     NTSTATUS status;
@@ -53,7 +53,7 @@ AmtPtpDeviceUsbKmEvtDeviceAdd(
     _In_    WDFDRIVER       Driver,
     _Inout_ PWDFDEVICE_INIT DeviceInit
     )
-// Called by framework on AddDevice. Creates and initialises device.
+// Create and initialize the device on add.
 {
     NTSTATUS status;
 
@@ -73,7 +73,7 @@ VOID
 AmtPtpDeviceUsbKmEvtDriverContextCleanup(
     _In_ WDFOBJECT DriverObject
     )
-// Frees resources allocated in DriverEntry.
+// Release resources allocated in DriverEntry.
 {
     UNREFERENCED_PARAMETER(DriverObject);
 

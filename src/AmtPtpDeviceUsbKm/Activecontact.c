@@ -3,40 +3,18 @@
 #include "Driver.h"
 #include "ActiveContact.h"
 
-// AUDIT (2-finger scroll quality, historical): a fixed-threshold deadzone,
-// evaluated independently per contact every frame, was also gating genuine
-// simultaneous 2(+)-finger movement (scroll). Two fingers scrolling
-// together rarely cross a fixed threshold in perfect lockstep frame to
-// frame - one finger's delta clears it while the other's doesn't,
-// producing an asymmetric stale-vs-updated report between the two
-// contacts and a visibly steppy/uneven scroll at slow, deliberate
-// speeds. The original fix introduced a second, lower-but-nonzero
-// threshold used only while >=2 fingers are concurrently down. That
-// approach was superseded by velocity-adaptive filtering below, which
-// solves the same problem more directly (a genuinely stationary hold is
-// filtered because it's slow, not because it's solo-vs-gesture) and
-// also fixes the click/drag-precision case the old fixed threshold
-// couldn't reach without going all the way to zero.
+// Adaptive deadzone reduces steppy two-finger scrolling.
 #define XY_DEADZONE_UNITS          1  // fallback: VELOCITY_UNKNOWN/MEDIUM
 #define XY_DEADZONE_UNITS_SLOW     2  // near-stationary: filter sensor noise
 #define XY_DEADZONE_UNITS_FAST     0  // fast motion: no deadzone lag
 
-// Velocity thresholds (normalized device units/sec, Chebyshev distance -
-// see AmtContactClassifyVelocity) that select the deadzone threshold and
-// solo-movement EMA alpha below. These are an initial estimate based on
-// the existing coordinate-range constants elsewhere in this file (e.g.
-// RETAP_MAX_DISTANCE), NOT calibrated against real hardware motion
-// traces - revisit if real-device testing shows the buckets are mistimed.
+// Velocity buckets choose deadzone and smoothing.
 #define VELOCITY_SLOW_UNITS_PER_SEC   50
 #define VELOCITY_FAST_UNITS_PER_SEC   400
 
 typedef enum _CONTACT_VELOCITY_BUCKET
 {
-    VELOCITY_UNKNOWN = 0,  // no reliable previous sample/timestamp to
-                            // measure against - falls back to the
-                            // original fixed threshold/alpha, unchanged
-                            // from behavior before this file's adaptive
-                            // filtering was added.
+    VELOCITY_UNKNOWN = 0,  // no prior timestamp
     VELOCITY_SLOW,
     VELOCITY_MEDIUM,
     VELOCITY_FAST,
@@ -44,55 +22,24 @@ typedef enum _CONTACT_VELOCITY_BUCKET
 
 #define SMOOTHING_ALPHA_NUM  3
 #define SMOOTHING_ALPHA_DEN  8
-// TUNING (2026-07-31): user-reported jitter/twitch when aiming slowly and
-// precisely at a small target a few dozen pixels away - raw sensor noise at
-// near-stationary speed was passing through mostly unfiltered at 6 (75%
-// raw). Lowered to 3 (37.5% raw / 62.5% previous report) for noticeably
-// smoother fine positioning. Trade-off: slightly more perceptible lag
-// following the finger at slow speed than at 6 - if that lag becomes
-// bothersome, move this back up toward 5-6; if jitter is still visible,
-// it can go as low as 2 (was the original "jelly cursor" value before the
-// adaptive-EMA rework below, so treat 2 as the practical floor).
+// Lower smoothing reduces slow-speed jitter.
 #define SMOOTHING_ALPHA_NUM_SLOW  3  // stronger smoothing, near-stationary
 
-// Scroll delta scale: reports ~70% of the raw per-frame delta during
-// gestureActive frames (SMOOTHING_ALPHA_* has nothing to do with this -
-// EMA is skipped entirely on gesture frames, see AUDIT comment below).
-// NOT a resurrection of EMA lag: this scales the delta between
-// Contact->ReportX/Y and the incoming raw sample once, per frame, then
-// commits the scaled result as the new ReportX/Y baseline - it never
-// blends toward a stale previous value or "catches up" over multiple
-// frames, so it does not reintroduce the brake-before-stop artifact the
-// EMA skip above was written to fix.
+// Scale scroll deltas to reduce abrupt stops.
 #define SCROLL_SCALE_NUM  8
 #define SCROLL_SCALE_DEN  10
 
 static inline USHORT
 AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal, _In_ INT alphaNum)
 {
-    // rawVal/prevVal are USHORT (>=0) and alphaNum is one of the positive
-    // SMOOTHING_ALPHA_NUM_* constants (always < SMOOTHING_ALPHA_DEN), so
-    // blended is always >= 0 - no lower-bound clamp needed.
+    // Blend the new sample with the previous report.
     INT blended = ((INT)rawVal * alphaNum +
                    (INT)prevVal * (SMOOTHING_ALPHA_DEN - alphaNum)) /
                   SMOOTHING_ALPHA_DEN;
     return (USHORT)blended;
 }
 
-// Classifies how fast a contact is moving, in normalized device units/sec,
-// by comparing the incoming raw sample against the contact's last
-// committed Hyst baseline (the same baseline AmtContactEvaluateDeadzone
-// tests against) over the elapsed QPC time since the contact was last
-// updated. Distance is Chebyshev (max(|dx|,|dy|)) to match the per-axis
-// OR-based deadzone test below rather than adding a sqrt for Euclidean
-// distance, which kernel mode code avoids (no FPU without explicit
-// save/restore).
-//
-// Returns VELOCITY_UNKNOWN - and callers should treat that as "use the
-// original fixed threshold/alpha" - whenever elapsed time or the clock
-// frequency isn't usable: DtQpcTicks <= 0 covers both a genuinely
-// nonpositive/zero delta AND the deliberate 0 a caller passes for "no
-// previous timestamp" (first sample after birth, where LastSeenQpc == 0).
+// Estimate motion speed from the last committed sample.
 static CONTACT_VELOCITY_BUCKET
 AmtContactClassifyVelocity(
     _In_ USHORT   rawX,
@@ -113,11 +60,7 @@ AmtContactClassifyVelocity(
     if (dy < 0) dy = -dy;
     INT distance = (dx > dy) ? dx : dy;
 
-    // unitsPerSec = distance * PerfFrequencyHz / DtQpcTicks, multiplying
-    // before dividing for integer precision. distance is USHORT-range and
-    // PerfFrequencyHz is a QPC frequency (platform-typical range, well
-    // under LONGLONG headroom), so this doesn't overflow for realistic
-    // values.
+    // Multiply first for integer precision.
     LONGLONG unitsPerSec = ((LONGLONG)distance * PerfFrequencyHz) / DtQpcTicks;
 
     if (unitsPerSec <= VELOCITY_SLOW_UNITS_PER_SEC) return VELOCITY_SLOW;
@@ -137,15 +80,7 @@ AmtContactDeadzoneForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity)
     }
 }
 
-// AUDIT: FAST's own alpha branch is gone (was SMOOTHING_ALPHA_NUM_FAST) -
-// AmtContactCommitSample now only ever runs the EMA blend at VELOCITY_SLOW
-// (ordinary movement) or VELOCITY_UNKNOWN (the retap-seeded first sample,
-// which is always classified UNKNOWN - see AmtContactClassifyVelocity's
-// DtQpcTicks<=0 guard). MEDIUM/FAST movement always skips EMA and reports
-// raw, so an alpha value for them would never be read - this function
-// still classifies them (for the default case, same value as UNKNOWN) in
-// case a future caller needs it, but there's no dedicated FAST constant
-// to keep in sync anymore.
+// Medium and fast motion skip the smoothing blend.
 static inline INT
 AmtContactAlphaForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity)
 {
@@ -158,11 +93,7 @@ AmtContactAlphaForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity)
     }
 }
 
-// Scales one axis of a gesture-frame delta by SCROLL_SCALE_NUM/DEN using a
-// carried remainder (Bresenham-style error term), so slow, deliberate
-// scroll motion (e.g. dx=1 unit/frame) still moves the cursor instead of
-// being zeroed out by integer truncation (1 * 7 / 10 == 0 without this).
-// *Rem must be reset to 0 by the caller whenever gestureActive is FALSE.
+// Scale scroll deltas with remainder so slow motion still advances.
 static inline SHORT
 AmtScaleScrollDelta(_In_ INT rawDelta, _Inout_ LONG* Rem)
 {
@@ -172,16 +103,13 @@ AmtScaleScrollDelta(_In_ INT rawDelta, _Inout_ LONG* Rem)
     return (SHORT)scaled;
 }
 
-// ContactID issuance: pre-increment, 0 reserved, never reused while warm.
+// Assign a monotonic contact ID.
 static inline ULONG
 AmtContactAssignId(_Inout_ ULONG* NextContactId)
 {
     ULONG id = ++(*NextContactId);
     if (id == 0) {
-        // Wrapped around ULONG_MAX -> 0. 0 is reserved, so skip it - this
-        // keeps the "never reused while warm" invariant true even in the
-        // (practically unreachable) case of billions of births with no
-        // D0Entry reset in between.
+        // 0 is reserved; skip it.
         id = ++(*NextContactId);
     }
     return id;
@@ -227,18 +155,18 @@ AmtContactBirth(
     c->HystY              = y;
     c->WasInGesture       = FALSE;
     c->PendingFirstSample = TRUE;
-    c->RetapSeeded        = FALSE; // plain birth - no seeded baseline to preserve
+    c->RetapSeeded        = FALSE; // no seeded baseline
     c->ScrollRemX          = 0;
     c->ScrollRemY          = 0;
     c->LastSlotHint        = slotHint;
-    c->LastSeenQpc         = 0; // set by first AmtContactUpdate call
+    c->LastSeenQpc         = 0; // set by first AmtContactUpdate
     c->LastMajor           = 0;
     c->LastMinor           = 0;
     c->LastPressure        = 0;
     c->FramesAlive         = 1; // birth frame counts as 1
 }
 
-// Seeds EMA baseline to lift position so cursor doesn't jump on re-tap.
+// Seeds EMA baseline so the cursor doesn't jump on re-tap.
 VOID
 AmtContactBirthWithRetapSmoothing(
     _Inout_ PACTIVE_CONTACT Pool,
@@ -257,8 +185,6 @@ AmtContactBirthWithRetapSmoothing(
 
     c->State             = CONTACT_ACTIVE;
     c->ContactID          = AmtContactAssignId(NextContactId);
-    // Seed EMA baseline with lift position for smooth cursor continuity
-    // on subsequent MOVE frames.
     c->ReportX            = RecentLiftX;
     c->ReportY            = RecentLiftY;
     c->HystX              = RecentLiftX;
@@ -294,7 +220,7 @@ AmtContactIsRecentLiftNearby(
         return FALSE; // QPC must be monotonic
 
     if (PerfFrequencyHz <= 0)
-        return FALSE; // no usable clock - fail closed
+        return FALSE; // fail closed
 
     LONGLONG deltaTicks  = NowQpc - LiftQpc;
     LONGLONG windowTicks = (RETAP_WINDOW_100NS * PerfFrequencyHz) / 10000000LL;
@@ -332,11 +258,7 @@ AmtContactKill(
     RtlZeroMemory(c, sizeof(ACTIVE_CONTACT));
 }
 
-// Button-click synthetic rebirth (Windows PTP anti-jitter snap workaround).
-// Deliberately the narrowest possible state change: only ContactID moves.
-// State stays CONTACT_ACTIVE, position/Hyst/EMA baseline/WasInGesture/
-// FramesAlive/RetapSeeded/LastSlotHint/LastSeenQpc are all untouched, so
-// the contact's smoothing continuity is unaffected by the identity swap.
+// Synthetic rebirth keeps smoothing state while swapping the contact ID.
 VOID
 AmtContactRebindIdentity(
     _Inout_ PACTIVE_CONTACT Pool,
@@ -409,9 +331,6 @@ AmtContactEvaluateDeadzone(
     return (dx >= ThresholdUnits) || (dy >= ThresholdUnits);
 }
 
-// RetapSeeded birth: run EMA normally against seeded baseline. Ordinary
-// solo movement also now runs EMA, but ONLY while VelocityIsSlow - see the
-// AUDIT comment on skipEma below for why.
 static inline VOID
 AmtContactCommitSample(
     _Inout_ PACTIVE_CONTACT Contact,
@@ -436,39 +355,10 @@ AmtContactCommitSample(
         Contact->HystX = candX;
         Contact->HystY = candY;
 
-        // AUDIT (scroll speed + end-of-inertia glitch, generalized to solo
-        // pointer movement - "jelly cursor" fix, then made adaptive again):
-        // EMA smoothing (SMOOTHING_ALPHA_NUM*/DEN) blends a fraction of raw
-        // with the previous report every frame. Running it on EVERY solo
-        // movement frame (the original design) made the cursor feel
-        // laggy/springy ("jelly"): the reported position exponentially
-        // chases the real finger position instead of tracking it, most
-        // noticeably during ordinary slow/medium deliberate movement. The
-        // fix isn't to delete EMA outright, though - it's still the right
-        // tool for smoothing genuine sensor tremor during slow, fine
-        // pointing (placing the cursor precisely), where a *little* lag is
-        // imperceptible because the finger itself is barely moving, and
-        // the alternative (raw) can look shaky at that speed. It's simply
-        // the wrong tool once the finger is moving at any real speed - at
-        // MEDIUM/FAST the lag becomes very perceptible while the raw
-        // signal is already smooth enough (fast motion naturally averages
-        // out single-sample sensor noise), so those speeds skip straight
-        // to raw. This is the same trade the 2+-finger scroll fix below
-        // made permanently (raw always, since scroll speed varies too
-        // widely for one alpha to suit) - solo movement instead varies the
-        // decision per frame by measured velocity, which is what
-        // "adaptive" means here in practice: smoothing exactly where it
-        // helps (slow/near-stationary), none where it would just add lag
-        // (medium/fast).
-        //
-        // EMA also always applies for the retap-seeded first sample
-        // (commitIsRetapSeededFirstSample) regardless of velocity -
-        // AmtContactBirthWithRetapSmoothing deliberately seeds ReportX/Y to
-        // the OLD lift position so a slightly-imprecise re-tap eases toward
-        // the new position instead of jumping the cursor; that transition
-        // is always classified VELOCITY_UNKNOWN (no prior timestamp yet -
-        // see AmtContactClassifyVelocity), so it needs its own explicit
-        // carve-out here rather than falling out of the velocity check.
+        // EMA eases raw toward the previous report. Applied only when it
+        // helps: SLOW (smooths sensor tremor) or retap-seeded first sample
+        // (eases from the old lift position). MEDIUM/FAST skip to raw to
+        // avoid lag; fast motion already averages out noise.
         BOOLEAN skipEma =
             gestureActive ||
             (!commitIsRetapSeededFirstSample && !velocityIsSlow);
@@ -476,33 +366,22 @@ AmtContactCommitSample(
         if (skipEma) {
             if (gestureActive) {
                 // Scroll frame: report ReportX/Y + 70% of the raw delta,
-                // not the raw position itself. Baseline for the *next*
-                // frame's delta is this scaled result (Contact->ReportX/Y
-                // below), so scaling never compounds across frames - only
-                // the current frame's motion is reduced, same as the raw
-                // path was doing before this change, just at 70% rate.
+                // not the raw position itself. Baseline for the next
+                // frame's delta is this scaled result, so scaling never
+                // compounds across frames.
                 INT dx = (INT)candX - (INT)Contact->ReportX;
                 INT dy = (INT)candY - (INT)Contact->ReportY;
 
                 LONG newX = (LONG)Contact->ReportX + AmtScaleScrollDelta(dx, &Contact->ScrollRemX);
                 LONG newY = (LONG)Contact->ReportY + AmtScaleScrollDelta(dy, &Contact->ScrollRemY);
 
-                // Clamp both ends before truncating to USHORT. The upper
-                // clamp can't be hit today (ReportX/Y plus the scaled
-                // scroll delta never reach 65535 given current coordinate
-                // ranges and MATCH_MAX_CONTINUATION_DELTA), but nothing
-                // enforced that - without this, a future change to either
-                // constant could silently wrap the reported position to a
-                // small value and teleport the cursor.
+                // Clamp both ends before truncating to USHORT.
                 repX = (USHORT)(newX < 0 ? 0 : (newX > 0xFFFF ? 0xFFFF : newX));
                 repY = (USHORT)(newY < 0 ? 0 : (newY > 0xFFFF ? 0xFFFF : newY));
             } else {
-                // Not a scroll frame - this is ordinary movement at
-                // MEDIUM/FAST velocity (see skipEma above; SLOW instead
-                // falls to the EMA branch below), plus any genuinely-fresh
-                // first sample. Report the raw deadzone-committed position
-                // directly, and drop any leftover scroll remainder so it
-                // can't leak into a later, unrelated scroll gesture.
+                // Ordinary MEDIUM/FAST movement (SLOW falls to the EMA
+                // branch below): report raw and drop leftover scroll
+                // remainder so it can't leak into a later gesture.
                 repX = candX;
                 repY = candY;
 
@@ -555,10 +434,8 @@ AmtContactUpdate(
     BOOLEAN retapSeededFirstSample =
         Contact->PendingFirstSample && Contact->RetapSeeded;
 
-    // LastSeenQpc is still last frame's value here - AmtContactUpdate
-    // overwrites it further down, after this read. 0 means "no previous
-    // sample" (fresh birth, retap-seeded or not) and is handled by
-    // AmtContactClassifyVelocity via the DtQpcTicks<=0 guard below.
+    // LastSeenQpc is still last frame's value here (overwritten below).
+    // 0 = no previous sample; handled by the DtQpcTicks<=0 guard.
     LONGLONG prevQpc  = Contact->LastSeenQpc;
     LONGLONG dtTicks  = (prevQpc == 0) ? 0 : (nowQpc - prevQpc);
     CONTACT_VELOCITY_BUCKET velocity = AmtContactClassifyVelocity(
@@ -569,7 +446,7 @@ AmtContactUpdate(
 
     if (Contact->PendingFirstSample) {
         if (retapSeededFirstSample) {
-            // Do not reset HystX/Y - they hold the seeded baseline.
+            // Keep HystX/Y - they hold the seeded baseline.
             passed = AmtContactEvaluateDeadzone(Contact, rawX, rawY, deadzoneThreshold);
         } else {
             Contact->HystX = rawX;

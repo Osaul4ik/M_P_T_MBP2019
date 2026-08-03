@@ -1,5 +1,4 @@
-// PTPCore.h - Layer contract for the PTP touch stack.
-// Interrupt.c -> Input.c -> PTPCore.c (Match.c + ActiveContact.c) -> PTP_REPORT.
+// Contract between the input and report layers.
 
 #pragma once
 
@@ -8,7 +7,7 @@
 
 EXTERN_C_START
 
-// Raw input (InputAdapter output). No state, no decisions.
+// Raw input from the adapter.
 
 typedef struct _RAW_CONTACT
 {
@@ -28,7 +27,7 @@ typedef struct _RAW_FRAME
     RAW_CONTACT Contacts[PTP_MAX_CONTACT_POINTS];
 } RAW_FRAME, *PRAW_FRAME;
 
-// PTPCore output. Stable contact identities + FSM phase.
+// Stable contact identities and FSM phase.
 
 typedef enum _CONTACT_PHASE
 {
@@ -38,18 +37,15 @@ typedef enum _CONTACT_PHASE
     CONTACT_PHASE_UP,        // lifted this frame (-> FREE or GRACE)
 } CONTACT_PHASE;
 
-// PTPCore output contract. Interrupt.c reads only this.
+// Output contract for the interrupt layer.
 typedef struct _PTP_CORE_CONTACT
 {
     ULONG          ContactID;     // stable, monotonic, never reused while warm
     USHORT         X;
     USHORT         Y;
     CONTACT_PHASE  Phase;
-    BOOLEAN        Confident;     // FALSE only for a brand-new, unverified
-                                   // below-tip-threshold contact with no
-                                   // pool anchor yet (Match.c Unconfirmed) -
-                                   // NOT tied to stale/bridged position
-                                   // anymore, see Match.h MATCH_CANDIDATE.
+    BOOLEAN        Confident;     // FALSE only for brand-new, unverified
+                                   // contacts (Match.c Unconfirmed).
     BOOLEAN        PalmSuspect;   // local-palm classification; suppressed
                                   // contacts don't appear in PTP_CORE_FRAME
 } PTP_CORE_CONTACT, *PPTP_CORE_CONTACT;
@@ -62,35 +58,12 @@ typedef struct _PTP_CORE_FRAME
     BOOLEAN           LargePalmBlanked;  // whole-pad palm event this frame
 } PTP_CORE_FRAME, *PPTP_CORE_FRAME;
 
-// PTPCore_ProcessFrame - single frame-orchestration entry point.
-// ButtonDown: current integrated-button physical state (TYPE2 hardware).
-// Drives the click-edge forced-rebirth workaround - see PTPCore.c.
+// Process one frame of touch and button state.
 
 struct _DEVICE_CONTEXT; // fwd decl, defined in Device.h
 
-// OutForceTouchClick: TRUE for exactly one call per press - the frame the
-// integrated button is RELEASED, if and only if that press was still
-// CLICK_ARBITRATION_FORCE_TOUCH at that exact moment (pressure crossed
-// FORCE_TOUCH_PRESSURE_THRESHOLD at some point and the contact never
-// moved past FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE for the WHOLE press - see
-// PTPCore.c). Down and up used to be reported as separate edges the
-// instant pressure crossed the threshold mid-press, but a hard-press-
-// and-immediately-drag-fast gesture could send Windows a complete
-// Button2 down+up pair before the drag lockout ever caught up - already
-// a finished right-click as far as the shell is concerned, so the
-// context menu flashed open and closed even on a press that was clearly
-// a drag by release time. Deferring the whole decision to release
-// removes that race: a press that ever drags far enough simply never
-// produces this at all - see OutButtonClickReport below for how that
-// case still reports an ordinary click/drag in real time. Interrupt.c
-// enqueues both a down and an up mouse edge (AmtForceTouchEdgeEnqueue)
-// when this is TRUE, pulsing the synthetic right-click exactly once.
-//
-// OutButtonClickReport: the arbitrated ordinary-click level (see
-// CLICK_ARBITRATION_STATE in Device.h) - Interrupt.c uses this, not the
-// raw button bit, for PTP_REPORT.IsButtonClicked. FALSE while a press
-// is still being arbitrated or has been decided a force touch, so a
-// force touch never also reports a regular click underneath it.
+// OutForceTouchClick reports a synthetic right-click once per qualifying press.
+// OutButtonClickReport carries the final ordinary-click decision.
 VOID
 PTPCore_ProcessFrame(
     _Inout_ struct _DEVICE_CONTEXT* DeviceContext,

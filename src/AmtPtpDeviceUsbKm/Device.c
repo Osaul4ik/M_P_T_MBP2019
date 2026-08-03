@@ -8,10 +8,7 @@
 #pragma alloc_text (PAGE, AmtPtpDeviceUsbKmEvtDevicePrepareHardware)
 #endif
 
-// AmtPtpGetDeviceConfig
-//
-// AUDIT FIX (#7): takes the descriptor by pointer instead of by value -
-// avoids an unnecessary full-struct copy onto the stack on every call.
+// Read the matching config entry for the detected device.
 
 _IRQL_requires_(PASSIVE_LEVEL)
 static const struct BCM5974_CONFIG*
@@ -59,9 +56,7 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     deviceContext->PtpReportButton = TRUE;
     deviceContext->PtpReportTouch  = TRUE;
 
-    // AUDIT FIX: backs the shared frame-processing state guarded in
-    // Interrupt.c (see StateLock comment in Device.h). Parented to the
-    // WDF device so it is torn down automatically with it.
+    // Create the shared state lock for frame processing.
     {
         WDF_OBJECT_ATTRIBUTES lockAttributes;
         WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
@@ -159,23 +154,14 @@ AmtPtpEvtDeviceD0Entry(
 
     pDeviceContext->LastReportTime =
         KeQueryPerformanceCounter(&pDeviceContext->PerfFrequency);
-    // SCANTIME FIX: reseed the free-running ScanTime accumulator alongside
-    // LastReportTime, so each new session starts the hardware-clock
-    // counter back at 0 rather than carrying over a stale wrap point.
+    // Reset per-session timing and contact state on D0 entry.
     pDeviceContext->ScanTimeAccumulator = 0;
-
-    // Reseed ContactID counter and reset the contact pool on D0Entry.
-    // Prevents stale ContactIDs from surviving sleep/wake cycles.
-    // NextContactId=0 reserved; first birth pre-increments to 1.
     pDeviceContext->NextContactId        = 0;
     pDeviceContext->OverflowCount        = 0;
     pDeviceContext->PrevButtonClicked    = FALSE;
     pDeviceContext->ForceTouchAnchorValid = FALSE;
     pDeviceContext->ForceTouchDragLockout = FALSE;
-    // Any pending, undelivered force-touch edges from a previous power
-    // session are meaningless once the button state has been reset above -
-    // delivering them now would risk a bogus right-click sequence on the
-    // very first frames after resume. Drop them, not carry them forward.
+    // Drop pending force-touch edges from the previous power session.
     pDeviceContext->PendingForceTouchEdgeHead  = 0;
     pDeviceContext->PendingForceTouchEdgeCount = 0;
     pDeviceContext->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
@@ -185,12 +171,7 @@ AmtPtpEvtDeviceD0Entry(
     // hints from a previous power session.
     RtlZeroMemory(&pDeviceContext->RecentLifts, sizeof(pDeviceContext->RecentLifts));
 
-    // Wellspring-mode failure here is intentionally non-fatal - status is
-    // deliberately NOT propagated, only the WdfIoTargetStart result below
-    // is (this matches the pre-existing behavior; the standalone
-    // "status = STATUS_SUCCESS" reset previously here was redundant, since
-    // status is unconditionally overwritten by the next assignment either
-    // way).
+    // Wellspring-mode setup is best-effort; only the start result matters.
     (VOID)AmtPtpSetWellspringMode(pDeviceContext, TRUE);
 
     status = WdfIoTargetStart(

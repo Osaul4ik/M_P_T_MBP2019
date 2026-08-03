@@ -136,16 +136,7 @@ typedef struct _PTP_CONTACT {
 } PTP_CONTACT, * PPTP_CONTACT;
 #pragma pack(pop)
 
-// AUDIT FIX: this struct is serialized byte-for-byte into the HID input
-// report via WdfMemoryCopyFromBuffer (Interrupt.c) - its C layout IS the
-// wire format the HID report descriptor (WellspringT2.h) expects. Without
-// an explicit pack(1), the struct's actual layout only happened to match
-// (ReportID + Contacts[5]*sizeof(PTP_CONTACT)=45 lands on an even offset,
-// so USHORT ScanTime needed no padding) by coincidence of the current
-// field order/count - nothing enforced it. A future field reorder/
-// addition could silently break the wire format with no compiler
-// warning. pack(1) + the C_ASSERT below turn that into a hard, verifiable
-// guarantee instead of an implicit one.
+// Keep the HID report layout explicit and packed.
 #pragma pack(push)
 #pragma pack(1)
 typedef struct _PTP_REPORT {

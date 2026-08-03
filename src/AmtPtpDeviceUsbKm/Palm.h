@@ -1,14 +1,4 @@
-// Palm.h - Palm classification.
-//
-// Extracted verbatim (scoring logic unchanged) from the old
-// AmtClassifyPalm in Match.c. Per-sample classification only; this
-// file makes no session-level decisions (PalmDetected latch, whole-pad
-// blank persistence) - that orchestration stays where the rest of the
-// per-frame session state lives, since it is symmetrical with
-// GestureThisFrame (see Match.c/Interrupt.c/PTPCore.c). This file answers
-// exactly one question per finger: "does this single sample look like
-// a palm", nothing more - consistent with Phase 6 of the task spec
-// ("ONLY: suppress reporting; DO NOT affect identity/FSM/tracking").
+// Palm classification for a single sample.
 
 #pragma once
 
@@ -18,8 +8,7 @@ EXTERN_C_START
 
 typedef enum { PALM_NONE = 0, PALM_LOCAL = 1, PALM_LARGE = 2 } PALM_CLASS;
 
-// Per-sample palm classification. Pure function of the raw geometry +
-// normalized position; no state read or written.
+// Classify one contact as palm or finger.
 PALM_CLASS
 AmtPalmClassify(
     _In_ USHORT                       Major,

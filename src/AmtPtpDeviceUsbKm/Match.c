@@ -23,16 +23,7 @@ AmtMatchCandidateTip(_In_ USHORT major, _In_ USHORT minor)
     return (UCHAR)(((INT)major << 1) >= 200 || ((INT)minor << 1) >= 150);
 }
 
-// Third-tier matching tie-break (see AmtMatchCorrespond): when two
-// candidate/pool pairs are tied on both spatial cost (within
-// MATCH_TIE_EPSILON_SQ) and slot-hint match, prefer whichever pairing
-// keeps touch geometry/pressure most similar to what that pool entry
-// last reported. This is a plain Manhattan-style sum, not a weighted/
-// normalized model - Major/Minor/Pressure are different raw units, but
-// for a last-resort tie-break among candidates that are already
-// spatially near-identical, "closer on all three, unweighted" is a
-// reasonable cheap heuristic and avoids inventing per-axis weights with
-// no real-device data to justify them.
+// Cheap tie-breaker: keep geometry and pressure similar.
 static LONG
 AmtMatchShapeDistance(
     _In_ const MATCH_CANDIDATE* Cand,
@@ -96,8 +87,7 @@ AmtMatchBuildCandidates(
             continue;
         }
 
-        // Below tip threshold: scan all pool entries by LastSlotHint,
-        // keep nearest within TIP_DROP_MAX_REPOSITION_DELTA.
+        // Bridge low-signal contacts through the pool when possible.
         size_t bestPoolIdx  = MAX_CONTACTS;
         LONG   bestDistSq   = -1;
 
@@ -124,18 +114,7 @@ AmtMatchBuildCandidates(
         }
 
         if (bestPoolIdx == MAX_CONTACTS) {
-            // No anchor: brand-new, below-tip-threshold contact - X/Y are
-            // live (not stale, so TipDropApplied=0), but its existence is
-            // unverified (Unconfirmed=1). Birthed so a genuine soft tap
-            // still gets tracked from frame 1 and can be confirmed as
-            // soon as it matches this same pool entry again next frame
-            // (below, the anchor-found branch) - but NOT reported
-            // Confident to Windows yet, so a one-off noise blip (sensor
-            // static, residual moisture/oil buildup - never anchors to
-            // anything on a later frame because there's nothing real
-            // there to re-match) can no longer masquerade as an extra
-            // finger for multi-finger tap/gesture disambiguation. See
-            // MATCH_CANDIDATE.Unconfirmed and PTPCore.c reportConfident.
+            // A new soft tap is tracked but not trusted yet.
             cand.X              = rc->X;
             cand.Y              = rc->Y;
             cand.TipDropApplied = 0;
@@ -156,22 +135,10 @@ AmtMatchBuildCandidates(
         cand.X = isStationary ? Pool[bestPoolIdx].ReportX : rc->X;
         cand.Y = isStationary ? Pool[bestPoolIdx].ReportY : rc->Y;
 
-        // AUDIT FIX: this was previously hardcoded to 0 in both branches,
-        // silently disabling the documented "position is stale on a
-        // stationary bridge" contract (see Match.h). Only the
-        // stationary/anchor branch actually reports a stale position
-        // (Pool[bestPoolIdx].ReportX/Y instead of the live rc->X/Y), so
-        // only that branch marks the position stale. The moving branch
-        // reports the real live coordinate.
+        // Only the stationary bridge reports a stale position.
         cand.TipDropApplied = isStationary ? 1 : 0;
 
-        // Unconfirmed stays FALSE (RtlZeroMemory default) here in BOTH
-        // the stationary and moving sub-cases: this candidate matched an
-        // existing pool anchor, so - unlike the no-anchor birth case
-        // above - its existence is already established, regardless of
-        // whether it's holding still this exact frame. Confidence must
-        // not depend on TipDropApplied/isStationary anymore (a real tap
-        // is expected to sit nearly still) - see MATCH_CANDIDATE.Unconfirmed.
+        // Anchored bridges stay confirmed; only true births stay unconfirmed.
 
         OutCandidates->Candidates[OutCandidates->Count++] = cand;
     }
@@ -298,24 +265,15 @@ AmtMatchCorrespond(
         }
 
         // BUG FIX (lost continuation on a rejected best-cost pair): this
-        // used to set candClaimed[ci] = TRUE here, which permanently
-        // burned the CANDIDATE, not just this one pair. pairUsed[bestIdx]
-        // above already makes sure this exact (candidate,pool) pair is
-        // never picked again - that's sufficient. Leaving candClaimed[ci]
-        // FALSE lets the outer greedy loop reconsider this same candidate
-        // against a DIFFERENT, still-unclaimed pool entry on a later
-        // pick, which is the whole point of doing this by ascending cost:
-        // the cheapest pairing can be implausible (a stale/out-of-window
-        // pool entry, or a spurious spatial jump) while a slightly more
-        // expensive, still-legitimate pairing exists for the very same
-        // physical finger. Previously, whichever pair happened to sort
-        // first ate the candidate outright, forcing a spurious lift+rebirth
-        // (new ContactID) for a finger that was still on the pad -
-        // visible as a broken drag, an interrupted multi-finger gesture,
-        // or a finger that drops out of a tap/double-tap sequence Windows
-        // was tracking by ContactID. poolClaimed[p] is intentionally left
-        // untouched either way - a rejected pool entry stays available for
-        // a different candidate to match.
+        // used to burn the whole candidate. pairUsed[bestIdx] already
+        // prevents re-picking this exact pair; leaving candClaimed[ci]
+        // FALSE lets the greedy loop reconsider this candidate against a
+        // different, still-unclaimed pool entry on a later pick - the
+        // cheapest pairing can be implausible while a legitimate one
+        // exists. Previously the sorted-first pair ate the candidate,
+        // forcing a spurious lift+rebirth (broken drag / interrupted
+        // gesture / dropped tap). poolClaimed[p] stays untouched so the
+        // rejected pool entry remains available to other candidates.
         if (spatialReject || timeReject) {
             continue;
         }

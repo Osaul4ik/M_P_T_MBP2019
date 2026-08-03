@@ -1,12 +1,4 @@
-// Input.c - InputAdapter implementation. See Input.h for the contract.
-//
-// Extracted from the old AmtMatchParseFrame (Match.c). That function
-// mixed three concerns: geometry decode, palm classification, and
-// tip-size debounce. This file keeps ONLY geometry decode + coordinate
-// normalization - the part that genuinely has no state. Palm
-// classification moved to Palm.c. Tip-size debounce moved into PTPCore
-// (Match.c L1.5 / Activecontact.c), since it requires reading previous
-// track position - see PTPCore.h note #2 for why that can't live here.
+// Decode raw USB packets into normalized touch frames.
 
 #include "Driver.h"
 #include "Input.h"
@@ -51,10 +43,9 @@ AmtInputParseFrame(
         INT major = AmtInputRawToInteger(f->touch_major);
         INT minor = AmtInputRawToInteger(f->touch_minor);
         INT pressure = AmtInputRawToInteger(f->pressure);
-        if (pressure < 0) pressure = 0; // clamp - negative pressure is not meaningful
+        if (pressure < 0) pressure = 0; // Clamp negative pressure.
 
-        // No contact at all - InputAdapter does not debounce this; a
-        // downstream layer with track history may choose to bridge it.
+        // Skip empty contacts.
         if (major <= 0 && minor <= 0)
             continue;
 

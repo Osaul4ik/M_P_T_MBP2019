@@ -3,20 +3,13 @@
 #include "Driver.h"
 #include "hid.tmh"
 
-// AUDIT: single choke point for the "is reportBuffer big enough for the
-// struct we're about to read/write" check. Replaces 4 separate ad-hoc
-// comparisons (2 pre-existing in AmtPtpReportFeatures, 2 added in
-// AmtPtpSetFeatures) so a future new REPORTID_* case can't silently skip it.
+// Centralize HID report-size validation.
 static __inline BOOLEAN
 HidValidateReportSize(
 	_In_ PHID_XFER_PACKET pHidPacket,
 	_In_ size_t           requiredSize)
 {
-	// AUDIT FIX: reportBufferLen alone doesn't guarantee reportBuffer is
-	// non-NULL - pHidPacket is HID-class/user-mode supplied, so a crafted
-	// IOCTL with a satisfying reportBufferLen but reportBuffer == NULL
-	// previously passed this check and then crashed on the very next
-	// direct dereference in the caller (e.g. capsReport->... assignments).
+	// Guard against NULL buffers from user input.
 	return (pHidPacket->reportBuffer != NULL) &&
 	       (pHidPacket->reportBufferLen >= (ULONG)requiredSize);
 }
@@ -68,9 +61,7 @@ AmtPtpGetHidDescriptor(
 		goto exit;
 	}
 
-	// Every idProduct we support (named T2 variants and any unrecognized
-	// fallback) reports the same fixed HID descriptor - there is only one
-	// descriptor to hand back, so no per-product branch is needed here.
+	// All supported products use the same fixed HID descriptor.
 	szCopy = AmtPtpT2DefaultHidDescriptor.bLength;
 	status = WdfMemoryCopyFromBuffer(
 		requestMemory,
@@ -146,8 +137,7 @@ AmtPtpGetReportDescriptor(
 		goto exit;
 	}
 
-	// Every idProduct we support reports the same fixed report descriptor -
-	// see AmtPtpGetHidDescriptor.
+	// All supported products share the same report descriptor.
 	szCopy = AmtPtpT2DefaultHidDescriptor.DescriptorList[0].wReportLength;
 	if (szCopy == 0) {
 		status = STATUS_INVALID_DEVICE_STATE;

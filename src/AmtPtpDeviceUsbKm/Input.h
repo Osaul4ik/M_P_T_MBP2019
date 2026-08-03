@@ -1,9 +1,4 @@
-// Input.h - InputAdapter: raw USB/Wellspring packet -> RAW_FRAME.
-//
-// Stateless by design. Does not read or write TRACK state. Does not
-// classify palm. Does not debounce. Pure decode + coordinate
-// normalization. See PTPCore.h for the full layer contract and the
-// rationale for keeping this layer genuinely stateless.
+// Decode raw USB packets into a normalized frame.
 
 #pragma once
 
@@ -11,10 +6,7 @@
 
 EXTERN_C_START
 
-// Decodes raw TRACKPAD_FINGER records into a RAW_FRAME. Drops fingers
-// with major<=0 && minor<=0 (no contact) - does not attempt tip-size
-// debounce, since that requires track history. Sets RawFrame->Contacts[].SlotIndex
-// to the raw firmware slot index for every entry it emits.
+// Decode raw finger records and drop empty contacts.
 VOID
 AmtInputParseFrame(
     _In_  const UCHAR*                 FrameBase,
