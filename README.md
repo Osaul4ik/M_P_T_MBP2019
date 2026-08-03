@@ -1,34 +1,33 @@
 # WellspringPTP
 
-**Windows Precision Touchpad driver for Apple MacBook T2 trackpads.**
+**Windows Precision Touchpad kernel driver for Apple MacBooks**
 
-WellspringPTP is a Windows Precision Touchpad driver focused on delivering a native, responsive, and reliable experience on Apple MacBook T2 hardware.
+WellspringPTP is a Windows Precision Touchpad driver focused on delivering a native, responsive, and reliable experience on Apple MacBooks.
 
-The project started as a fork of **mac-precision-touchpad** and has since evolved into a significantly reworked implementation for Apple T2 MacBooks.
+The project started as a fork of **mac-precision-touchpad** and has since evolved into a significantly reworked implementation.
 
 ---
 
 # Current Status
 
-The USB implementation for **MacBook Pro 16,1 (2019)** is considered feature-complete and is now primarily in the tuning and stabilization phase.
+Testing and bug hunting.
 
-The driver has been extensively tested on this device and is optimized specifically for its trackpad.
+The driver has been extensively tested on **MacBook Pro 16,1 (2019) and Air 2015**
+
+**Haptic feedback is not currently implemented. The Force Touch trackpad's actuator requires a calibration sequence to drive properly, and that process hasn't been reverse-engineered yet — so this feature is blocked until that's figured out.**
 
 ---
 
 # Features
 
 * Windows Precision Touchpad support
-* Native multi-touch gestures
-* Reworked contact matching pipeline
-* Stable Contact ID management
-* Improved cursor stability
-* Enhanced palm rejection
-* Overflow packet handling
-* Force Touch for open context menu
+* Native multi-touch gestures (pinch, zoom, scroll, swipe)
+* Smoother, more accurate finger tracking — fewer dropped or mismatched contacts
+* No more cursor jumps or "ghost" touches
+* Palm rejection
+* Fixed handling of malformed/overflow USB packets
+* Force Touch triggers the right-click context menu
 * Low-latency input processing
-* Optimized scrolling behavior
-* Production-oriented architecture focused on correctness and maintainability
 
 ---
 
@@ -108,8 +107,8 @@ This step is important before installing another Apple touchpad driver (Trackpad
 * ✅ Scroll improvements
 * ✅ Cursor jump fixes
 * ✅ Force Touch implementation
-* ✅  Driver optimization
-* ✅  Code audit
+* ✅ Driver optimization
+* ✅ Code audit
   
 
 # Credits
