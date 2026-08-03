@@ -93,9 +93,9 @@ MacBook 12" (2015-2017) — SPI, not USB
 This step is important before installing another Apple touchpad driver (Trackpad++, Magic Utilities, etc.).
 
 1. Open **Device Manager**.
-2. Find touchpad driver in HID section
+2. Find touchpad driver "Wellspring Precision Touchpad" in "HID" section, open and select "Delete"
 3. Enable **Delete the driver software for this device**.
-4. Scan for hardware changes or reboot. (Use Alt key in Device Manager and arrows)
+4. Scan for hardware changes or reboot. (Use Alt key in Device Manager and arrows or Win key and choose reboot)
 
 ---
 
