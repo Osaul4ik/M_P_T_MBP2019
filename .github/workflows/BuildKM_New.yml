@@ -321,22 +321,6 @@ jobs:
 
 
     # =====================================================================
-    # ВИПРАВЛЕНО: інформаційна перевірка підпису без /pa, щоб не перевіряти
-    # довіру до кореневого сертифіката. Для тестових сертифікатів це
-    # нормально - вони не встановлені в Trusted Root на раннері.
-    # =====================================================================
-    - name: Verify signatures (informational)
-      run: |
-        Write-Host "==> Verifying .sys signature"
-        & "$env:SIGNTOOL_PATH" verify /v "$env:SYS_PATH"
-        Write-Host "==> Verifying .cat signature"
-        & "$env:SIGNTOOL_PATH" verify /v "$env:CAT_PATH"
-        Write-Host "==> Verification completed (test certificate - trust not verified)"
-      shell: pwsh
-      continue-on-error: true
-
-
-    # =====================================================================
     # Створюємо структуру папок для архіву з папкою WellspringPTP всередині.
     # =====================================================================
     - name: Prepare final package folder
@@ -347,6 +331,7 @@ jobs:
         $tempRoot = "temp-upload"
         $stagingDir = Join-Path $tempRoot "WellspringPTP"
         $installCert = "src/InstallCert.bat"
+        $testMode    = "src/TestMode.bat"
 
         Write-Host "==> Preparing staging folder $stagingDir"
         New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
@@ -361,6 +346,12 @@ jobs:
           exit 1
         }
         Copy-Item -Path $installCert -Destination $stagingDir -Force
+
+        if (-not (Test-Path $testMode)) {
+          Write-Error "TestMode.bat not found at $testMode."
+          exit 1
+        }
+        Copy-Item -Path $testMode -Destination $stagingDir -Force
 
         Write-Host "OK: staged files:"
         Get-ChildItem $stagingDir | ForEach-Object { Write-Host "  - $($_.Name)" }
