@@ -288,13 +288,15 @@ AmtPtpSetWellspringMode(
     WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(
         &sendOptions, WDF_REL_TIMEOUT_IN_SEC(WELLSPRING_CONTROL_TRANSFER_TIMEOUT_SEC));
 
-    // NOTE: every entry in Bcm5974ConfigTable (fallback + all T2 variants,
-    // including the confirmed 16" 0x0340) is built via DATAFORMAT(TYPE4) -
-    // none use TYPE3. A prior TYPE3 early-return here ("T2 devices skip
-    // the mode-switch") was therefore dead code: it never matched any
-    // configured device, so every real device already executes the
-    // read/modify/write sequence below. Removed rather than left in to
-    // avoid implying a code path exists that doesn't.
+    // TYPE3 devices (WELLSPRING8 - MacBookAir6,x/7,x, 2013-2017) stream
+    // multitouch data without a vendor mode switch - matches Linux
+    // bcm5974_wellspring_mode(): "Type 3 does not require a mode switch".
+    // Every T2 entry (TYPE4) still falls through to the read/modify/write
+    // sequence below as before.
+    if (DeviceContext->DeviceInfo->tp_type == TYPE3) {
+        DeviceContext->IsWellspringModeOn = IsWellspringModeOn;
+        return STATUS_SUCCESS;
+    }
 
     NT_ASSERT(DeviceContext->DeviceInfo->um_size <= sizeof(buffer));
 

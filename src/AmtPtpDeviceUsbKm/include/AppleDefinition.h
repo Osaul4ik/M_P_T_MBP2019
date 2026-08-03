@@ -2,15 +2,57 @@
 
 #define USB_VENDOR_ID_APPLE		0x05ac
 
-/* Apple T2 USB trackpad */
-#define USB_DEVICE_ID_APPLE_T2_7A 0x027a
-#define USB_DEVICE_ID_APPLE_T2_7B 0x027b
-#define USB_DEVICE_ID_APPLE_T2_7C 0x027c
-#define USB_DEVICE_ID_APPLE_T2_7D 0x027d
+/*
+ * Apple T2 USB trackpads.
+ *
+ * Names and PIDs match the Linux kernel's T2 device IDs (see
+ * drivers/hid/hid-ids.h and the "T2-Attached Devices" block in
+ * drivers/input/mouse/bcm5974.c, as carried by the aunali1/linux-mbp-arch
+ * out-of-tree patch series 4002-4009 "HID: apple: Add support for
+ * <model> keyboard/trackpad"). Kept as USB_DEVICE_ID_APPLE_T2_xxx here
+ * instead of the upstream WELLSPRINGT2_xxx names to match this driver's
+ * existing naming convention; the codename in each comment is the
+ * upstream/Apple internal board ID (e.g. J132) for cross-reference.
+ */
+#define USB_DEVICE_ID_APPLE_T2_J140K  0x027a  /* MacBookAir8,1  (2018) */
+#define USB_DEVICE_ID_APPLE_T2_J132   0x027b  /* MacBookPro15,2 (2018, 13", 4x TB3) */
+#define USB_DEVICE_ID_APPLE_T2_J680   0x027c  /* MacBookPro15,1 (2018, 15") */
+#define USB_DEVICE_ID_APPLE_T2_J213   0x027d  /* MacBookPro15,4 (2019, 13", 2x TB3) */
+#define USB_DEVICE_ID_APPLE_T2_J214K  0x027e  /* MacBookPro16,2 (2020, 13", 4x TB3) */
+#define USB_DEVICE_ID_APPLE_T2_J223   0x027f  /* MacBookPro16,3 (2020, 13", 2x TB3) */
+#define USB_DEVICE_ID_APPLE_T2_J230K  0x0280  /* MacBookAir9,1  (2020) */
 
-// Apple T2 USB trackpad — MacBookPro16,1 (16-inch, 2019).
+// Apple T2 USB trackpad — MacBookPro16,1 (16-inch, 2019), codename J152F.
 // Confirmed on a real device; previously fell through to the fallback entry.
-#define USB_DEVICE_ID_APPLE_T2_16 0x0340
+#define USB_DEVICE_ID_APPLE_T2_J152F  0x0340
+
+/* Back-compat aliases for the old (pre-rename) constant names. */
+#define USB_DEVICE_ID_APPLE_T2_7A  USB_DEVICE_ID_APPLE_T2_J140K
+#define USB_DEVICE_ID_APPLE_T2_7B  USB_DEVICE_ID_APPLE_T2_J132
+#define USB_DEVICE_ID_APPLE_T2_7C  USB_DEVICE_ID_APPLE_T2_J680
+#define USB_DEVICE_ID_APPLE_T2_7D  USB_DEVICE_ID_APPLE_T2_J213
+#define USB_DEVICE_ID_APPLE_T2_16  USB_DEVICE_ID_APPLE_T2_J152F
+
+/*
+ * Apple WELLSPRING9 USB trackpad - MacBookPro12,1 (2015, 13" Retina,
+ * Force Touch, no Touch Bar). Not T2. TYPE4 packet format - this is
+ * literally where TYPE4 (pressure field) was introduced upstream, per
+ * "Input: bcm5974 - Add support for the 2015 Macbook Pro" (commit
+ * d58069265c9d, Henrik Rydberg / John Horan, kernel 4.2).
+ */
+#define USB_DEVICE_ID_APPLE_WELLSPRING9_ANSI  0x0272
+#define USB_DEVICE_ID_APPLE_WELLSPRING9_ISO   0x0273
+#define USB_DEVICE_ID_APPLE_WELLSPRING9_JIS   0x0274
+
+/*
+ * Apple WELLSPRING8 USB trackpad - MacBookAir6,1 / MacBookAir6,2 (2013)
+ * through MacBookAir7,1 / MacBookAir7,2 (2015). Not a T2 device (no T2
+ * chip until 2018) - same board/trackpad kept unchanged across all of
+ * these model years, so one PID pair covers all of them. TYPE3 packet
+ * format, per drivers/input/mouse/bcm5974.c.
+ */
+#define USB_DEVICE_ID_APPLE_WELLSPRING8_ANSI  0x0290
+#define USB_DEVICE_ID_APPLE_WELLSPRING8_ISO   0x0291
 
 #define USB_DEVICE_ID_DEFAULT_FALLBACK 0xffff
 
@@ -176,9 +218,76 @@ static const struct BCM5974_CONFIG Bcm5974ConfigTable[] = {
 		{ SN_COORD, -2000, 10000 },
 		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
 	},
-	/* 13 inch */
+	/*
+	 * MacBookPro12,1 (2015, 13" Retina, Force Touch, no Touch Bar).
+	 * Not T2 - the model that introduced TYPE4/pressure upstream.
+	 */
 	{
-		USB_DEVICE_ID_APPLE_T2_7A,
+		USB_DEVICE_ID_APPLE_WELLSPRING9_ANSI,
+		HAS_INTEGRATED_BUTTON,
+		0, sizeof(struct TRACKPAD_BUTTON_DATA),
+		0x83, DATAFORMAT(TYPE4),
+		{ SN_PRESSURE, 0, 300 },
+		{ SN_WIDTH, 0, 2048 },
+		{ SN_COORD, -4828, 5345 },
+		{ SN_COORD, -203, 6803 },
+		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
+	},
+	{
+		USB_DEVICE_ID_APPLE_WELLSPRING9_ISO,
+		HAS_INTEGRATED_BUTTON,
+		0, sizeof(struct TRACKPAD_BUTTON_DATA),
+		0x83, DATAFORMAT(TYPE4),
+		{ SN_PRESSURE, 0, 300 },
+		{ SN_WIDTH, 0, 2048 },
+		{ SN_COORD, -4828, 5345 },
+		{ SN_COORD, -203, 6803 },
+		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
+	},
+	{
+		USB_DEVICE_ID_APPLE_WELLSPRING9_JIS,
+		HAS_INTEGRATED_BUTTON,
+		0, sizeof(struct TRACKPAD_BUTTON_DATA),
+		0x83, DATAFORMAT(TYPE4),
+		{ SN_PRESSURE, 0, 300 },
+		{ SN_WIDTH, 0, 2048 },
+		{ SN_COORD, -4828, 5345 },
+		{ SN_COORD, -203, 6803 },
+		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
+	},
+	/*
+	 * MacBookAir6,1 / 6,2 (2013) through MacBookAir7,1 / 7,2 (2015).
+	 * Not T2 - included because the same USB PID covers this whole
+	 * model range, including the 2015 13" Air. TYPE3: no bt_ep (button
+	 * state comes from tp_data[BUTTON_TYPE3] itself, like the T2
+	 * entries above), no vendor mode-switch on init (see the TYPE3
+	 * early-return in AmtPtpSetWellspringMode).
+	 */
+	{
+		USB_DEVICE_ID_APPLE_WELLSPRING8_ANSI,
+		HAS_INTEGRATED_BUTTON,
+		0, sizeof(struct TRACKPAD_BUTTON_DATA),
+		0x83, DATAFORMAT(TYPE3),
+		{ SN_PRESSURE, 0, 300 },
+		{ SN_WIDTH, 0, 2048 },
+		{ SN_COORD, -4620, 5140 },
+		{ SN_COORD, -150, 6600 },
+		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
+	},
+	{
+		USB_DEVICE_ID_APPLE_WELLSPRING8_ISO,
+		HAS_INTEGRATED_BUTTON,
+		0, sizeof(struct TRACKPAD_BUTTON_DATA),
+		0x83, DATAFORMAT(TYPE3),
+		{ SN_PRESSURE, 0, 300 },
+		{ SN_WIDTH, 0, 2048 },
+		{ SN_COORD, -4620, 5140 },
+		{ SN_COORD, -150, 6600 },
+		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
+	},
+	/* MacBookAir8,1 (2018), codename J140K */
+	{
+		USB_DEVICE_ID_APPLE_T2_J140K,
 		HAS_INTEGRATED_BUTTON,
 		0, sizeof(struct TRACKPAD_BUTTON_DATA),
 		0x83, DATAFORMAT(TYPE4),
@@ -188,8 +297,9 @@ static const struct BCM5974_CONFIG Bcm5974ConfigTable[] = {
 		{ SN_COORD, -170, 7685 },
 		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
 	},
+	/* MacBookPro15,2 (2018, 13", 4x TB3), codename J132 */
 	{
-		USB_DEVICE_ID_APPLE_T2_7B,
+		USB_DEVICE_ID_APPLE_T2_J132,
 		HAS_INTEGRATED_BUTTON,
 		0, sizeof(struct TRACKPAD_BUTTON_DATA),
 		0x83, DATAFORMAT(TYPE4),
@@ -199,41 +309,88 @@ static const struct BCM5974_CONFIG Bcm5974ConfigTable[] = {
 		{ SN_COORD, -170, 7685 },
 		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
 	},
-	/* 15 inch */
+	/*
+	 * MacBookPro15,1 (2018, 15"), codename J680.
+	 * Larger physical trackpad than the 13" models above - exact
+	 * per-device ranges from the Linux T2 patch set, not the generic
+	 * oversampled fallback the previous entry used.
+	 */
 	{
-		USB_DEVICE_ID_APPLE_T2_7C,
+		USB_DEVICE_ID_APPLE_T2_J680,
 		HAS_INTEGRATED_BUTTON,
 		0, sizeof(struct TRACKPAD_BUTTON_DATA),
 		0x83, DATAFORMAT(TYPE4),
 		{ SN_PRESSURE, 0, 300 },
 		{ SN_WIDTH, 0, 2048 },
-		// Oversampled - this is fine for a trackpad
-		{ SN_COORD, -10000, 10000 },
-		{ SN_COORD, -2000, 10000 },
+		{ SN_COORD, -7456, 7976 },
+		{ SN_COORD, -1768, 7685 },
 		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
 	},
+	/*
+	 * MacBookPro15,4 (2019, 13", 2x TB3), codename J213.
+	 * Same trackpad size/range as the other 13" T2 models.
+	 */
 	{
-		USB_DEVICE_ID_APPLE_T2_7D,
+		USB_DEVICE_ID_APPLE_T2_J213,
 		HAS_INTEGRATED_BUTTON,
 		0, sizeof(struct TRACKPAD_BUTTON_DATA),
 		0x83, DATAFORMAT(TYPE4),
 		{ SN_PRESSURE, 0, 300 },
 		{ SN_WIDTH, 0, 2048 },
-		// Oversampled - this is fine for a trackpad
-		{ SN_COORD, -10000, 10000 },
-		{ SN_COORD, -2000, 10000 },
+		{ SN_COORD, -6243, 6749 },
+		{ SN_COORD, -170, 7685 },
 		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
 	},
-	/* 16 inch — MacBookPro16,1 (2019). Uses the generic fallback ranges. */
+	/* MacBookPro16,2 (2020, 13", 4x TB3), codename J214K */
 	{
-		USB_DEVICE_ID_APPLE_T2_16,
+		USB_DEVICE_ID_APPLE_T2_J214K,
 		HAS_INTEGRATED_BUTTON,
 		0, sizeof(struct TRACKPAD_BUTTON_DATA),
 		0x83, DATAFORMAT(TYPE4),
 		{ SN_PRESSURE, 0, 300 },
 		{ SN_WIDTH, 0, 2048 },
-		{ SN_COORD, -10000, 10000 },
-		{ SN_COORD, -2000, 10000 },
+		{ SN_COORD, -6243, 6749 },
+		{ SN_COORD, -170, 7685 },
+		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
+	},
+	/* MacBookPro16,3 (2020, 13", 2x TB3), codename J223 */
+	{
+		USB_DEVICE_ID_APPLE_T2_J223,
+		HAS_INTEGRATED_BUTTON,
+		0, sizeof(struct TRACKPAD_BUTTON_DATA),
+		0x83, DATAFORMAT(TYPE4),
+		{ SN_PRESSURE, 0, 300 },
+		{ SN_WIDTH, 0, 2048 },
+		{ SN_COORD, -6243, 6749 },
+		{ SN_COORD, -170, 7685 },
+		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
+	},
+	/* MacBookAir9,1 (2020), codename J230K */
+	{
+		USB_DEVICE_ID_APPLE_T2_J230K,
+		HAS_INTEGRATED_BUTTON,
+		0, sizeof(struct TRACKPAD_BUTTON_DATA),
+		0x83, DATAFORMAT(TYPE4),
+		{ SN_PRESSURE, 0, 300 },
+		{ SN_WIDTH, 0, 2048 },
+		{ SN_COORD, -6243, 6749 },
+		{ SN_COORD, -170, 7685 },
+		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
+	},
+	/*
+	 * MacBookPro16,1 (2019, 16"), codename J152F.
+	 * Largest T2 trackpad - exact ranges from the Linux T2 patch set,
+	 * not the generic oversampled fallback the previous entry used.
+	 */
+	{
+		USB_DEVICE_ID_APPLE_T2_J152F,
+		HAS_INTEGRATED_BUTTON,
+		0, sizeof(struct TRACKPAD_BUTTON_DATA),
+		0x83, DATAFORMAT(TYPE4),
+		{ SN_PRESSURE, 0, 300 },
+		{ SN_WIDTH, 0, 2048 },
+		{ SN_COORD, -8916, 9918 },
+		{ SN_COORD, -1934, 9835 },
 		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
 	},
 	{
