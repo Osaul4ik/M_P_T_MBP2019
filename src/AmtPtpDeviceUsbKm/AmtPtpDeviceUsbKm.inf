@@ -101,5 +101,5 @@ KmdfLibraryVersion = $KMDFVERSION$
 SPSVCINST_ASSOCSERVICE       = 0x00000002
 ManufacturerName             = "Osaul4ik"
 DiskName                     = "AmtPtpDeviceUsbKm Installation Disk"
-AmtPtpDeviceUsbKm.DeviceDesc = "Apple USB Precision Touchpad Device (Kernel-mode)"
-AmtPtpDeviceUsbKm.SVCDESC    = "Apple USB Precision Touchpad Service"
+AmtPtpDeviceUsbKm.DeviceDesc = "Wellspring Precision Touchpad"
+AmtPtpDeviceUsbKm.SVCDESC    = "Wellspring Precision Touchpad Service"
