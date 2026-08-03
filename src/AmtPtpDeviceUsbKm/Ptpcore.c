@@ -58,7 +58,17 @@
 // ~24ms) - revisit if real-device testing shows force-touch presses
 // naturally stalling for a frame or two mid-ramp (sensor noise, grip
 // micro-adjustment) and getting cut off too early; raise toward 5-6 if so.
-#define CLICK_ARBITRATION_STALL_FRAMES_FAST_RESOLVE 3
+// TUNING: raised 3 -> 6 (2026-08-03) - real-device testing showed exactly
+// this: an intermittent, press-to-press-dependent failure to register
+// force touch (works, works, then randomly doesn't, no consistent
+// pattern). A genuine firm press does not always ramp monotonically -
+// a brief ~24-40ms plateau mid-ramp (muscle micro-pause while still
+// bearing down harder) was tripping the OLD 3-frame fast-resolve and
+// locking the press into HARD_TAP before pressure ever reached
+// FORCE_TOUCH_PRESSURE_THRESHOLD. 6 frames (~48ms) gives a real ramp
+// enough room to survive a short plateau while still resolving an
+// ordinary flat/light click well under CLICK_ARBITRATION_TIMEOUT_MS.
+#define CLICK_ARBITRATION_STALL_FRAMES_FAST_RESOLVE 6
 
 // Recent-lift ring buffer (slot-independent retap memory)
 
