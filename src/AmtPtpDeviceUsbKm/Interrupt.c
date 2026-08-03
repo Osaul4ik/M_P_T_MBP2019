@@ -240,12 +240,10 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     // PTPCore orchestration
     PTP_CORE_FRAME coreFrame;
-    BOOLEAN forceTouchDownEdge = FALSE;
-    BOOLEAN forceTouchUpEdge   = FALSE;
-    BOOLEAN buttonClickReport  = FALSE;
+    BOOLEAN forceTouchClick   = FALSE;
+    BOOLEAN buttonClickReport = FALSE;
     PTPCore_ProcessFrame(pCtx, &rawFrame, Now.QuadPart, buttonSnapshot,
-                         &coreFrame, &forceTouchDownEdge, &forceTouchUpEdge,
-                         &buttonClickReport);
+                         &coreFrame, &forceTouchClick, &buttonClickReport);
 
     // Serialize to PTP_REPORT
     AmtSerializeCoreFrameToReport(&coreFrame, &Report);
@@ -295,10 +293,14 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // order, one per available mouse request per interrupt completion, so
     // a fast down+up still reaches Windows as two reports - possibly a
     // frame or two late - instead of cancelling out.
-    if (forceTouchDownEdge) {
+    //
+    // SIMPLIFICATION (2026-08-03): PTPCore_ProcessFrame now decides the
+    // whole force-touch click at once, on the button-release frame (see
+    // OutForceTouchClick, PTPCore.h) - down and up are never reported as
+    // separate edges on separate frames anymore, so there is nothing left
+    // to test independently here.
+    if (forceTouchClick) {
         AmtForceTouchEdgeEnqueue(pCtx, TRUE);
-    }
-    if (forceTouchUpEdge) {
         AmtForceTouchEdgeEnqueue(pCtx, FALSE);
     }
 

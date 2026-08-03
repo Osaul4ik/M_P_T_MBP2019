@@ -68,13 +68,23 @@ typedef struct _PTP_CORE_FRAME
 
 struct _DEVICE_CONTEXT; // fwd decl, defined in Device.h
 
-// OutForceTouchDownEdge: TRUE for exactly one call - the frame where a
-// contact's pressure first crosses FORCE_TOUCH_PRESSURE_THRESHOLD while
-// the integrated button is held down. OutForceTouchUpEdge: TRUE for
-// exactly one call - the frame the force-touch condition ends (pressure
-// drops back down, or the button/contact lifts). Interrupt.c uses these
-// edges (not the level) to pulse the synthetic right-click mouse report
-// exactly once per press, rather than re-firing every frame.
+// OutForceTouchClick: TRUE for exactly one call per press - the frame the
+// integrated button is RELEASED, if and only if that press was still
+// CLICK_ARBITRATION_FORCE_TOUCH at that exact moment (pressure crossed
+// FORCE_TOUCH_PRESSURE_THRESHOLD at some point and the contact never
+// moved past FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE for the WHOLE press - see
+// PTPCore.c). Down and up used to be reported as separate edges the
+// instant pressure crossed the threshold mid-press, but a hard-press-
+// and-immediately-drag-fast gesture could send Windows a complete
+// Button2 down+up pair before the drag lockout ever caught up - already
+// a finished right-click as far as the shell is concerned, so the
+// context menu flashed open and closed even on a press that was clearly
+// a drag by release time. Deferring the whole decision to release
+// removes that race: a press that ever drags far enough simply never
+// produces this at all - see OutButtonClickReport below for how that
+// case still reports an ordinary click/drag in real time. Interrupt.c
+// enqueues both a down and an up mouse edge (AmtForceTouchEdgeEnqueue)
+// when this is TRUE, pulsing the synthetic right-click exactly once.
 //
 // OutButtonClickReport: the arbitrated ordinary-click level (see
 // CLICK_ARBITRATION_STATE in Device.h) - Interrupt.c uses this, not the
@@ -88,8 +98,7 @@ PTPCore_ProcessFrame(
     _In_    LONGLONG                NowQpc,
     _In_    BOOLEAN                 ButtonDown,
     _Out_   PTP_CORE_FRAME*         OutResult,
-    _Out_   BOOLEAN*                OutForceTouchDownEdge,
-    _Out_   BOOLEAN*                OutForceTouchUpEdge,
+    _Out_   BOOLEAN*                OutForceTouchClick,
     _Out_   BOOLEAN*                OutButtonClickReport
 );
 

@@ -292,8 +292,7 @@ PTPCore_ProcessFrame(
     _In_    LONGLONG         NowQpc,
     _In_    BOOLEAN          ButtonDown,
     _Out_   PTP_CORE_FRAME*  OutResult,
-    _Out_   BOOLEAN*         OutForceTouchDownEdge,
-    _Out_   BOOLEAN*         OutForceTouchUpEdge,
+    _Out_   BOOLEAN*         OutForceTouchClick,
     _Out_   BOOLEAN*         OutButtonClickReport
 )
 {
@@ -871,11 +870,16 @@ PTPCore_ProcessFrame(
     // Peak raw pressure this frame - shared by the click arbitration and
     // force-touch checks below (same click-flex rationale as the old
     // per-block loops: use the RAW frame, not the matched/palm-filtered
-    // candidates).
+    // candidates). Only meaningful while the button is held - the
+    // !ButtonDown branch of click arbitration below never reads it, so
+    // skip the scan entirely on ordinary movement-only frames (the most
+    // common case by far - a click is a small fraction of all frames).
     USHORT framePeakPressure = 0;
-    for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
-        if (RawFrame->Contacts[fi].Pressure > framePeakPressure)
-            framePeakPressure = RawFrame->Contacts[fi].Pressure;
+    if (ButtonDown) {
+        for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
+            if (RawFrame->Contacts[fi].Pressure > framePeakPressure)
+                framePeakPressure = RawFrame->Contacts[fi].Pressure;
+        }
     }
 
     // Click arbitration: force-touch vs ordinary hard-tap. Decides BEFORE
@@ -1039,11 +1043,17 @@ PTPCore_ProcessFrame(
     // is released - i.e. one that never moved far enough to trip the
     // lockout for its entire duration - fires the context menu, as a
     // single down+up pulse on that release frame (AmtForceTouchEdgeEnqueue,
-    // Interrupt.c, already queues and delivers a same-frame down+up pair
-    // in order over consecutive available mouse read requests). This
-    // trades away holding Button2 down while dragging after force touch
-    // confirms (a "right-click-drag") - that was the source of the race,
-    // and Windows' PTP integrated-clickpad button has no other use for it.
-    *OutForceTouchDownEdge = releaseWasForceTouch;
-    *OutForceTouchUpEdge   = releaseWasForceTouch;
+    // Interrupt.c, queues and delivers a same-frame down+up pair in order
+    // over consecutive available mouse read requests). This trades away
+    // holding Button2 down while dragging after force touch confirms (a
+    // "right-click-drag") - that was the source of the race, and
+    // Windows' PTP integrated-clickpad button has no other use for it.
+    //
+    // SIMPLIFICATION (2026-08-03): down and up are now always reported
+    // together (both TRUE on the release frame, both FALSE every other
+    // frame) - there is no longer a mid-press frame where only one of
+    // them fires. Collapsed to a single OutForceTouchClick output;
+    // Interrupt.c enqueues both a down and an up mouse edge off this one
+    // flag instead of testing two separate booleans.
+    *OutForceTouchClick = releaseWasForceTouch;
 }
