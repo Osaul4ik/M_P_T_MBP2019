@@ -38,13 +38,37 @@ The driver has been extensively tested on this device and is optimized specifica
 
 * Apple MacBook Pro 16,1 (2019, T2)
 
-### ?
+### Testing
 
-* Other T2 Devices
+MacBook Pro:
+- MacBook Pro 2015 13" (12,1) — Force Touch, no Touch Bar
+- MacBook Pro 2018 15" (15,1)
+- MacBook Pro 2018 13", 4× TB3 (15,2)
+- MacBook Pro 2019 15" (15,3) — shares the same trackpad/PID as 15,1
+- MacBook Pro 2019 13", 2× TB3 (15,4)
+- MacBook Pro 2019 16" (16,1)
+- MacBook Pro 2020 13", 4× TB3 (16,2)
+- MacBook Pro 2020 13", 2× TB3 (16,3)
+- MacBook Pro 2020 16" (16,4) — shares the same trackpad/PID as 16,1
 
-### Other MacBooks Non T2
+MacBook Air:
+- MacBook Air 2013 11" (6,1)
+- MacBook Air 2013 13" (6,2)
+- MacBook Air 2015 11" (7,1) — shares the same trackpad/PID as 6,1
+- MacBook Air 2015 13" (7,2) — shares the same trackpad/PID as 6,2
+- MacBook Air 2018 (8,1)
+- MacBook Air 2019 (8,2) — shares the same trackpad/PID as 8,1 (not verified on real hardware)
+- MacBook Air 2020 (9,1)
 
-* Use https://github.com/imbushuo/mac-precision-touchpad
+### Partial
+
+MacBookPro13,x / 14,x (2016-2017, Touch Bar, T1) — PID 0277. Falls back to an imprecise generic entry
+
+### Other MacBooks SPI
+
+MacBookPro13,1 / 14,1 (2016-2017, no Touch Bar) — SPI, not USB
+MacBook 12" (2015-2017) — SPI, not USB
+- Use https://github.com/imbushuo/mac-precision-touchpad
 
 ### Magic TrackPad 2
 
