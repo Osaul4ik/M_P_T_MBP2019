@@ -1,12 +1,3 @@
-;
-; AmtPtpDeviceUsbKm.inf
-;
-; Standalone INF for the Apple USB Precision Touchpad kernel-mode (HID) driver.
-; Trimmed from the original "universal" AmtPtpDevice.inf: this file installs
-; ONLY AmtPtpDeviceUsbKm.sys. All sections referring to AmtPtpDeviceUsbUm.dll,
-; AmtPtpDeviceSpiKm.sys and AmtPtpHidFilter.sys have been removed so that
-; Inf2Cat only needs to find files that are actually built/signed.
-;
 ; DriverVer below is a placeholder — the CI workflow rewrites this line
 ; automatically at build time with the current UTC date/time-based version.
 ;
