@@ -34,26 +34,6 @@
 // drag get reclassified much sooner.
 #define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 160
 
-// Single-frame (frame-to-frame) motion threshold - separate from, and
-// deliberately much smaller than, FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE above.
-// That check only trips once TOTAL movement since button-down exceeds 160
-// units, which takes several frames to accumulate. This one catches a
-// single frame's motion in isolation, so a drag that starts out fast
-// trips the lockout almost immediately - before a hard, simultaneous
-// press has a chance to cross FORCE_TOUCH_PRESSURE_THRESHOLD first (see
-// ForceTouchLastX/Y in Device.h for the failure mode this fixes: a fast
-// press-and-drag opening a context menu even though the user was clearly
-// dragging, not force-clicking).
-// TUNING: 45 units/frame (~0.35mm at this hardware's ~120-125 units/mm,
-// i.e. roughly 40-45mm/s at ~120Hz scan rate) - comfortably above finger
-// tremor/grip-shift during a stationary press (which the 160-unit TOTAL
-// budget above already absorbs over many frames), but well below any
-// deliberate drag's per-frame travel. Revisit if real-device testing
-// shows a slow-but-intentional drag getting caught by this too early, or
-// a fast force-touch press-in-place false-tripping it (grip shift during
-// the press itself, not real drag intent).
-#define FORCE_TOUCH_FAST_FRAME_DELTA 45
-
 // Absolute wall-clock safety-net cap: once the button goes down, no press
 // stays PENDING longer than this no matter what, even one that keeps
 // inching up without ever stalling for CLICK_ARBITRATION_STALL_FRAMES_
@@ -831,7 +811,6 @@ PTPCore_ProcessFrame(
     if (!ButtonDown) {
         pCtx->ForceTouchAnchorValid = FALSE;
         pCtx->ForceTouchDragLockout = FALSE;
-        pCtx->ForceTouchLastValid   = FALSE;
     } else {
         // AUDIT FIX: previously gated on (buttonClickEdge && ContactCount>0),
         // so if the exact click-edge frame happened to report zero raw
@@ -865,9 +844,8 @@ PTPCore_ProcessFrame(
             // though the actual pressing finger never moved. Nearest-match
             // each frame instead: only the contact closest to the anchor is
             // compared against the threshold.
-            LONG   bestDistSq = -1;
-            INT    bestDx = 0, bestDy = 0;
-            USHORT bestX = 0, bestY = 0;
+            LONG bestDistSq = -1;
+            INT  bestDx = 0, bestDy = 0;
             for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
                 INT dx = (INT)RawFrame->Contacts[fi].X - (INT)pCtx->ForceTouchAnchorX;
                 INT dy = (INT)RawFrame->Contacts[fi].Y - (INT)pCtx->ForceTouchAnchorY;
@@ -876,8 +854,6 @@ PTPCore_ProcessFrame(
                     bestDistSq = distSq;
                     bestDx     = dx;
                     bestDy     = dy;
-                    bestX      = RawFrame->Contacts[fi].X;
-                    bestY      = RawFrame->Contacts[fi].Y;
                 }
             }
 
@@ -888,29 +864,6 @@ PTPCore_ProcessFrame(
                     ady > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE) {
                     pCtx->ForceTouchDragLockout = TRUE;
                 }
-
-                // FIX (press-hard-and-immediately-drag-fast opens a
-                // context menu): see ForceTouchLastX/Y comment in
-                // Device.h. A fast drag can cover FORCE_TOUCH_FAST_
-                // FRAME_DELTA in a single frame long before it covers
-                // the full FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the
-                // anchor - checking frame-to-frame motion here catches
-                // that fast onset immediately, before pressure gets the
-                // chance to confirm FORCE_TOUCH on an earlier frame than
-                // the total-distance check above would ever trip.
-                if (pCtx->ForceTouchLastValid) {
-                    INT fdx = (INT)bestX - (INT)pCtx->ForceTouchLastX;
-                    if (fdx < 0) fdx = -fdx;
-                    INT fdy = (INT)bestY - (INT)pCtx->ForceTouchLastY;
-                    if (fdy < 0) fdy = -fdy;
-                    if (fdx > FORCE_TOUCH_FAST_FRAME_DELTA ||
-                        fdy > FORCE_TOUCH_FAST_FRAME_DELTA) {
-                        pCtx->ForceTouchDragLockout = TRUE;
-                    }
-                }
-                pCtx->ForceTouchLastX     = bestX;
-                pCtx->ForceTouchLastY     = bestY;
-                pCtx->ForceTouchLastValid = TRUE;
             }
         }
     }
@@ -975,6 +928,12 @@ PTPCore_ProcessFrame(
     // need this: they already reported themselves TRUE on an earlier held
     // frame before release ever arrived.
     BOOLEAN releasedFastClick = FALSE;
+
+    // Captured BEFORE the !ButtonDown branch below resets ClickArbitrationState
+    // to IDLE - see the force-touch delivery block near the end of this
+    // function for why this is needed.
+    BOOLEAN releaseWasForceTouch =
+        !ButtonDown && (pCtx->ClickArbitrationState == CLICK_ARBITRATION_FORCE_TOUCH);
 
     if (!ButtonDown) {
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
@@ -1054,27 +1013,37 @@ PTPCore_ProcessFrame(
         releasedFastClick ||
         (pCtx->ClickArbitrationState == CLICK_ARBITRATION_HARD_TAP);
 
-    // Force-touch: once click arbitration has latched FORCE_TOUCH for
-    // this press, it stays engaged until the button is released OR the
-    // drag lockout retroactively downgrades ClickArbitrationState to
-    // HARD_TAP above (real window/file drag) - it does NOT re-check
-    // pressure frame-to-frame anymore. Pressure naturally wobbles while
-    // the finger holds/drags (sensor noise, grip changes), and re-testing
-    // pressure here every frame caused a spurious re-trigger: a momentary
-    // dip back under the threshold dropped ForceTouchActive (sending a
-    // synthetic right-click-UP), then the next frame's recovery sent a
-    // right-click-DOWN again - a second, unwanted force-touch trigger
-    // mid-press. A real re-trigger must only happen after a genuine
-    // release (button up resets ClickArbitrationState to IDLE, so the
-    // next press starts PENDING and must cross the threshold again on
-    // its own) - the drag-lockout downgrade is the one deliberate
-    // exception, and it falls straight out of ClickArbitrationState no
-    // longer reading FORCE_TOUCH below, same as any other HARD_TAP.
-    BOOLEAN forceTouchNow =
-        ButtonDown && (pCtx->ClickArbitrationState == CLICK_ARBITRATION_FORCE_TOUCH);
-
-
-    *OutForceTouchDownEdge = forceTouchNow && !pCtx->ForceTouchActive;
-    *OutForceTouchUpEdge   = !forceTouchNow && pCtx->ForceTouchActive;
-    pCtx->ForceTouchActive = forceTouchNow;
+    // Force-touch delivery: REWORKED (2026-08-03) to fire only on release,
+    // not the instant click arbitration latches FORCE_TOUCH mid-press.
+    //
+    // The old design sent the synthetic right-click DOWN edge as soon as
+    // ClickArbitrationState became FORCE_TOUCH, relying on the drag
+    // lockout's retroactive downgrade (above) to send the UP edge if a
+    // drag started afterward. That doesn't actually work: a hard press
+    // can cross FORCE_TOUCH_PRESSURE_THRESHOLD in a single frame, while
+    // the drag lockout needs several frames of physical movement to trip
+    // FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE. Press hard and start dragging
+    // fast at the same time, and Windows can receive a complete Button2
+    // down-then-up pair (however brief) before the downgrade ever
+    // catches up - which is already a finished right-click as far as the
+    // shell is concerned, so the context menu flashes open and then
+    // immediately closes, even though the press was clearly a drag by
+    // the time it released.
+    //
+    // Fix: don't act mid-press at all. Ordinary click/drag (HARD_TAP)
+    // already reports itself in real time via OutButtonClickReport
+    // above, completely unaffected by this change - a press that drags
+    // far enough to trip the lockout, at any point, simply never
+    // produces a force-touch edge, full stop. Only a press that is
+    // STILL CLICK_ARBITRATION_FORCE_TOUCH at the exact moment the button
+    // is released - i.e. one that never moved far enough to trip the
+    // lockout for its entire duration - fires the context menu, as a
+    // single down+up pulse on that release frame (AmtForceTouchEdgeEnqueue,
+    // Interrupt.c, already queues and delivers a same-frame down+up pair
+    // in order over consecutive available mouse read requests). This
+    // trades away holding Button2 down while dragging after force touch
+    // confirms (a "right-click-drag") - that was the source of the race,
+    // and Windows' PTP integrated-clickpad button has no other use for it.
+    *OutForceTouchDownEdge = releaseWasForceTouch;
+    *OutForceTouchUpEdge   = releaseWasForceTouch;
 }
