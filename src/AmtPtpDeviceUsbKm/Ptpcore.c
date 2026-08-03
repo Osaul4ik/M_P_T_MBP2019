@@ -22,7 +22,17 @@
 // HARD_TAP by their own tremor alone. 250 units is ~2mm: forgiving enough
 // to absorb tremor/grip-shift during a press, still well short of a
 // genuine intentional drag (window/file/selection).
-#define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 250
+// TUNING: lowered ~35% from 250 to 160 (2026-08-03) - real-device testing
+// showed the opposite problem from the original 70-unit issue: 250 units
+// (~2mm) was now too forgiving in the other direction. A deliberate
+// window/file drag - press down hard, then immediately start moving to
+// reposition - often stayed under 250 units of travel long enough that
+// FORCE_TOUCH still latched first, so the drag had to travel noticeably
+// further before ForceTouchDragLockout retroactively downgraded it to
+// HARD_TAP. 160 units (~1.3mm) still comfortably clears ordinary finger
+// tremor/grip-shift during a stationary press, but lets an intentional
+// drag get reclassified much sooner.
+#define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 160
 
 // Absolute wall-clock safety-net cap: once the button goes down, no press
 // stays PENDING longer than this no matter what, even one that keeps
