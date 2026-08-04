@@ -104,8 +104,8 @@ AmtContactBirthWithRetapSmoothing(
 );
 
 // Check whether a down event is near a recent lift.
-#define RETAP_WINDOW_100NS      (700LL * 10000LL)  // 700 ms
-#define RETAP_MAX_DISTANCE      600                // normalized units
+#define RETAP_WINDOW_100NS      (150LL * 10000LL)  // was 700 ms
+#define RETAP_MAX_DISTANCE      200                 // was 600 (normalized units)
 
 BOOLEAN
 AmtContactIsRecentLiftNearby(
