@@ -36,6 +36,7 @@ The driver has been extensively tested on **MacBook Pro 16,1 (2019) and Air 2015
 ### Fully supported
 
 * Apple MacBook Pro 16,1 (2019, T2)
+* MacBook Air 2015 13" (7,2)
 
 ### Testing (Untested, use at your own risk)
 
@@ -54,7 +55,6 @@ MacBook Air:
 - MacBook Air 2013 11" (6,1)
 - MacBook Air 2013 13" (6,2)
 - MacBook Air 2015 11" (7,1) — shares the same trackpad/PID as 6,1
-- MacBook Air 2015 13" (7,2) — shares the same trackpad/PID as 6,2
 - MacBook Air 2018 (8,1)
 - MacBook Air 2019 (8,2) — shares the same trackpad/PID as 8,1 (not verified on real hardware)
 - MacBook Air 2020 (9,1)
