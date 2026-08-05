@@ -15,8 +15,8 @@
 // Written once per D0Entry (Device.c). Always compiled (not DBG-only) so
 // it can be inspected on a normal retail build via WinDbg Local Kernel
 // Debugging - see the comment on the extern declarations in Driver.h.
-ULONG_PTR g_ActiveContactsAddress    = 0;
-ULONG     g_ActiveContactsAlignOffset = 0xFFFFFFFF; // sentinel: not yet measured
+volatile ULONG_PTR g_ActiveContactsAddress    = 0;
+volatile ULONG     g_ActiveContactsAlignOffset = 0xFFFFFFFF; // sentinel: not yet measured
 
 NTSTATUS
 DriverEntry(

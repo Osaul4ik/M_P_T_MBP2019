@@ -28,7 +28,7 @@ EVT_WDF_OBJECT_CONTEXT_CLEANUP AmtPtpDeviceUsbKmEvtDriverContextCleanup;
 //   windbg -kl                                          (or Attach to kernel -> Local)
 //   dt AmtPtpDeviceUsbKm!g_ActiveContactsAddress
 //   dt AmtPtpDeviceUsbKm!g_ActiveContactsAlignOffset     (0 = 64B-aligned; nonzero = not)
-extern ULONG_PTR g_ActiveContactsAddress;
-extern ULONG     g_ActiveContactsAlignOffset;
+extern volatile ULONG_PTR g_ActiveContactsAddress;
+extern volatile ULONG     g_ActiveContactsAlignOffset;
 
 EXTERN_C_END
