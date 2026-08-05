@@ -40,8 +40,13 @@ AmtPalmClassify(
         if (minor <= 0)
             return PALM_LARGE;
 
-        INT largeRatio = major * 100 / minor;
-        if (largeRatio > PALM_LARGE_RATIO)
+        // MICRO-OPT: division replaced with cross-multiplication.
+        // floor(A/B) > C  <=>  A >= (C+1)*B  for non-negative A,B,C, B>0.
+        // Exactly equivalent to (major*100/minor) > PALM_LARGE_RATIO,
+        // just without the runtime div. INT64 guards against overflow
+        // (major/minor are USHORT-derived, no realistic overflow risk,
+        // but kept explicit for clarity).
+        if ((INT64)major * 100 >= (INT64)(PALM_LARGE_RATIO + 1) * minor)
             return PALM_LARGE;
     }
 
@@ -50,10 +55,12 @@ AmtPalmClassify(
     else if (major > 150) score +=  8;   // was 130
 
     if (minor > 0 && major > 120) {
-        INT ratio = major * 100 / minor;
-        if      (ratio > 1200) score += 30;
-        else if (ratio >  900) score += 20;
-        else if (ratio >  600) score += 10;
+        // MICRO-OPT: same division->cross-multiplication rewrite as above.
+        // (major*100/minor) > C  <=>  major*100 >= (C+1)*minor.
+        INT64 major100 = (INT64)major * 100;
+        if      (major100 >= 1201LL * minor) score += 30;
+        else if (major100 >=  901LL * minor) score += 20;
+        else if (major100 >=  601LL * minor) score += 10;
     }
 
     if (major > 130) {

@@ -20,7 +20,10 @@
 static UCHAR
 AmtMatchCandidateTip(_In_ USHORT major, _In_ USHORT minor)
 {
-    return (UCHAR)(((INT)major << 1) >= 200 || ((INT)minor << 1) >= 150);
+    // MICRO-OPT: (x << 1) >= 200  <=>  x >= 100 (halve both sides; no
+    // overflow risk, major/minor are USHORT so <<1 always fits in INT).
+    // Same semantics, one fewer op, and reads more directly.
+    return (UCHAR)((INT)major >= 100 || (INT)minor >= 75);
 }
 
 // Cheap tie-breaker: keep geometry and pressure similar.
@@ -159,7 +162,11 @@ AmtMatchCorrespond(
     RtlZeroMemory(poolClaimed, sizeof(poolClaimed));
 
     // Greedy minimum-cost assignment (N,M <= 5).
-    typedef struct { UCHAR candIdx; size_t poolIdx; LONG cost; BOOLEAN slotHintMatch; } PAIR;
+    // MICRO-OPT: shapeDist is precomputed once per pair here instead of
+    // being recomputed by AmtMatchShapeDistance every time this same pair
+    // is re-examined across multiple "pick" iterations below. Same values,
+    // same call sites logically - just computed once and cached.
+    typedef struct { UCHAR candIdx; size_t poolIdx; LONG cost; LONG shapeDist; BOOLEAN slotHintMatch; } PAIR;
     PAIR pairs[PTP_MAX_CONTACT_POINTS * MAX_CONTACTS];
     UCHAR pairCount = 0;
 
@@ -182,6 +189,7 @@ AmtMatchCorrespond(
             pairs[pairCount].candIdx       = ci;
             pairs[pairCount].poolIdx       = p;
             pairs[pairCount].cost          = dist;
+            pairs[pairCount].shapeDist     = AmtMatchShapeDistance(cand, &Pool[p]);
             pairs[pairCount].slotHintMatch = (cand->SlotIndex == Pool[p].LastSlotHint);
             pairCount++;
         }
@@ -210,8 +218,7 @@ AmtMatchCorrespond(
                 bestCost          = pairs[k].cost;
                 bestIdx           = k;
                 bestSlotHintMatch = pairs[k].slotHintMatch;
-                bestShapeDist     = AmtMatchShapeDistance(
-                    &Candidates->Candidates[pairs[k].candIdx], &Pool[pairs[k].poolIdx]);
+                bestShapeDist     = pairs[k].shapeDist;
                 found             = TRUE;
                 continue;
             }
@@ -224,18 +231,15 @@ AmtMatchCorrespond(
                 bestCost          = pairs[k].cost;
                 bestIdx           = k;
                 bestSlotHintMatch = pairs[k].slotHintMatch;
-                bestShapeDist     = AmtMatchShapeDistance(
-                    &Candidates->Candidates[pairs[k].candIdx], &Pool[pairs[k].poolIdx]);
+                bestShapeDist     = pairs[k].shapeDist;
             } else if (withinEpsilon && pairs[k].slotHintMatch && !bestSlotHintMatch) {
                 bestCost          = pairs[k].cost;
                 bestIdx           = k;
                 bestSlotHintMatch = TRUE;
-                bestShapeDist     = AmtMatchShapeDistance(
-                    &Candidates->Candidates[pairs[k].candIdx], &Pool[pairs[k].poolIdx]);
+                bestShapeDist     = pairs[k].shapeDist;
             } else if (withinEpsilon && pairs[k].slotHintMatch == bestSlotHintMatch) {
                 // Cost and slot-hint both tied - fall through to shape.
-                LONG kShapeDist = AmtMatchShapeDistance(
-                    &Candidates->Candidates[pairs[k].candIdx], &Pool[pairs[k].poolIdx]);
+                LONG kShapeDist = pairs[k].shapeDist;
                 if (kShapeDist < bestShapeDist) {
                     bestCost      = pairs[k].cost;
                     bestIdx       = k;

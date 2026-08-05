@@ -16,7 +16,21 @@ typedef enum _CONTACT_STATE
 } CONTACT_STATE;
 
 // One pool entry; pool slot is not the identity.
-typedef struct _ACTIVE_CONTACT
+//
+// MICRO-OPT: aligned/padded to 64 bytes (Intel L1/L2/L3 cache line size,
+// including i9-9750H) so each pool entry occupies exactly one cache line
+// instead of straddling two (natural size was 48B, so entries used to
+// drift across line boundaries in the 5-entry array).
+//
+// CAVEAT: this is a compiler-side alignment hint, not a runtime guarantee.
+// ACTIVE_CONTACT lives inside DEVICE_CONTEXT, which WDF allocates via its
+// own pool allocator (guarantees only MEMORY_ALLOCATION_ALIGNMENT = 16B on
+// x64, not 64B). So the array may or may not actually land on 64B-aligned
+// addresses at runtime - the compiler emits code assuming it does, but
+// nothing enforces it. Harmless either way (x64 tolerates unaligned
+// ordinary loads/stores - no crash risk), but treat this as "free if it
+// works, no-op if it doesn't", not a guaranteed win.
+typedef struct DECLSPEC_ALIGN(64) _ACTIVE_CONTACT
 {
     CONTACT_STATE State;
 

@@ -36,6 +36,12 @@ AmtInputParseFrame(
 
     UCHAR emitted = 0;
 
+    // MICRO-OPT: loop-invariant - DevInfo doesn't change per contact,
+    // so this subtraction is the same value on every iteration. Hoisted
+    // out instead of relying on the compiler to prove no-aliasing through
+    // the DevInfo pointer.
+    INT yRange = DevInfo->y.max - DevInfo->y.min;
+
     for (size_t i = 0; i < RawContactCount; i++) {
         const struct TRACKPAD_FINGER* f =
             (const struct TRACKPAD_FINGER*)(FrameBase + i * FingerSize);
@@ -52,7 +58,6 @@ AmtInputParseFrame(
         INT nx = (INT)AmtInputClampCoord(
             AmtInputRawToInteger(f->abs_x), DevInfo->x.min, DevInfo->x.max);
 
-        INT yRange = DevInfo->y.max - DevInfo->y.min;
         INT nyRaw  = DevInfo->y.max - AmtInputRawToInteger(f->abs_y);
         INT ny     = (nyRaw < 0) ? 0 : (nyRaw > yRange ? yRange : nyRaw);
 
