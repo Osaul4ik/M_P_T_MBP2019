@@ -78,9 +78,14 @@ typedef struct _DEVICE_CONTEXT
     // Session-level palm latch used by PTPCore.
     BOOLEAN PalmDetected;
 
-    // Contact pool for PTPCore and ActiveContact.
+    // Contact pool for PTPCore and ActiveContact. Allocated separately
+    // (not embedded) and manually aligned to 64 bytes in
+    // AmtAllocateAlignedContactPool - WDF's context allocator does not
+    // honor DECLSPEC_ALIGN, so an embedded array only inherited whatever
+    // alignment the pool allocator happened to give the whole context
+    // block. Freed in AmtPtpEvtDeviceContextCleanup.
     // ---------------------------------------------------------------
-    ACTIVE_CONTACT ActiveContacts[MAX_CONTACTS];
+    PACTIVE_CONTACT ActiveContacts;
 
     // Monotonic ContactID counter - never reuses an ID while "warm".
     // Every lift-off advances it; reseeded at D0Entry.
@@ -117,6 +122,7 @@ AmtPtpDeviceUsbKmCreateDevice(
 EVT_WDF_DEVICE_PREPARE_HARDWARE AmtPtpDeviceUsbKmEvtDevicePrepareHardware;
 EVT_WDF_DEVICE_D0_ENTRY         AmtPtpEvtDeviceD0Entry;
 EVT_WDF_DEVICE_D0_EXIT          AmtPtpEvtDeviceD0Exit;
+EVT_WDF_OBJECT_CONTEXT_CLEANUP  AmtPtpEvtDeviceContextCleanup;
 
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS

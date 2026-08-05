@@ -8,6 +8,45 @@
 #pragma alloc_text (PAGE, AmtPtpDeviceUsbKmEvtDevicePrepareHardware)
 #endif
 
+#define ACTIVE_CONTACTS_ALIGNMENT 64
+#define ACTIVE_CONTACTS_POOL_TAG  'ApAc' // "AmtPtp Active Contacts"
+
+// Allocates the ActiveContacts pool on a real 64-byte boundary. 
+static PACTIVE_CONTACT
+AmtAllocateAlignedContactPool(VOID)
+{
+    SIZE_T    rawSize;
+    PVOID     raw;
+    ULONG_PTR aligned;
+
+    rawSize = (MAX_CONTACTS * sizeof(ACTIVE_CONTACT)) + ACTIVE_CONTACTS_ALIGNMENT + sizeof(PVOID);
+
+    raw = ExAllocatePoolZero(NonPagedPoolNx, rawSize, ACTIVE_CONTACTS_POOL_TAG);
+    if (raw == NULL) {
+        return NULL;
+    }
+
+    aligned = ((ULONG_PTR)raw + sizeof(PVOID) + (ACTIVE_CONTACTS_ALIGNMENT - 1))
+              & ~(ULONG_PTR)(ACTIVE_CONTACTS_ALIGNMENT - 1);
+
+    *((PVOID*)(aligned - sizeof(PVOID))) = raw;
+
+    return (PACTIVE_CONTACT)aligned;
+}
+
+static VOID
+AmtFreeAlignedContactPool(_In_opt_ PACTIVE_CONTACT Pool)
+{
+    PVOID raw;
+
+    if (Pool == NULL) {
+        return;
+    }
+
+    raw = *((PVOID*)((ULONG_PTR)Pool - sizeof(PVOID)));
+    ExFreePoolWithTag(raw, ACTIVE_CONTACTS_POOL_TAG);
+}
+
 // Read the matching config entry for the detected device.
 
 _IRQL_requires_(PASSIVE_LEVEL)
@@ -45,6 +84,7 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     WdfDeviceInitSetPnpPowerEventCallbacks(DeviceInit, &pnpPowerCallbacks);
 
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&deviceAttributes, DEVICE_CONTEXT);
+    deviceAttributes.EvtCleanupCallback = AmtPtpEvtDeviceContextCleanup;
 
     status = WdfDeviceCreate(&DeviceInit, &deviceAttributes, &device);
     if (!NT_SUCCESS(status))
@@ -52,6 +92,11 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
 
     deviceContext = DeviceGetContext(device);
     RtlZeroMemory(deviceContext, sizeof(DEVICE_CONTEXT));
+
+    deviceContext->ActiveContacts = AmtAllocateAlignedContactPool();
+    if (deviceContext->ActiveContacts == NULL) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
 
     deviceContext->PtpReportButton = TRUE;
     deviceContext->PtpReportTouch  = TRUE;
@@ -176,9 +221,10 @@ AmtPtpEvtDeviceD0Entry(
     pDeviceContext->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
     AmtContactPoolInit(pDeviceContext->ActiveContacts);
 
-    // DIAGNOSTIC: measure the pool's real runtime address/alignment every
-    // D0Entry (WDF may relocate the context across power cycles in theory,
-    // so this stays live rather than a one-time DriverEntry snapshot).
+    // DIAGNOSTIC: measure the pool's real runtime address/alignment.
+    // ActiveContacts is allocated once in AmtPtpDeviceUsbKmCreateDevice,
+    // so the address is stable across power cycles; re-measuring here
+    // each D0Entry is just cheap and harmless, not required for correctness.
     // Not #if DBG-gated - readable via WinDbg Local Kernel Debugging on a
     // retail build. See Driver.h for the read-side WinDbg commands.
     g_ActiveContactsAddress     = (ULONG_PTR)pDeviceContext->ActiveContacts;
@@ -229,6 +275,20 @@ AmtPtpEvtDeviceD0Exit(
     AmtPtpSetWellspringMode(pDeviceContext, FALSE);
 
     return STATUS_SUCCESS;
+}
+
+// AmtPtpEvtDeviceContextCleanup
+// Frees the manually-aligned ActiveContacts pool allocated in AmtPtpDeviceUsbKmCreateDevice. 
+
+VOID
+AmtPtpEvtDeviceContextCleanup(
+    _In_ WDFOBJECT Device)
+{
+    PDEVICE_CONTEXT pDeviceContext;
+    pDeviceContext = DeviceGetContext((WDFDEVICE)Device);
+
+    AmtFreeAlignedContactPool(pDeviceContext->ActiveContacts);
+    pDeviceContext->ActiveContacts = NULL;
 }
 
 // SelectInterruptInterface
