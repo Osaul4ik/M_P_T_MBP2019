@@ -109,6 +109,7 @@ This step is important before installing another Apple touchpad driver (Trackpad
 * ✅ Force Touch implementation
 * ✅ Driver optimization
 * ✅ Code audit
+* ❌ Micro optimization & tuning
   
 
 # Credits
