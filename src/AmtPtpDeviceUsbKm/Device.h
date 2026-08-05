@@ -33,6 +33,14 @@ typedef struct _DEVICE_CONTEXT
     const struct BCM5974_CONFIG* DeviceInfo;
     BOOLEAN IsWellspringModeOn;
 
+    // TRUE only for trackpads whose packet format actually carries a
+    // pressure reading (TYPE4/TYPE5 - see AppleDefinition.h). Derived once
+    // from DeviceInfo->tp_type in EvtDevicePrepareHardware. TYPE1-3
+    // trackpads (e.g. WELLSPRING8 / pre-Force-Touch MacBook Air) have no
+    // pressure channel at all, so force-touch arbitration is meaningless
+    // for them - click handling falls back to a plain mechanical hard tap.
+    BOOLEAN SupportsForceTouch;
+
     // PTP state
     BOOLEAN PtpInputOn;
     BOOLEAN PtpReportTouch;

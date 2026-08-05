@@ -522,6 +522,18 @@ PTPCore_ProcessFrame(
 
     AmtContactPoolCheckInvariants(pCtx->ActiveContacts);
 
+    if (!pCtx->SupportsForceTouch) {
+        pCtx->ForceTouchAnchorValid = FALSE;
+        pCtx->ForceTouchDragLockout = FALSE;
+        pCtx->ClickArbitrationState = ButtonDown
+            ? CLICK_ARBITRATION_HARD_TAP
+            : CLICK_ARBITRATION_IDLE;
+
+        *OutButtonClickReport = ButtonDown;
+        *OutForceTouchClick   = FALSE;
+        return;
+    }
+
     // Force-touch drag lockout. Recomputed every frame from the RAW frame,
     // BEFORE the pressure check, so a press that has turned into a drag can
     // never still trip force-touch this same frame.

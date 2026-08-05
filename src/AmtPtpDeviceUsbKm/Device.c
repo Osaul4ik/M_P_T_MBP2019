@@ -111,6 +111,15 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
         return STATUS_INVALID_DEVICE_STATE;
     }
 
+    // Only TYPE4/TYPE5 packets carry a real pressure field (see
+    // AppleDefinition.h - pressure was introduced with TYPE4). Everything
+    // older (TYPE1-3, e.g. WELLSPRING8) reports zeros there, so treat those
+    // trackpads as force-touch-incapable rather than let stale/zero
+    // pressure feed the arbitration state machine.
+    pDeviceContext->SupportsForceTouch =
+        (pDeviceContext->DeviceInfo->tp_type == TYPE4) ||
+        (pDeviceContext->DeviceInfo->tp_type == TYPE5);
+
     WDF_USB_DEVICE_INFORMATION_INIT(&deviceInfo);
     status = WdfUsbTargetDeviceRetrieveInformation(pDeviceContext->UsbDevice, &deviceInfo);
     if (NT_SUCCESS(status)) {
