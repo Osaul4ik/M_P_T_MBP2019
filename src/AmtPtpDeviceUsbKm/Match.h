@@ -21,9 +21,13 @@ typedef struct _MATCH_CANDIDATE
     BOOLEAN IdentityBreak;   // firmware origin==0 signal
     UCHAR   TipDropApplied;  // non-zero when X/Y is stale (debounce bridge).
                              // Position provenance only - does NOT drive
-                             // Confidence (see Unconfirmed below).
+                             // Confidence.
 
     // TRUE for a brand-new, below-tip-threshold contact with no pool anchor.
+    // Matching/gesture-taint quality signal ONLY (aliveCount gating in
+    // Ptpcore.c) - does NOT drive Confidence. Confidence is decided purely
+    // by AmtPalmClassify (Palm.c); see the reportConfident comment in
+    // Ptpcore.c for the full rationale.
     BOOLEAN Unconfirmed;
 } MATCH_CANDIDATE;
 

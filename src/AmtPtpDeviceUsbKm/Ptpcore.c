@@ -505,14 +505,26 @@ PTPCore_ProcessFrame(
                          (BOOLEAN)(aliveCount == 1), gestureThisFrame,
                          &repX, &repY);
 
-        // AUDIT FIX: Confidence must track whether the contact's EXISTENCE
-        // is established (cand->Unconfirmed), NOT whether its position this
-        // frame is stale (TipDropApplied) or stationary - penalizing still
-        // soft taps was backwards and broke them. Rebind is always a real
-        // tracked finger, so always Confident.
-        BOOLEAN reportConfident = rebindThisFrame[p]
-            ? TRUE
-            : (BOOLEAN)(cand->Unconfirmed == 0);
+        // ARCHITECTURE FIX (PTP spec alignment): per the Windows Precision
+        // Touchpad spec, Confidence means exactly one thing - "this is an
+        // intentional finger, not noise/palm." That question is already
+        // answered upstream by AmtPalmClassify (Palm.c): every candidate
+        // that reaches this loop has PalmLocal==FALSE (palm-classified
+        // candidates are filtered out above) and PALM_LARGE already blanked
+        // the whole frame earlier in AmtMatchBuildCandidates. So by this
+        // point palm/noise rejection is already done - Confidence is always
+        // TRUE here.
+        //
+        // Unconfirmed (Match.c) answers a DIFFERENT question - "is contact
+        // area large enough to trust raw X/Y for matching/bridging" - a
+        // geometry-quality signal for the matcher, not an intentionality
+        // signal. A light-but-deliberate soft tap has small major/minor
+        // (low Unconfirmed confidence) while being just as intentional as a
+        // firm press; gating Confidence on it made Windows discard genuine
+        // light taps as noise on their first (sometimes only) frame.
+        // Unconfirmed still gates aliveCount (gesture-taint) - that usage
+        // is unaffected.
+        BOOLEAN reportConfident = TRUE;
 
         AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
                            repX, repY,
