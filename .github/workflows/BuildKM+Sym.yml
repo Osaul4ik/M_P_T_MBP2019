@@ -1,0 +1,412 @@
+name: BuildKM+Sym
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # ---- Шляхи проєкту / артефактів (зручно тримати в одному місці) ----
+  PROJECT_DIR: src/AmtPtpDeviceUsbKm
+  DRIVER_NAME: AmtPtpDeviceUsbKm
+  CONFIGURATION: Release
+  PLATFORM: x64
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Install WDK
+      run: |
+        $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2085767"
+        $wdkInstaller = "$env:TEMP\wdksetup.exe"
+        Invoke-WebRequest -Uri $wdkUrl -OutFile $wdkInstaller
+        Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet /norestart" -Wait
+      shell: pwsh
+
+
+    # =====================================================================
+    # Перевірка секретів підпису ДО збірки, щоб не витрачати час
+    # раннера на компіляцію, якщо секрети для test-signing не налаштовані.
+    # =====================================================================
+    - name: Validate signing secrets are present
+      run: |
+        $ErrorActionPreference = "Stop"
+        Write-Host "==> Checking SIGN_CERT_PFX / SIGN_CERT_PASSWORD secrets"
+
+        if ([string]::IsNullOrWhiteSpace($env:SIGN_CERT_PFX)) {
+          Write-Error "Secret SIGN_CERT_PFX is not set in GitHub Secrets. Add the Base64-encoded PFX certificate in Settings -> Secrets and variables -> Actions."
+          exit 1
+        }
+        if ([string]::IsNullOrWhiteSpace($env:SIGN_CERT_PASSWORD)) {
+          Write-Error "Secret SIGN_CERT_PASSWORD is not set in GitHub Secrets."
+          exit 1
+        }
+
+        Write-Host "OK: both secrets are present."
+      shell: pwsh
+      env:
+        SIGN_CERT_PFX: ${{ secrets.CERT }}
+        SIGN_CERT_PASSWORD: ${{ secrets.CERT_PWD }}
+
+
+    # =====================================================================
+    # Обчислення версії/дати драйвера на основі поточної дати й часу.
+    # Формат версії: 1.<рік>.<місяцьдень>.<годинахвилина>, напр. 1.2026.0729.1435
+    # =====================================================================
+    - name: Compute driver version and date
+      run: |
+        $ErrorActionPreference = "Stop"
+        $now = Get-Date
+
+        $driverDate    = $now.ToString("MM/dd/yyyy")
+        $driverVersion = "1.$($now.Year).$($now.ToString('MMdd')).$($now.ToString('HHmm'))"
+
+        Write-Host "==> Driver date (DriverVer date): $driverDate"
+        Write-Host "==> Driver version (DriverVer ver): $driverVersion"
+
+        Add-Content -Path $env:GITHUB_ENV -Value "DRIVER_DATE=$driverDate"
+        Add-Content -Path $env:GITHUB_ENV -Value "DRIVER_VERSION=$driverVersion"
+      shell: pwsh
+
+
+    - name: Build USB KM Driver
+      run: |
+        msbuild src/AmtPtpDeviceUsbKm/AmtPtpDeviceUsbKm.vcxproj `
+          /p:Configuration=Release `
+          /p:Platform=x64 `
+          /p:WindowsTargetPlatformVersion=10.0.26100.0
+      shell: pwsh
+
+
+    # =====================================================================
+    # Збираємо символи драйвера (.pdb) з build output теки
+    # в окрему staging-теку symbols/ для окремого артефакту.
+    # =====================================================================
+    - name: Prepare symbols package folder
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        $buildOutDir = "$env:PROJECT_DIR\build\$env:DRIVER_NAME\$env:PLATFORM\$env:CONFIGURATION"
+        $symbolsDir  = "symbols"
+
+        Write-Host "==> Collecting symbols from $buildOutDir"
+        New-Item -ItemType Directory -Path $symbolsDir -Force | Out-Null
+
+        $symbolFiles = Get-ChildItem -Path $buildOutDir -Filter "*.pdb" -Recurse -ErrorAction SilentlyContinue
+
+        if (-not $symbolFiles) {
+          Write-Error "No .pdb files found in $buildOutDir."
+          exit 1
+        }
+
+        foreach ($f in $symbolFiles) {
+          Copy-Item -Path $f.FullName -Destination $symbolsDir -Force
+          Write-Host "  - $($f.Name)"
+        }
+
+        Add-Content -Path $env:GITHUB_ENV -Value "SYMBOLS_DIR=$symbolsDir"
+      shell: pwsh
+
+
+    # =====================================================================
+    # Готуємо окрему "staging" теку package/, куди кладемо тільки
+    # .sys та .inf, що стосуються AmtPtpDeviceUsbKm.
+    # =====================================================================
+    - name: Prepare signing package folder
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        $buildOutDir = "$env:PROJECT_DIR\build\$env:DRIVER_NAME\$env:PLATFORM\$env:CONFIGURATION"
+        $sysPath     = "$buildOutDir\$env:DRIVER_NAME.sys"
+        $infSrcPath  = "$env:PROJECT_DIR\$env:DRIVER_NAME.inf"
+        $packageDir  = "package"
+
+        Write-Host "==> Expected .sys path: $sysPath"
+        if (-not (Test-Path $sysPath)) {
+          Write-Error "Built .sys not found: $sysPath. Check the 'Build USB KM Driver' step."
+          exit 1
+        }
+        if (-not (Test-Path $infSrcPath)) {
+          Write-Error ".inf file not found: $infSrcPath."
+          exit 1
+        }
+
+        New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+        Copy-Item -Path $sysPath    -Destination $packageDir -Force
+        Copy-Item -Path $infSrcPath -Destination $packageDir -Force
+
+        Write-Host "OK: copied into $packageDir :"
+        Get-ChildItem $packageDir | ForEach-Object { Write-Host "  - $($_.Name)" }
+
+        Add-Content -Path $env:GITHUB_ENV -Value "PACKAGE_DIR=$packageDir"
+        Add-Content -Path $env:GITHUB_ENV -Value "SYS_PATH=$packageDir\$env:DRIVER_NAME.sys"
+        Add-Content -Path $env:GITHUB_ENV -Value "INF_PATH=$packageDir\$env:DRIVER_NAME.inf"
+        Add-Content -Path $env:GITHUB_ENV -Value "CAT_PATH=$packageDir\$env:DRIVER_NAME.cat"
+      shell: pwsh
+
+
+    # =====================================================================
+    # Автопошук StampInf.exe
+    # =====================================================================
+    - name: Locate StampInf.exe
+      run: |
+        $ErrorActionPreference = "Stop"
+        Write-Host "==> Searching for StampInf.exe under Windows Kits..."
+
+        $roots = @(
+          "C:\Program Files (x86)\Windows Kits\10\bin",
+          "C:\Program Files\Windows Kits\10\bin"
+        )
+
+        $candidates = foreach ($root in $roots) {
+          if (Test-Path $root) {
+            Get-ChildItem -Path $root -Filter "StampInf.exe" -Recurse -ErrorAction SilentlyContinue
+          }
+        }
+
+        if (-not $candidates) {
+          Write-Error "StampInf.exe was not found on this runner. Make sure the Windows SDK/WDK is installed."
+          exit 1
+        }
+
+        $tool = $candidates | Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+        if (-not $tool) {
+          $tool = $candidates | Sort-Object FullName -Descending | Select-Object -First 1
+        }
+
+        Write-Host "OK: found StampInf.exe -> $($tool.FullName)"
+        Add-Content -Path $env:GITHUB_ENV -Value "STAMPINF_PATH=$($tool.FullName)"
+      shell: pwsh
+
+
+    # =====================================================================
+    # Стампуємо staged .inf у package/ - підставляємо архітектуру
+    # (amd64), дату й версію та версію KMDF (1.33).
+    # =====================================================================
+    - name: Stamp INF (architecture / date / version / KMDF)
+      run: |
+        $ErrorActionPreference = "Stop"
+        $infPath = (Resolve-Path $env:INF_PATH).Path
+
+        Write-Host "==> Stamping $infPath"
+        & "$env:STAMPINF_PATH" -f "$infPath" -a amd64 -d "$env:DRIVER_DATE" -v "$env:DRIVER_VERSION" -k 1.33
+
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "StampInf exited with error code $LASTEXITCODE."
+          exit 1
+        }
+
+        Write-Host "==> Stamped INF contents:"
+        Get-Content -Path $infPath | Select-String -Pattern 'DriverVer|NTamd64|KmdfLibraryVersion'
+        Write-Host "OK: INF stamped."
+      shell: pwsh
+
+
+    # =====================================================================
+    # Автопошук Inf2Cat.exe
+    # =====================================================================
+    - name: Locate Inf2Cat.exe
+      run: |
+        $ErrorActionPreference = "Stop"
+        Write-Host "==> Searching for Inf2Cat.exe under Windows Kits..."
+
+        $roots = @(
+          "C:\Program Files (x86)\Windows Kits\10\bin",
+          "C:\Program Files\Windows Kits\10\bin"
+        )
+
+        $candidates = foreach ($root in $roots) {
+          if (Test-Path $root) {
+            Get-ChildItem -Path $root -Filter "Inf2Cat.exe" -Recurse -ErrorAction SilentlyContinue
+          }
+        }
+
+        if (-not $candidates) {
+          Write-Error "Inf2Cat.exe was not found on this runner. Make sure the Windows SDK/WDK is installed."
+          exit 1
+        }
+
+        $tool = $candidates | Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+        if (-not $tool) {
+          $tool = $candidates | Sort-Object FullName -Descending | Select-Object -First 1
+        }
+
+        Write-Host "OK: found Inf2Cat.exe -> $($tool.FullName)"
+        Add-Content -Path $env:GITHUB_ENV -Value "INF2CAT_PATH=$($tool.FullName)"
+      shell: pwsh
+
+
+    # =====================================================================
+    # Генерація .cat файлу з .inf через Inf2Cat.
+    # =====================================================================
+    - name: Generate CAT file (Inf2Cat)
+      run: |
+        $ErrorActionPreference = "Stop"
+        Write-Host "==> Generating catalog for $env:PACKAGE_DIR"
+
+        $fullPackageDir = (Resolve-Path $env:PACKAGE_DIR).Path
+        & "$env:INF2CAT_PATH" /driver:"$fullPackageDir" /os:10_X64 /verbose
+
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Inf2Cat exited with error code $LASTEXITCODE."
+          exit 1
+        }
+        if (-not (Test-Path $env:CAT_PATH)) {
+          Write-Error "Inf2Cat did not report an error, but no .cat file was produced at $env:CAT_PATH."
+          exit 1
+        }
+
+        Write-Host "OK: .cat generated -> $env:CAT_PATH"
+      shell: pwsh
+
+
+    # =====================================================================
+    # Автопошук signtool.exe
+    # =====================================================================
+    - name: Locate signtool.exe
+      run: |
+        $ErrorActionPreference = "Stop"
+        Write-Host "==> Searching for signtool.exe under Windows Kits..."
+
+        $roots = @(
+          "C:\Program Files (x86)\Windows Kits\10\bin",
+          "C:\Program Files\Windows Kits\10\bin"
+        )
+
+        $candidates = foreach ($root in $roots) {
+          if (Test-Path $root) {
+            Get-ChildItem -Path $root -Filter "signtool.exe" -Recurse -ErrorAction SilentlyContinue
+          }
+        }
+
+        if (-not $candidates) {
+          Write-Error "signtool.exe was not found on this runner. Make sure the Windows SDK/WDK is installed."
+          exit 1
+        }
+
+        $tool = $candidates | Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+        if (-not $tool) {
+          $tool = $candidates | Sort-Object FullName -Descending | Select-Object -First 1
+        }
+
+        Write-Host "OK: found signtool.exe -> $($tool.FullName)"
+        Add-Content -Path $env:GITHUB_ENV -Value "SIGNTOOL_PATH=$($tool.FullName)"
+      shell: pwsh
+
+
+    # =====================================================================
+    # Декодування PFX із секрету, підпис .sys і .cat, експорт
+    # публічного сертифіката (.cer) для встановлення довіри на цільових
+    # машинах.
+    # =====================================================================
+    - name: Sign .sys and .cat with SignTool
+      run: |
+        $ErrorActionPreference = "Stop"
+        $pfxPath = Join-Path $env:TEMP "signcert.pfx"
+        $cerPath = Join-Path $env:PACKAGE_DIR "$env:DRIVER_NAME.cer"
+
+        try {
+          Write-Host "==> Decoding SIGN_CERT_PFX into a temporary file"
+          $bytes = [Convert]::FromBase64String($env:SIGN_CERT_PFX)
+          [IO.File]::WriteAllBytes($pfxPath, $bytes)
+
+          Write-Host "==> Signing $env:SYS_PATH"
+          & "$env:SIGNTOOL_PATH" sign /v /fd SHA256 /f "$pfxPath" /p "$env:SIGN_CERT_PASSWORD" `
+            /tr http://timestamp.digicert.com /td SHA256 "$env:SYS_PATH"
+          if ($LASTEXITCODE -ne 0) { Write-Error "Signing .sys failed (exit code $LASTEXITCODE)."; exit 1 }
+
+          Write-Host "==> Signing $env:CAT_PATH"
+          & "$env:SIGNTOOL_PATH" sign /v /fd SHA256 /f "$pfxPath" /p "$env:SIGN_CERT_PASSWORD" `
+            /tr http://timestamp.digicert.com /td SHA256 "$env:CAT_PATH"
+          if ($LASTEXITCODE -ne 0) { Write-Error "Signing .cat failed (exit code $LASTEXITCODE)."; exit 1 }
+
+          Write-Host "==> Exporting public certificate for target-machine trust -> $cerPath"
+          $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
+            $pfxPath, $env:SIGN_CERT_PASSWORD,
+            [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable
+          )
+          Export-Certificate -Cert $cert -FilePath $cerPath | Out-Null
+
+          Write-Host "OK: .sys and .cat signed; .cer exported."
+          Add-Content -Path $env:GITHUB_ENV -Value "CER_PATH=$cerPath"
+        }
+        finally {
+          if (Test-Path $pfxPath) {
+            Write-Host "==> Removing temporary .pfx"
+            Remove-Item -Path $pfxPath -Force
+          }
+        }
+      shell: pwsh
+      env:
+        SIGN_CERT_PFX: ${{ secrets.CERT }}
+        SIGN_CERT_PASSWORD: ${{ secrets.CERT_PWD }}
+
+
+    # =====================================================================
+    # Створюємо структуру папок для архіву з папкою WellspringPTP всередині.
+    # =====================================================================
+    - name: Prepare final package folder
+      run: |
+        $ErrorActionPreference = "Stop"
+        
+        # Створюємо тимчасову теку, яка буде коренем для архіву
+        $tempRoot = "temp-upload"
+        $stagingDir = Join-Path $tempRoot "WellspringPTP"
+        $installCert = "src/InstallCert.bat"
+        $testMode    = "src/TestMode.bat"
+
+        Write-Host "==> Preparing staging folder $stagingDir"
+        New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+
+        Copy-Item -Path $env:SYS_PATH -Destination $stagingDir -Force
+        Copy-Item -Path $env:INF_PATH -Destination $stagingDir -Force
+        Copy-Item -Path $env:CAT_PATH -Destination $stagingDir -Force
+        Copy-Item -Path $env:CER_PATH -Destination $stagingDir -Force
+
+        if (-not (Test-Path $installCert)) {
+          Write-Error "InstallCert.bat not found at $installCert."
+          exit 1
+        }
+        Copy-Item -Path $installCert -Destination $stagingDir -Force
+
+        if (-not (Test-Path $testMode)) {
+          Write-Error "TestMode.bat not found at $testMode."
+          exit 1
+        }
+        Copy-Item -Path $testMode -Destination $stagingDir -Force
+
+        Write-Host "OK: staged files:"
+        Get-ChildItem $stagingDir | ForEach-Object { Write-Host "  - $($_.Name)" }
+
+        # Зберігаємо шлях до КОРЕНЕВОЇ теки (temp-upload), а не до WellspringPTP
+        Add-Content -Path $env:GITHUB_ENV -Value "STAGING_DIR=$tempRoot"
+      shell: pwsh
+
+
+    # =====================================================================
+    # Завантаження артефакту - GitHub запакує temp-upload в zip,
+    # і всередині буде папка WellspringPTP з файлами.
+    # =====================================================================
+    - name: Upload signed driver package artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: AmtPtpDeviceUsbKm-Signed-${{ env.DRIVER_VERSION }}
+        path: ${{ env.STAGING_DIR }}
+
+
+    # =====================================================================
+    # Завантаження символів (.pdb) окремим архівом.
+    # =====================================================================
+    - name: Upload driver symbols artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: AmtPtpDeviceUsbKm-Symbols-${{ env.DRIVER_VERSION }}
+        path: ${{ env.SYMBOLS_DIR }}
