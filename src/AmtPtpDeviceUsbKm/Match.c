@@ -152,7 +152,7 @@ AmtMatchCorrespond(
     _In_  const MATCH_CANDIDATE_SET*               Candidates,
     _In_reads_(MAX_CONTACTS) const ACTIVE_CONTACT*  Pool,
     _In_  LONGLONG                                  NowQpc,
-    _In_  LONGLONG                                  PerfFrequencyHz,
+    _In_  LONGLONG                                  MaxTicks,
     _Out_ MATCH_RESULT*                              OutResult
 )
 {
@@ -166,7 +166,15 @@ AmtMatchCorrespond(
     // being recomputed by AmtMatchShapeDistance every time this same pair
     // is re-examined across multiple "pick" iterations below. Same values,
     // same call sites logically - just computed once and cached.
-    typedef struct { UCHAR candIdx; size_t poolIdx; LONG cost; LONG shapeDist; BOOLEAN slotHintMatch; } PAIR;
+    //
+    // MICRO-OPT: poolIdx is UCHAR, not size_t - MAX_CONTACTS is 5, always
+    // fits, and it drops PAIR from 32 to 16 bytes (fields ordered widest-
+    // first: no internal gaps left, 3 bytes trailing pad instead of 14+7).
+    // pairs[] is scanned repeatedly in the O(pairCount^2) pick loop below
+    // (up to 625 accesses/frame), so the smaller footprint means fewer
+    // cache lines touched per scan. Purely internal representation -
+    // pairs[bestIdx].poolIdx below still widens to size_t on read.
+    typedef struct { UCHAR candIdx; UCHAR poolIdx; LONG cost; LONG shapeDist; BOOLEAN slotHintMatch; } PAIR;
     PAIR pairs[PTP_MAX_CONTACT_POINTS * MAX_CONTACTS];
     UCHAR pairCount = 0;
 
@@ -187,7 +195,7 @@ AmtMatchCorrespond(
             LONG dist = (LONG)dx * dx + (LONG)dy * dy; // squared distance
 
             pairs[pairCount].candIdx       = ci;
-            pairs[pairCount].poolIdx       = p;
+            pairs[pairCount].poolIdx       = (UCHAR)p;
             pairs[pairCount].cost          = dist;
             pairs[pairCount].shapeDist     = AmtMatchShapeDistance(cand, &Pool[p]);
             pairs[pairCount].slotHintMatch = (cand->SlotIndex == Pool[p].LastSlotHint);
@@ -262,10 +270,9 @@ AmtMatchCorrespond(
 
         // Time-domain rejection. LastSeenQpc=0 -> never updated, skip time check.
         BOOLEAN timeReject = FALSE;
-        if (Pool[p].LastSeenQpc != 0 && PerfFrequencyHz > 0) {
+        if (Pool[p].LastSeenQpc != 0 && MaxTicks > 0) {
             LONGLONG deltaTicks = NowQpc - Pool[p].LastSeenQpc;
-            LONGLONG maxTicks   = (MATCH_MAX_TIME_DELTA_100NS * PerfFrequencyHz) / 10000000LL;
-            timeReject = (NowQpc < Pool[p].LastSeenQpc) || (deltaTicks > maxTicks);
+            timeReject = (NowQpc < Pool[p].LastSeenQpc) || (deltaTicks > MaxTicks);
         }
 
         // BUG FIX (lost continuation on a rejected best-cost pair): this

@@ -79,12 +79,20 @@ PTPCore_ProcessFrame(
 
 #define RECENT_LIFT_CAPACITY PTP_MAX_CONTACT_POINTS
 
+// Safety cap prevents a click-arbitration press from staying pending
+// indefinitely. Shared with Device.c (D0Entry tick-cache) and Ptpcore.c.
+#define CLICK_ARBITRATION_TIMEOUT_MS 90
+
+// MICRO-OPT: fields ordered widest-first (LONGLONG before the USHORTs
+// before the BOOLEAN) - was 24 bytes (7 bytes internal pad before LiftQpc
+// + 4 trailing), now 16 (3 trailing only). Read via field names only
+// everywhere (Ptpcore.c/Activecontact.c), no layout-dependent code.
 typedef struct _RECENT_LIFT
 {
-    BOOLEAN  Valid;
     LONGLONG LiftQpc;
     USHORT   X;
     USHORT   Y;
+    BOOLEAN  Valid;
 } RECENT_LIFT;
 
 typedef struct _RECENT_LIFT_RING
@@ -102,11 +110,15 @@ AmtRecentLiftRecord(
 );
 
 // Find closest lift to (CandX, CandY). FALSE -> raw birth.
+// WindowTicks: precomputed (RETAP_WINDOW_100NS * PerfFrequencyHz) / 10000000,
+// cached once in DEVICE_CONTEXT at D0Entry - MICRO-OPT, avoids recomputing
+// this 64-bit multiply+divide on every candidate birth. 0 means "no usable
+// clock", same fail-closed behavior as the old PerfFrequencyHz<=0 check.
 BOOLEAN
 AmtRecentLiftFindNearby(
     _In_  const RECENT_LIFT_RING* Ring,
     _In_  LONGLONG                NowQpc,
-    _In_  LONGLONG                PerfFrequencyHz,
+    _In_  LONGLONG                WindowTicks,
     _In_  USHORT                  CandX,
     _In_  USHORT                  CandY,
     _Out_ USHORT*                 OutX,

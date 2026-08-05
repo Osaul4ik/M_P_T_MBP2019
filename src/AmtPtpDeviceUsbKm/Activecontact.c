@@ -60,11 +60,21 @@ AmtContactClassifyVelocity(
     if (dy < 0) dy = -dy;
     INT distance = (dx > dy) ? dx : dy;
 
-    // Multiply first for integer precision.
-    LONGLONG unitsPerSec = ((LONGLONG)distance * PerfFrequencyHz) / DtQpcTicks;
+    // MICRO-OPT: avoid the 64-bit idiv entirely. The caller only needs the
+    // bucket (SLOW/MEDIUM/FAST), never the actual unitsPerSec value, so
+    // instead of computing floor(distance*Freq / DtQpcTicks) and comparing
+    // it to the two thresholds, cross-multiply and compare the products -
+    // same distance, Freq, DtQpcTicks are all non-negative (checked above),
+    // so this is an exact match to the original truncating-division
+    // comparisons, not an approximation:
+    //   floor(N/D) <= c   <=>   N <  (c+1)*D
+    //   floor(N/D) >= c   <=>   N >= c*D
+    LONGLONG numerator = (LONGLONG)distance * PerfFrequencyHz;
 
-    if (unitsPerSec <= VELOCITY_SLOW_UNITS_PER_SEC) return VELOCITY_SLOW;
-    if (unitsPerSec >= VELOCITY_FAST_UNITS_PER_SEC) return VELOCITY_FAST;
+    if (numerator < (LONGLONG)(VELOCITY_SLOW_UNITS_PER_SEC + 1) * DtQpcTicks)
+        return VELOCITY_SLOW;
+    if (numerator >= (LONGLONG)VELOCITY_FAST_UNITS_PER_SEC * DtQpcTicks)
+        return VELOCITY_FAST;
     return VELOCITY_MEDIUM;
 }
 

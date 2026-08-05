@@ -42,14 +42,21 @@ typedef struct _MATCH_CANDIDATE_SET
 
 typedef struct _MATCH_RESULT
 {
+    // MICRO-OPT: both size_t[] arrays grouped first (8-byte aligned,
+    // contiguous, zero gap between them) so the BOOLEAN/UCHAR tail only
+    // pays for trailing padding once instead of twice - was 96 bytes
+    // (10 bytes padding), now 88 (2 bytes). Field meaning/order-by-name
+    // unchanged, purely internal layout.
+
     // Parallel to Candidates[]. Pool index or MATCH_NO_CORRESPONDENCE.
     size_t  CorrespondingPoolIndex[PTP_MAX_CONTACT_POINTS];
+
+    // Pool indices with no corresponding candidate (should lift).
+    size_t  UnmatchedPoolIndices[MAX_CONTACTS];
 
     // Identity broken (lift + birth) despite correspondence.
     BOOLEAN NewIdentity[PTP_MAX_CONTACT_POINTS];
 
-    // Pool indices with no corresponding candidate (should lift).
-    size_t  UnmatchedPoolIndices[MAX_CONTACTS];
     UCHAR   UnmatchedCount;
 } MATCH_RESULT;
 
@@ -67,12 +74,16 @@ AmtMatchBuildCandidates(
 #define MATCH_MAX_TIME_DELTA_100NS (150LL * 10000LL)
 
 // Match contacts greedily and reject bad or stale pairs.
+// MaxTicks: precomputed (MATCH_MAX_TIME_DELTA_100NS * PerfFrequencyHz) / 10000000,
+// cached once in DEVICE_CONTEXT at D0Entry - MICRO-OPT, avoids recomputing
+// this 64-bit multiply+divide on every accepted match. 0 means "no usable
+// clock", same fail-closed behavior as the old PerfFrequencyHz<=0 check.
 VOID
 AmtMatchCorrespond(
     _In_  const MATCH_CANDIDATE_SET*               Candidates,
     _In_reads_(MAX_CONTACTS) const ACTIVE_CONTACT*  Pool,
     _In_  LONGLONG                                  NowQpc,
-    _In_  LONGLONG                                  PerfFrequencyHz,
+    _In_  LONGLONG                                  MaxTicks,
     _Out_ MATCH_RESULT*                              OutResult
 );
 

@@ -2,6 +2,7 @@
 
 #include "driver.h"
 #include "device.tmh"
+#include "Match.h" // MATCH_MAX_TIME_DELTA_100NS, for the D0Entry tick-cache
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (PAGE, AmtPtpDeviceUsbKmCreateDevice)
@@ -208,6 +209,24 @@ AmtPtpEvtDeviceD0Entry(
 
     pDeviceContext->LastReportTime =
         KeQueryPerformanceCounter(&pDeviceContext->PerfFrequency);
+
+    // MICRO-OPT: precompute PerfFrequency-derived tick thresholds once here
+    // instead of on every call site (see Device.h field comments). 0 when
+    // there's no usable clock, matching each site's original PerfFrequencyHz
+    // <= 0 guard exactly.
+    if (pDeviceContext->PerfFrequency.QuadPart > 0) {
+        pDeviceContext->RetapWindowTicks =
+            (RETAP_WINDOW_100NS * pDeviceContext->PerfFrequency.QuadPart) / 10000000LL;
+        pDeviceContext->MatchMaxTimeDeltaTicks =
+            (MATCH_MAX_TIME_DELTA_100NS * pDeviceContext->PerfFrequency.QuadPart) / 10000000LL;
+        pDeviceContext->ClickArbitrationTimeoutTicks =
+            (pDeviceContext->PerfFrequency.QuadPart * CLICK_ARBITRATION_TIMEOUT_MS) / 1000;
+    } else {
+        pDeviceContext->RetapWindowTicks             = 0;
+        pDeviceContext->MatchMaxTimeDeltaTicks        = 0;
+        pDeviceContext->ClickArbitrationTimeoutTicks = 0;
+    }
+
     // Reset per-session timing and contact state on D0 entry.
     pDeviceContext->ScanTimeAccumulator = 0;
     pDeviceContext->NextContactId        = 0;

@@ -10,7 +10,7 @@
 #define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 160
 
 // Safety cap prevents a press from staying pending indefinitely.
-#define CLICK_ARBITRATION_TIMEOUT_MS 90
+// CLICK_ARBITRATION_TIMEOUT_MS moved to Ptpcore.h (shared with Device.c).
 
 // Hysteresis avoids false resolution on tiny pressure dips.
 #define CLICK_ARBITRATION_PRESSURE_HYSTERESIS 4
@@ -40,17 +40,15 @@ BOOLEAN
 AmtRecentLiftFindNearby(
     _In_  const RECENT_LIFT_RING* Ring,
     _In_  LONGLONG                NowQpc,
-    _In_  LONGLONG                PerfFrequencyHz,
+    _In_  LONGLONG                WindowTicks,
     _In_  USHORT                  CandX,
     _In_  USHORT                  CandY,
     _Out_ USHORT*                 OutX,
     _Out_ USHORT*                 OutY
 )
 {
-    if (PerfFrequencyHz <= 0)
+    if (WindowTicks <= 0)
         return FALSE;
-
-    LONGLONG windowTicks = (RETAP_WINDOW_100NS * PerfFrequencyHz) / 10000000LL;
 
     LONG     bestDistSq = -1;
     BOOLEAN  found       = FALSE;
@@ -62,7 +60,7 @@ AmtRecentLiftFindNearby(
             continue;
         if (NowQpc < e->LiftQpc)
             continue; // QPC must be monotonic
-        if (NowQpc - e->LiftQpc > windowTicks)
+        if (NowQpc - e->LiftQpc > WindowTicks)
             continue;
 
         INT dx = (INT)CandX - (INT)e->X;
@@ -239,7 +237,7 @@ PTPCore_ProcessFrame(
     // Cost-based correspondence
     MATCH_RESULT matchResult;
     AmtMatchCorrespond(&candidates, pCtx->ActiveContacts,
-                       NowQpc, pCtx->PerfFrequency.QuadPart,
+                       NowQpc, pCtx->MatchMaxTimeDeltaTicks,
                        &matchResult);
 
     // FIX: an Unconfirmed candidate (new, below-tip-threshold, no pool
@@ -403,7 +401,7 @@ PTPCore_ProcessFrame(
         USHORT liftX, liftY;
         BOOLEAN looksLikeRetap =
             AmtRecentLiftFindNearby(&pCtx->RecentLifts, NowQpc,
-                                    pCtx->PerfFrequency.QuadPart,
+                                    pCtx->RetapWindowTicks,
                                     cand->X, cand->Y, &liftX, &liftY);
 
         if (looksLikeRetap) {
@@ -670,9 +668,7 @@ PTPCore_ProcessFrame(
                 // Safety net: absolute wall-clock cap so a slow ramp that
                 // never stalls in a row still can't wait forever.
                 LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
-                LONGLONG timeoutTicks = (pCtx->PerfFrequency.QuadPart > 0)
-                    ? (pCtx->PerfFrequency.QuadPart * CLICK_ARBITRATION_TIMEOUT_MS) / 1000
-                    : 0; // no usable clock - fail open to a plain click below
+                LONGLONG timeoutTicks = pCtx->ClickArbitrationTimeoutTicks; // MICRO-OPT: cached at D0Entry
                 if (elapsedTicks >= timeoutTicks) {
                     pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
                 }

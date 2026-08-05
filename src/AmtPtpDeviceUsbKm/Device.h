@@ -21,13 +21,10 @@ typedef struct _DEVICE_CONTEXT
     // Protect shared frame-processing state across concurrent USB completions.
     WDFSPINLOCK     StateLock;
 
-    // USB
+    // USB - touched every interrupt/report cycle.
     WDFUSBDEVICE    UsbDevice;
     WDFUSBPIPE      InterruptPipe;
-    WDFUSBINTERFACE UsbInterface;
     WDFQUEUE        InputQueue;
-    USB_DEVICE_DESCRIPTOR DeviceDescriptor;
-    ULONG           UsbDeviceTraits;
 
     // Device config
     const struct BCM5974_CONFIG* DeviceInfo;
@@ -94,6 +91,18 @@ typedef struct _DEVICE_CONTEXT
     // QPC frequency cached at D0Entry
     LARGE_INTEGER PerfFrequency;
 
+    // MICRO-OPT: PerfFrequency-derived tick thresholds, computed once at
+    // D0Entry instead of on every call site that needs them (retap window
+    // check on every birth, match time-reject on every accepted match,
+    // click-arbitration timeout on every pending frame). Each of those was
+    // a 64-bit multiply+divide recomputed from the same constant frequency
+    // every time; now it's a plain field read. 0 means "no usable clock"
+    // (PerfFrequency.QuadPart <= 0), preserving the original fail-closed/
+    // fail-open behavior of each call site exactly.
+    LONGLONG      RetapWindowTicks;             // AmtRecentLiftFindNearby window
+    LONGLONG      MatchMaxTimeDeltaTicks;       // AmtMatchCorrespond time-reject
+    LONGLONG      ClickArbitrationTimeoutTicks; // click arbitration safety-net
+
     // Deferred overflow queue for contact events.
     // ---------------------------------------------------------------
     ULONG         OverflowContactID[PTP_MAX_CONTACT_POINTS];
@@ -106,6 +115,17 @@ typedef struct _DEVICE_CONTEXT
     // Recent-lift memory for retap smoothing.
     // ---------------------------------------------------------------
     RECENT_LIFT_RING RecentLifts;
+
+    // ---------------------------------------------------------------
+    // Cold: USB setup metadata. Written once (EvtDevicePrepareHardware /
+    // device creation), never read in the per-frame hot path (grep across
+    // Interrupt.c/Hid.c/Ptpcore.c/Match.c confirms zero hits) - kept at the
+    // end of the struct so it doesn't sit between hot fields and cost extra
+    // cache-line fetches on the frame-processing path.
+    // ---------------------------------------------------------------
+    WDFUSBINTERFACE        UsbInterface;
+    USB_DEVICE_DESCRIPTOR  DeviceDescriptor;
+    ULONG                  UsbDeviceTraits;
 
 } DEVICE_CONTEXT, *PDEVICE_CONTEXT;
 
