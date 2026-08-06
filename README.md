@@ -89,10 +89,16 @@ MacBook 12" (2015-2017)
 
 
 # 🚀 Update
+
+### Clean Update
 1. Open Device Manager.
 2. Under **HID**, find **Wellspring Precision Touchpad**, right-click it, and select **Uninstall device**.
 3. Check **Delete the driver software for this device**, then click **Uninstall**.
-4. Extract the new archive, then right-click **AmtPtpDeviceUsbKm.inf** and select **Install**.
+4. Extract the archive, then right-click **AmtPtpDeviceUsbKm.inf** and select **Install**.
+> Use keys (Arrows, Tab, Alt or mouse), when touchpad driver not installed.
+
+### Normal Update
+1. Extract the archive, then right-click **AmtPtpDeviceUsbKm.inf** and select **Install**.
 ---
 
 # Driver Removal
