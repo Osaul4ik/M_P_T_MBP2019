@@ -9,8 +9,13 @@
 #define XY_DEADZONE_UNITS_FAST     0  // fast motion: no deadzone lag
 
 // Velocity buckets choose deadzone and smoothing.
-#define VELOCITY_SLOW_UNITS_PER_SEC   130
-#define VELOCITY_FAST_UNITS_PER_SEC   900
+#define VELOCITY_SLOW_UNITS_PER_SEC   120
+#define VELOCITY_FAST_UNITS_PER_SEC   850
+
+// Separate FAST threshold for two-finger scroll gestures. Decoupled from
+// the cursor (single-finger) threshold above so scroll deadzone/scale
+// behavior can be tuned independently of pointer smoothing.
+#define VELOCITY_FAST_SCROLL_UNITS_PER_SEC   1200
 
 typedef enum _CONTACT_VELOCITY_BUCKET
 {
@@ -54,7 +59,8 @@ AmtContactClassifyVelocity(
     _In_ USHORT   prevX,
     _In_ USHORT   prevY,
     _In_ LONGLONG DtQpcTicks,
-    _In_ LONGLONG PerfFrequencyHz
+    _In_ LONGLONG PerfFrequencyHz,
+    _In_ LONGLONG FastThresholdUnitsPerSec
 )
 {
     if (DtQpcTicks <= 0 || PerfFrequencyHz <= 0) {
@@ -80,7 +86,7 @@ AmtContactClassifyVelocity(
 
     if (numerator < (LONGLONG)(VELOCITY_SLOW_UNITS_PER_SEC + 1) * DtQpcTicks)
         return VELOCITY_SLOW;
-    if (numerator >= (LONGLONG)VELOCITY_FAST_UNITS_PER_SEC * DtQpcTicks)
+    if (numerator >= FastThresholdUnitsPerSec * DtQpcTicks)
         return VELOCITY_FAST;
     return VELOCITY_MEDIUM;
 }
@@ -503,8 +509,14 @@ AmtContactUpdate(
     // 0 = no previous sample; handled by the DtQpcTicks<=0 guard.
     LONGLONG prevQpc  = Contact->LastSeenQpc;
     LONGLONG dtTicks  = (prevQpc == 0) ? 0 : (nowQpc - prevQpc);
+
+    // Scroll gestures classify FAST against their own threshold, decoupled
+    // from single-finger cursor movement below.
+    LONGLONG fastThreshold = gestureActive ? VELOCITY_FAST_SCROLL_UNITS_PER_SEC
+                                            : VELOCITY_FAST_UNITS_PER_SEC;
     CONTACT_VELOCITY_BUCKET velocity = AmtContactClassifyVelocity(
-        rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz);
+        rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz,
+        fastThreshold);
 
     INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity, gestureActive);
     INT alphaNum          = AmtContactContinuousAlpha(
