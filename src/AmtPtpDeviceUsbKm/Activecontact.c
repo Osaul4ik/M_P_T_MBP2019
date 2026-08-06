@@ -5,7 +5,7 @@
 
 // Adaptive deadzone reduces steppy two-finger scrolling.
 #define XY_DEADZONE_UNITS          1  // fallback: VELOCITY_UNKNOWN/MEDIUM
-#define XY_DEADZONE_UNITS_SLOW     2  // near-stationary: filter sensor noise
+#define XY_DEADZONE_UNITS_SLOW     1  // near-stationary: filter sensor noise
 #define XY_DEADZONE_UNITS_FAST     0  // fast motion: no deadzone lag
 
 // Velocity buckets choose deadzone and smoothing.
