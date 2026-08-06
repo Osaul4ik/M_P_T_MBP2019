@@ -28,9 +28,13 @@ typedef enum _CONTACT_VELOCITY_BUCKET
 #define ALPHA_NUM_MIN  SMOOTHING_ALPHA_NUM_SLOW  // heaviest blend, near-stationary
 #define ALPHA_NUM_MAX  SMOOTHING_ALPHA_DEN       // = raw passthrough, bit-identical
 
-// Scale scroll deltas to reduce abrupt stops.
-#define SCROLL_SCALE_NUM  8
-#define SCROLL_SCALE_DEN  10
+// Scale scroll deltas to reduce abrupt stops. FAST gets a +35% boost on
+// top of the base scale (0.8 * 1.35 = 1.08) so a quick swipe covers more
+// distance per frame than a slow/medium one, which keep the base scale.
+#define SCROLL_SCALE_NUM       8
+#define SCROLL_SCALE_DEN       10
+#define SCROLL_SCALE_NUM_FAST  108
+#define SCROLL_SCALE_DEN_FAST  100
 
 static inline USHORT
 AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal, _In_ INT alphaNum)
@@ -149,11 +153,11 @@ AmtContactContinuousAlpha(
 
 // Scale scroll deltas with remainder so slow motion still advances.
 static inline SHORT
-AmtScaleScrollDelta(_In_ INT rawDelta, _Inout_ LONG* Rem)
+AmtScaleScrollDelta(_In_ INT rawDelta, _Inout_ LONG* Rem, _In_ INT ScaleNum, _In_ INT ScaleDen)
 {
-    INT numerator = rawDelta * SCROLL_SCALE_NUM + *Rem;
-    INT scaled    = numerator / SCROLL_SCALE_DEN;       // truncates toward 0
-    *Rem = numerator - scaled * SCROLL_SCALE_DEN;        // exact remainder
+    INT numerator = rawDelta * ScaleNum + *Rem;
+    INT scaled    = numerator / ScaleDen;       // truncates toward 0
+    *Rem = numerator - scaled * ScaleDen;        // exact remainder
     return (SHORT)scaled;
 }
 
@@ -393,7 +397,7 @@ AmtContactCommitSample(
     _In_    BOOLEAN         passedDeadzone,
     _In_    BOOLEAN         aliveCountIsOne,
     _In_    BOOLEAN         gestureActive,
-    _In_    BOOLEAN         velocityIsSlow,
+    _In_    CONTACT_VELOCITY_BUCKET Velocity,
     _In_    INT             alphaNum,
     _In_    BOOLEAN         commitIsRetapSeededFirstSample,
     _Out_   USHORT*         OutX,
@@ -401,6 +405,7 @@ AmtContactCommitSample(
 )
 {
     USHORT repX, repY;
+    BOOLEAN velocityIsSlow = (Velocity == VELOCITY_SLOW);
 
     if (!passedDeadzone) {
         repX = Contact->ReportX;
@@ -410,15 +415,20 @@ AmtContactCommitSample(
         Contact->HystY = candY;
 
         if (gestureActive) {
-            // Scroll frame: report ReportX/Y + 70% of the raw delta, not
-            // the raw position itself. Baseline for the next frame's delta
-            // is this scaled result, so scaling never compounds across
-            // frames.
+            // Scroll frame: report ReportX/Y + a scaled fraction of the raw
+            // delta, not the raw position itself - baseline for the next
+            // frame's delta is this scaled result, so scaling never
+            // compounds across frames. FAST swipes get a +35% boost over
+            // SLOW/MEDIUM (see SCROLL_SCALE_*_FAST) so a quick fling covers
+            // more distance per frame instead of feeling capped.
             INT dx = (INT)candX - (INT)Contact->ReportX;
             INT dy = (INT)candY - (INT)Contact->ReportY;
 
-            LONG newX = (LONG)Contact->ReportX + AmtScaleScrollDelta(dx, &Contact->ScrollRemX);
-            LONG newY = (LONG)Contact->ReportY + AmtScaleScrollDelta(dy, &Contact->ScrollRemY);
+            INT scaleNum = (Velocity == VELOCITY_FAST) ? SCROLL_SCALE_NUM_FAST : SCROLL_SCALE_NUM;
+            INT scaleDen = (Velocity == VELOCITY_FAST) ? SCROLL_SCALE_DEN_FAST : SCROLL_SCALE_DEN;
+
+            LONG newX = (LONG)Contact->ReportX + AmtScaleScrollDelta(dx, &Contact->ScrollRemX, scaleNum, scaleDen);
+            LONG newY = (LONG)Contact->ReportY + AmtScaleScrollDelta(dy, &Contact->ScrollRemY, scaleNum, scaleDen);
 
             // Clamp both ends before truncating to USHORT.
             repX = (USHORT)(newX < 0 ? 0 : (newX > 0xFFFF ? 0xFFFF : newX));
@@ -514,7 +524,7 @@ AmtContactUpdate(
     }
 
     AmtContactCommitSample(Contact, rawX, rawY, passed, aliveCountIsOne,
-                           gestureActive, (BOOLEAN)(velocity == VELOCITY_SLOW),
+                           gestureActive, velocity,
                            alphaNum, retapSeededFirstSample,
                            OutX, OutY);
 
