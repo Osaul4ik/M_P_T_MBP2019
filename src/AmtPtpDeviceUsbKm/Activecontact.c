@@ -13,7 +13,7 @@
 #define VELOCITY_FAST_UNITS_PER_SEC   800
 
 // Separate FAST threshold for two-finger scroll gestures. 
-#define VELOCITY_FAST_SCROLL_UNITS_PER_SEC   1200
+#define VELOCITY_FAST_SCROLL_UNITS_PER_SEC   1100
 
 typedef enum _CONTACT_VELOCITY_BUCKET
 {
