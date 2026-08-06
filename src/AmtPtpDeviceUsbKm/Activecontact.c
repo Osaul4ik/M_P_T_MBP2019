@@ -29,7 +29,7 @@ typedef enum _CONTACT_VELOCITY_BUCKET
 // Lower smoothing reduces slow-speed jitter.
 #define SMOOTHING_ALPHA_NUM_SLOW  2  // stronger smoothing, near-stationary
 
-// Continuous alpha ramp endpoints (see AmtContactContinuousAlpha below).
+// Continuous alpha ramp endpoints (see AmtContactEvaluateVelocity below).
 #define ALPHA_NUM_MIN  SMOOTHING_ALPHA_NUM_SLOW  // heaviest blend, near-stationary
 #define ALPHA_NUM_MAX  SMOOTHING_ALPHA_DEN       // = raw passthrough, bit-identical
 
@@ -51,19 +51,31 @@ AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal, _In_ INT alphaNum
     return (USHORT)blended;
 }
 
-// Estimate motion speed from the last committed sample.
+// Estimate motion speed and (optionally) the continuous smoothing alpha
+// from a single distance/unitsPerSec computation, shared between the two
+// consumers below instead of each recomputing dx/dy/distance separately.
+//
+// Bucket uses FastThresholdUnitsPerSec (caller picks cursor vs. scroll
+// threshold). Alpha always ramps against the cursor thresholds
+// (VELOCITY_SLOW/FAST_UNITS_PER_SEC), since it's only ever consumed on the
+// non-gesture (single-finger) path - callers pass NeedAlpha = FALSE for
+// gesture frames to skip that extra work entirely.
 static CONTACT_VELOCITY_BUCKET
-AmtContactClassifyVelocity(
-    _In_ USHORT   rawX,
-    _In_ USHORT   rawY,
-    _In_ USHORT   prevX,
-    _In_ USHORT   prevY,
-    _In_ LONGLONG DtQpcTicks,
-    _In_ LONGLONG PerfFrequencyHz,
-    _In_ LONGLONG FastThresholdUnitsPerSec
+AmtContactEvaluateVelocity(
+    _In_  USHORT   rawX,
+    _In_  USHORT   rawY,
+    _In_  USHORT   prevX,
+    _In_  USHORT   prevY,
+    _In_  LONGLONG DtQpcTicks,
+    _In_  LONGLONG PerfFrequencyHz,
+    _In_  LONGLONG FastThresholdUnitsPerSec,
+    _In_  BOOLEAN  NeedAlpha,
+    _Out_ INT*     OutAlphaNum  // untouched when NeedAlpha == FALSE
 )
 {
     if (DtQpcTicks <= 0 || PerfFrequencyHz <= 0) {
+        // No timestamp basis yet - same default as before: raw/unknown.
+        if (NeedAlpha) *OutAlphaNum = ALPHA_NUM_MAX;
         return VELOCITY_UNKNOWN;
     }
 
@@ -73,22 +85,36 @@ AmtContactClassifyVelocity(
     if (dy < 0) dy = -dy;
     INT distance = (dx > dy) ? dx : dy;
 
-    // MICRO-OPT: avoid the 64-bit idiv entirely. The caller only needs the
-    // bucket (SLOW/MEDIUM/FAST), never the actual unitsPerSec value, so
-    // instead of computing floor(distance*Freq / DtQpcTicks) and comparing
-    // it to the two thresholds, cross-multiply and compare the products -
-    // same distance, Freq, DtQpcTicks are all non-negative (checked above),
-    // so this is an exact match to the original truncating-division
-    // comparisons, not an approximation:
-    //   floor(N/D) <= c   <=>   N <  (c+1)*D
-    //   floor(N/D) >= c   <=>   N >= c*D
-    LONGLONG numerator = (LONGLONG)distance * PerfFrequencyHz;
+    LONGLONG unitsPerSec = ((LONGLONG)distance * PerfFrequencyHz) / DtQpcTicks;
 
-    if (numerator < (LONGLONG)(VELOCITY_SLOW_UNITS_PER_SEC + 1) * DtQpcTicks)
-        return VELOCITY_SLOW;
-    if (numerator >= FastThresholdUnitsPerSec * DtQpcTicks)
-        return VELOCITY_FAST;
-    return VELOCITY_MEDIUM;
+    CONTACT_VELOCITY_BUCKET bucket;
+    if (unitsPerSec <= VELOCITY_SLOW_UNITS_PER_SEC) {
+        bucket = VELOCITY_SLOW;
+    } else if (unitsPerSec >= FastThresholdUnitsPerSec) {
+        bucket = VELOCITY_FAST;
+    } else {
+        bucket = VELOCITY_MEDIUM;
+    }
+
+    if (NeedAlpha) {
+        // Continuous ramp between ALPHA_NUM_MIN (at/below
+        // VELOCITY_SLOW_UNITS_PER_SEC) and ALPHA_NUM_MAX (at/above
+        // VELOCITY_FAST_UNITS_PER_SEC, bit-identical to raw), so a speed
+        // anywhere in between gets a proportionally lighter blend instead
+        // of snapping between two fixed states at a single threshold.
+        if (unitsPerSec <= VELOCITY_SLOW_UNITS_PER_SEC) {
+            *OutAlphaNum = ALPHA_NUM_MIN;
+        } else if (unitsPerSec >= VELOCITY_FAST_UNITS_PER_SEC) {
+            *OutAlphaNum = ALPHA_NUM_MAX;
+        } else {
+            LONGLONG span   = VELOCITY_FAST_UNITS_PER_SEC - VELOCITY_SLOW_UNITS_PER_SEC;
+            LONGLONG offset = unitsPerSec - VELOCITY_SLOW_UNITS_PER_SEC;
+            *OutAlphaNum = ALPHA_NUM_MIN +
+                           (INT)(((ALPHA_NUM_MAX - ALPHA_NUM_MIN) * offset) / span);
+        }
+    }
+
+    return bucket;
 }
 
 static inline INT
@@ -110,51 +136,6 @@ AmtContactDeadzoneForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity, _In_ BOOLEA
     case VELOCITY_UNKNOWN:
     default:             return XY_DEADZONE_UNITS;
     }
-}
-
-// Continuous replacement for a discrete velocity-bucket alpha lookup.
-// Ramps linearly between ALPHA_NUM_MIN (at/below VELOCITY_SLOW_UNITS_PER_SEC)
-// and ALPHA_NUM_MAX (at/above VELOCITY_FAST_UNITS_PER_SEC, bit-identical to
-// raw), so a speed anywhere in between gets a proportionally lighter blend
-// instead of snapping between two fixed states at a single threshold speed.
-// Integer-only (one 64-bit divide per contact per interrupt) - safe at any
-// IRQL, no FPU state to save.
-static inline INT
-AmtContactContinuousAlpha(
-    _In_ USHORT   rawX,
-    _In_ USHORT   rawY,
-    _In_ USHORT   prevX,
-    _In_ USHORT   prevY,
-    _In_ LONGLONG DtQpcTicks,
-    _In_ LONGLONG PerfFrequencyHz
-)
-{
-    // No timestamp basis yet (first sample after birth) - same default as
-    // the old bucket scheme for a fresh, non-retap-seeded contact: raw.
-    if (DtQpcTicks <= 0 || PerfFrequencyHz <= 0) {
-        return ALPHA_NUM_MAX;
-    }
-
-    INT dx = (INT)rawX - (INT)prevX;
-    if (dx < 0) dx = -dx;
-    INT dy = (INT)rawY - (INT)prevY;
-    if (dy < 0) dy = -dy;
-    INT distance = (dx > dy) ? dx : dy;
-
-    LONGLONG unitsPerSec = ((LONGLONG)distance * PerfFrequencyHz) / DtQpcTicks;
-
-    if (unitsPerSec <= VELOCITY_SLOW_UNITS_PER_SEC) {
-        return ALPHA_NUM_MIN;
-    }
-    if (unitsPerSec >= VELOCITY_FAST_UNITS_PER_SEC) {
-        return ALPHA_NUM_MAX;
-    }
-
-    LONGLONG span   = VELOCITY_FAST_UNITS_PER_SEC - VELOCITY_SLOW_UNITS_PER_SEC;
-    LONGLONG offset = unitsPerSec - VELOCITY_SLOW_UNITS_PER_SEC;
-
-    return ALPHA_NUM_MIN +
-           (INT)(((ALPHA_NUM_MAX - ALPHA_NUM_MIN) * offset) / span);
 }
 
 // Scale scroll deltas with remainder so slow motion still advances.
@@ -195,6 +176,37 @@ AmtContactPoolFindFree(_In_reads_(MAX_CONTACTS) const ACTIVE_CONTACT* Pool)
     return MAX_CONTACTS; // pool exhausted (should not happen)
 }
 
+// Shared field init for AmtContactBirth / AmtContactBirthWithRetapSmoothing -
+// identical in every field except the X/Y source and RetapSeeded.
+static inline VOID
+AmtContactBirthCommon(
+    _Inout_ PACTIVE_CONTACT c,
+    _Inout_ ULONG*          NextContactId,
+    _In_    USHORT          x,
+    _In_    USHORT          y,
+    _In_    USHORT          slotHint,
+    _In_    BOOLEAN         retapSeeded
+)
+{
+    c->State             = CONTACT_ACTIVE;
+    c->ContactID          = AmtContactAssignId(NextContactId);
+    c->ReportX            = x;
+    c->ReportY            = y;
+    c->HystX              = x;
+    c->HystY              = y;
+    c->WasInGesture       = FALSE;
+    c->PendingFirstSample = TRUE;
+    c->RetapSeeded        = retapSeeded;
+    c->ScrollRemX          = 0;
+    c->ScrollRemY          = 0;
+    c->LastSlotHint        = slotHint;
+    c->LastSeenQpc         = 0; // set by first AmtContactUpdate
+    c->LastMajor           = 0;
+    c->LastMinor           = 0;
+    c->LastPressure        = 0;
+    c->FramesAlive         = 1; // birth frame counts as 1
+}
+
 VOID
 AmtContactBirth(
     _Inout_ PACTIVE_CONTACT Pool,
@@ -211,23 +223,7 @@ AmtContactBirth(
     NT_ASSERT(c->State == CONTACT_FREE);
 #endif
 
-    c->State             = CONTACT_ACTIVE;
-    c->ContactID          = AmtContactAssignId(NextContactId);
-    c->ReportX            = x;
-    c->ReportY            = y;
-    c->HystX              = x;
-    c->HystY              = y;
-    c->WasInGesture       = FALSE;
-    c->PendingFirstSample = TRUE;
-    c->RetapSeeded        = FALSE; // no seeded baseline
-    c->ScrollRemX          = 0;
-    c->ScrollRemY          = 0;
-    c->LastSlotHint        = slotHint;
-    c->LastSeenQpc         = 0; // set by first AmtContactUpdate
-    c->LastMajor           = 0;
-    c->LastMinor           = 0;
-    c->LastPressure        = 0;
-    c->FramesAlive         = 1; // birth frame counts as 1
+    AmtContactBirthCommon(c, NextContactId, x, y, slotHint, /* retapSeeded */ FALSE);
 }
 
 // Seeds EMA baseline so the cursor doesn't jump on re-tap.
@@ -247,23 +243,8 @@ AmtContactBirthWithRetapSmoothing(
     NT_ASSERT(c->State == CONTACT_FREE);
 #endif
 
-    c->State             = CONTACT_ACTIVE;
-    c->ContactID          = AmtContactAssignId(NextContactId);
-    c->ReportX            = RecentLiftX;
-    c->ReportY            = RecentLiftY;
-    c->HystX              = RecentLiftX;
-    c->HystY              = RecentLiftY;
-    c->WasInGesture       = FALSE;
-    c->PendingFirstSample = TRUE;
-    c->RetapSeeded        = TRUE; // preserve seed on first update
-    c->ScrollRemX          = 0;
-    c->ScrollRemY          = 0;
-    c->LastSlotHint        = slotHint;
-    c->LastSeenQpc         = 0;
-    c->LastMajor           = 0;
-    c->LastMinor           = 0;
-    c->LastPressure        = 0;
-    c->FramesAlive         = 1;
+    AmtContactBirthCommon(c, NextContactId, RecentLiftX, RecentLiftY, slotHint,
+                           /* retapSeeded */ TRUE); // preserve seed on first update
 }
 
 BOOLEAN
@@ -511,16 +492,17 @@ AmtContactUpdate(
     LONGLONG dtTicks  = (prevQpc == 0) ? 0 : (nowQpc - prevQpc);
 
     // Scroll gestures classify FAST against their own threshold, decoupled
-    // from single-finger cursor movement below.
+    // from single-finger cursor movement below. Alpha is only meaningful
+    // on the non-gesture path (see AmtContactCommitSample), so skip
+    // computing it on gesture frames entirely.
     LONGLONG fastThreshold = gestureActive ? VELOCITY_FAST_SCROLL_UNITS_PER_SEC
                                             : VELOCITY_FAST_UNITS_PER_SEC;
-    CONTACT_VELOCITY_BUCKET velocity = AmtContactClassifyVelocity(
+    INT alphaNum = ALPHA_NUM_MAX; // unused when gestureActive
+    CONTACT_VELOCITY_BUCKET velocity = AmtContactEvaluateVelocity(
         rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz,
-        fastThreshold);
+        fastThreshold, /* NeedAlpha */ !gestureActive, &alphaNum);
 
     INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity, gestureActive);
-    INT alphaNum          = AmtContactContinuousAlpha(
-        rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz);
 
     if (Contact->PendingFirstSample) {
         if (retapSeededFirstSample) {
