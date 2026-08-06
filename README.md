@@ -64,9 +64,9 @@ MacBook Air:
 MacBookPro13,x / 14,x (2016-2017, Touch Bar, T1) — PID 0277. Falls back to an imprecise generic entry
 
 ### Other MacBooks SPI
+MacBookPro13,1 / 14,1 (2016-2017, no Touch Bar) 
+MacBook 12" (2015-2017)
 
-MacBookPro13,1 / 14,1 (2016-2017, no Touch Bar) — SPI, not USB
-MacBook 12" (2015-2017) — SPI, not USB
 - Use https://github.com/imbushuo/mac-precision-touchpad
 
 ### Magic TrackPad 2
@@ -77,15 +77,22 @@ MacBook 12" (2015-2017) — SPI, not USB
 
 # 📦 Installation
 0. Extract the archive.
-1. Run TestMode.bat, enter 1, and press Enter to enable Test Mode.
+1. Run **TestMode.bat**, enter 1, and press Enter to enable Test Mode.
 2. **Restart your computer.** (Really)
-
-3. Run InstallSert.bat to install the certificate.
-4. Right-click AmtPtpDeviceUsbKm.inf and select "Install".
+3. Run **InstallSert.bat** to install the certificate.
+4. Right-click **AmtPtpDeviceUsbKm.inf** and select **Install**.
 
 > **Note**
 > The driver currently requires Windows Test Mode because it is not digitally signed.
 
+---
+
+
+# 🚀 Update
+1. Open Device Manager.
+2. Under **HID**, find **Wellspring Precision Touchpad**, right-click it, and select **Uninstall device**.
+3. Check **Delete the driver software for this device**, then click **Uninstall**.
+4. Extract the new archive, then right-click **AmtPtpDeviceUsbKm.inf** and select **Install**.
 ---
 
 # Driver Removal
@@ -109,16 +116,18 @@ This step is important before installing another Apple touchpad driver (Trackpad
 * ✅ Force Touch implementation
 * ✅ Driver optimization
 * ✅ Code audit
-* ❌ Micro optimization & tuning
+* ✅ Micro optimization & tuning
   
 
 # Credits
 
 This project is based on the excellent work of the original **mac-precision-touchpad** project by imbushuo.
 
-While the original project provided the foundation, the USB implementation has undergone substantial architectural redesign and behavior changes focused on MacBook Pro 16,1.
-
 ---
+
+# License
+* USB driver — GPL v2
+  
 
 # License
 * USB driver — GPL v2
