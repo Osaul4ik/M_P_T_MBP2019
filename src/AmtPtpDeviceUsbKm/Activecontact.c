@@ -9,7 +9,7 @@
 #define XY_DEADZONE_UNITS_FAST     0  // fast motion: no deadzone lag
 
 // Velocity buckets choose deadzone and smoothing.
-#define VELOCITY_SLOW_UNITS_PER_SEC   100
+#define VELOCITY_SLOW_UNITS_PER_SEC   50
 #define VELOCITY_FAST_UNITS_PER_SEC   400
 
 typedef enum _CONTACT_VELOCITY_BUCKET
@@ -20,10 +20,13 @@ typedef enum _CONTACT_VELOCITY_BUCKET
     VELOCITY_FAST,
 } CONTACT_VELOCITY_BUCKET;
 
-#define SMOOTHING_ALPHA_NUM  3
 #define SMOOTHING_ALPHA_DEN  8
 // Lower smoothing reduces slow-speed jitter.
 #define SMOOTHING_ALPHA_NUM_SLOW  3  // stronger smoothing, near-stationary
+
+// Continuous alpha ramp endpoints (see AmtContactContinuousAlpha below).
+#define ALPHA_NUM_MIN  SMOOTHING_ALPHA_NUM_SLOW  // heaviest blend, near-stationary
+#define ALPHA_NUM_MAX  SMOOTHING_ALPHA_DEN       // = raw passthrough, bit-identical
 
 // Scale scroll deltas to reduce abrupt stops.
 #define SCROLL_SCALE_NUM  8
@@ -90,17 +93,49 @@ AmtContactDeadzoneForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity)
     }
 }
 
-// Medium and fast motion skip the smoothing blend.
+// Continuous replacement for a discrete velocity-bucket alpha lookup.
+// Ramps linearly between ALPHA_NUM_MIN (at/below VELOCITY_SLOW_UNITS_PER_SEC)
+// and ALPHA_NUM_MAX (at/above VELOCITY_FAST_UNITS_PER_SEC, bit-identical to
+// raw), so a speed anywhere in between gets a proportionally lighter blend
+// instead of snapping between two fixed states at a single threshold speed.
+// Integer-only (one 64-bit divide per contact per interrupt) - safe at any
+// IRQL, no FPU state to save.
 static inline INT
-AmtContactAlphaForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity)
+AmtContactContinuousAlpha(
+    _In_ USHORT   rawX,
+    _In_ USHORT   rawY,
+    _In_ USHORT   prevX,
+    _In_ USHORT   prevY,
+    _In_ LONGLONG DtQpcTicks,
+    _In_ LONGLONG PerfFrequencyHz
+)
 {
-    switch (Velocity) {
-    case VELOCITY_SLOW: return SMOOTHING_ALPHA_NUM_SLOW;
-    case VELOCITY_MEDIUM:
-    case VELOCITY_FAST:
-    case VELOCITY_UNKNOWN:
-    default:             return SMOOTHING_ALPHA_NUM;
+    // No timestamp basis yet (first sample after birth) - same default as
+    // the old bucket scheme for a fresh, non-retap-seeded contact: raw.
+    if (DtQpcTicks <= 0 || PerfFrequencyHz <= 0) {
+        return ALPHA_NUM_MAX;
     }
+
+    INT dx = (INT)rawX - (INT)prevX;
+    if (dx < 0) dx = -dx;
+    INT dy = (INT)rawY - (INT)prevY;
+    if (dy < 0) dy = -dy;
+    INT distance = (dx > dy) ? dx : dy;
+
+    LONGLONG unitsPerSec = ((LONGLONG)distance * PerfFrequencyHz) / DtQpcTicks;
+
+    if (unitsPerSec <= VELOCITY_SLOW_UNITS_PER_SEC) {
+        return ALPHA_NUM_MIN;
+    }
+    if (unitsPerSec >= VELOCITY_FAST_UNITS_PER_SEC) {
+        return ALPHA_NUM_MAX;
+    }
+
+    LONGLONG span   = VELOCITY_FAST_UNITS_PER_SEC - VELOCITY_SLOW_UNITS_PER_SEC;
+    LONGLONG offset = unitsPerSec - VELOCITY_SLOW_UNITS_PER_SEC;
+
+    return ALPHA_NUM_MIN +
+           (INT)(((ALPHA_NUM_MAX - ALPHA_NUM_MIN) * offset) / span);
 }
 
 // Scale scroll deltas with remainder so slow motion still advances.
@@ -365,48 +400,49 @@ AmtContactCommitSample(
         Contact->HystX = candX;
         Contact->HystY = candY;
 
-        // EMA eases raw toward the previous report. Applied only when it
-        // helps: SLOW (smooths sensor tremor) or retap-seeded first sample
-        // (eases from the old lift position). MEDIUM/FAST skip to raw to
-        // avoid lag; fast motion already averages out noise.
-        BOOLEAN skipEma =
-            gestureActive ||
-            (!commitIsRetapSeededFirstSample && !velocityIsSlow);
+        if (gestureActive) {
+            // Scroll frame: report ReportX/Y + 70% of the raw delta, not
+            // the raw position itself. Baseline for the next frame's delta
+            // is this scaled result, so scaling never compounds across
+            // frames.
+            INT dx = (INT)candX - (INT)Contact->ReportX;
+            INT dy = (INT)candY - (INT)Contact->ReportY;
 
-        if (skipEma) {
-            if (gestureActive) {
-                // Scroll frame: report ReportX/Y + 70% of the raw delta,
-                // not the raw position itself. Baseline for the next
-                // frame's delta is this scaled result, so scaling never
-                // compounds across frames.
-                INT dx = (INT)candX - (INT)Contact->ReportX;
-                INT dy = (INT)candY - (INT)Contact->ReportY;
+            LONG newX = (LONG)Contact->ReportX + AmtScaleScrollDelta(dx, &Contact->ScrollRemX);
+            LONG newY = (LONG)Contact->ReportY + AmtScaleScrollDelta(dy, &Contact->ScrollRemY);
 
-                LONG newX = (LONG)Contact->ReportX + AmtScaleScrollDelta(dx, &Contact->ScrollRemX);
-                LONG newY = (LONG)Contact->ReportY + AmtScaleScrollDelta(dy, &Contact->ScrollRemY);
+            // Clamp both ends before truncating to USHORT.
+            repX = (USHORT)(newX < 0 ? 0 : (newX > 0xFFFF ? 0xFFFF : newX));
+            repY = (USHORT)(newY < 0 ? 0 : (newY > 0xFFFF ? 0xFFFF : newY));
+        } else {
+            // Retap-seeded first sample always eases in from the seed
+            // (no real dt to measure velocity from yet - see
+            // AmtContactUpdate). Everything else blends by the continuous
+            // alpha the caller computed from measured velocity: heaviest
+            // smoothing near-stationary, ramping linearly to a
+            // bit-identical raw passthrough by VELOCITY_FAST_UNITS_PER_SEC.
+            // Replaces the old hard SLOW/MEDIUM/FAST switch, which only
+            // ever reported a fixed 3/8 blend or exactly raw with nothing
+            // between - a deliberate slow move sitting right at the
+            // threshold speed could flip frame-to-frame between the two.
+            INT effAlpha = commitIsRetapSeededFirstSample ? ALPHA_NUM_MIN : alphaNum;
 
-                // Clamp both ends before truncating to USHORT.
-                repX = (USHORT)(newX < 0 ? 0 : (newX > 0xFFFF ? 0xFFFF : newX));
-                repY = (USHORT)(newY < 0 ? 0 : (newY > 0xFFFF ? 0xFFFF : newY));
-            } else {
-                // Ordinary MEDIUM/FAST movement (SLOW falls to the EMA
-                // branch below): report raw and drop leftover scroll
-                // remainder so it can't leak into a later gesture.
-                repX = candX;
-                repY = candY;
+            repX = AmtContactSmoothCoord(candX, Contact->ReportX, effAlpha);
+            repY = AmtContactSmoothCoord(candY, Contact->ReportY, effAlpha);
 
-                Contact->ScrollRemX = 0;
-                Contact->ScrollRemY = 0;
-            }
+            Contact->ScrollRemX = 0;
+            Contact->ScrollRemY = 0;
+        }
 
+        // Taint-clear rule unchanged from the old scheme: a contact that
+        // was part of a gesture stays tainted through slow/ambiguous solo
+        // movement, and only clears on a decisively fast frame (or a
+        // gesture frame, or a retap-seeded one) - see the WasInGesture
+        // comment in Activecontact.h.
+        if (gestureActive || (!commitIsRetapSeededFirstSample && !velocityIsSlow)) {
             if (Contact->WasInGesture && aliveCountIsOne) {
                 Contact->WasInGesture = FALSE;
             }
-        } else {
-            Contact->ScrollRemX = 0;
-            Contact->ScrollRemY = 0;
-            repX = AmtContactSmoothCoord(candX, Contact->ReportX, alphaNum);
-            repY = AmtContactSmoothCoord(candY, Contact->ReportY, alphaNum);
         }
     }
 
@@ -452,7 +488,8 @@ AmtContactUpdate(
         rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz);
 
     INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity);
-    INT alphaNum          = AmtContactAlphaForVelocity(velocity);
+    INT alphaNum          = AmtContactContinuousAlpha(
+        rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz);
 
     if (Contact->PendingFirstSample) {
         if (retapSeededFirstSample) {
