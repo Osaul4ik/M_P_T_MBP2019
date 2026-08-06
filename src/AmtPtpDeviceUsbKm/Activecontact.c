@@ -10,7 +10,7 @@
 
 // Velocity buckets choose deadzone and smoothing.
 #define VELOCITY_SLOW_UNITS_PER_SEC   120
-#define VELOCITY_FAST_UNITS_PER_SEC   850
+#define VELOCITY_FAST_UNITS_PER_SEC   950
 
 // Separate FAST threshold for two-finger scroll gestures. Decoupled from
 // the cursor (single-finger) threshold above so scroll deadzone/scale
