@@ -5,12 +5,12 @@
 
 // Adaptive deadzone reduces steppy two-finger scrolling.
 #define XY_DEADZONE_UNITS          1  // fallback: VELOCITY_UNKNOWN/MEDIUM
-#define XY_DEADZONE_UNITS_SLOW     2  // near-stationary: filter sensor noise
+#define XY_DEADZONE_UNITS_SLOW     3  // near-stationary: absorb tilt/small-lift drift
 #define XY_DEADZONE_UNITS_FAST     0  // fast motion: no deadzone lag
 
 // Velocity buckets choose deadzone and smoothing.
-#define VELOCITY_SLOW_UNITS_PER_SEC   50
-#define VELOCITY_FAST_UNITS_PER_SEC   400
+#define VELOCITY_SLOW_UNITS_PER_SEC   150
+#define VELOCITY_FAST_UNITS_PER_SEC   1000
 
 typedef enum _CONTACT_VELOCITY_BUCKET
 {
@@ -22,7 +22,7 @@ typedef enum _CONTACT_VELOCITY_BUCKET
 
 #define SMOOTHING_ALPHA_DEN  8
 // Lower smoothing reduces slow-speed jitter.
-#define SMOOTHING_ALPHA_NUM_SLOW  3  // stronger smoothing, near-stationary
+#define SMOOTHING_ALPHA_NUM_SLOW  2  // stronger smoothing, near-stationary
 
 // Continuous alpha ramp endpoints (see AmtContactContinuousAlpha below).
 #define ALPHA_NUM_MIN  SMOOTHING_ALPHA_NUM_SLOW  // heaviest blend, near-stationary
@@ -82,8 +82,17 @@ AmtContactClassifyVelocity(
 }
 
 static inline INT
-AmtContactDeadzoneForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity)
+AmtContactDeadzoneForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity, _In_ BOOLEAN GestureActive)
 {
+    if (GestureActive) {
+        // Scroll frames keep the original, small deadzone regardless of
+        // velocity bucket - a slow deliberate two-finger scroll must not
+        // go steppy. Only single-finger cursor movement (below) gets the
+        // larger tilt/small-lift deadzone.
+        return (Velocity == VELOCITY_FAST) ? XY_DEADZONE_UNITS_FAST
+                                            : XY_DEADZONE_UNITS;
+    }
+
     switch (Velocity) {
     case VELOCITY_SLOW: return XY_DEADZONE_UNITS_SLOW;
     case VELOCITY_FAST: return XY_DEADZONE_UNITS_FAST;
@@ -487,7 +496,7 @@ AmtContactUpdate(
     CONTACT_VELOCITY_BUCKET velocity = AmtContactClassifyVelocity(
         rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz);
 
-    INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity);
+    INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity, gestureActive);
     INT alphaNum          = AmtContactContinuousAlpha(
         rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz);
 
