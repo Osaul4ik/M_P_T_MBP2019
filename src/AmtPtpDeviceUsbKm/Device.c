@@ -240,15 +240,6 @@ AmtPtpEvtDeviceD0Entry(
     pDeviceContext->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
     AmtContactPoolInit(pDeviceContext->ActiveContacts);
 
-    // DIAGNOSTIC: measure the pool's real runtime address/alignment.
-    // ActiveContacts is allocated once in AmtPtpDeviceUsbKmCreateDevice,
-    // so the address is stable across power cycles; re-measuring here
-    // each D0Entry is just cheap and harmless, not required for correctness.
-    // Not #if DBG-gated - readable via WinDbg Local Kernel Debugging on a
-    // retail build. See Driver.h for the read-side WinDbg commands.
-    g_ActiveContactsAddress     = (ULONG_PTR)pDeviceContext->ActiveContacts;
-    g_ActiveContactsAlignOffset = (ULONG)(g_ActiveContactsAddress % 64);
-
     // Zero RecentLifts on D0Entry to prevent stale retap-smoothing
     // hints from a previous power session.
     RtlZeroMemory(&pDeviceContext->RecentLifts, sizeof(pDeviceContext->RecentLifts));

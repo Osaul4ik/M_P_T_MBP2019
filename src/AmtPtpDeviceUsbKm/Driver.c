@@ -11,13 +11,6 @@
 #pragma alloc_text (PAGE, AmtPtpDeviceUsbKmEvtDriverContextCleanup)
 #endif
 
-// DIAGNOSTIC: real runtime address/alignment of the ActiveContact pool.
-// Written once per D0Entry (Device.c). Always compiled (not DBG-only) so
-// it can be inspected on a normal retail build via WinDbg Local Kernel
-// Debugging - see the comment on the extern declarations in Driver.h.
-volatile ULONG_PTR g_ActiveContactsAddress    = 0;
-volatile ULONG     g_ActiveContactsAlignOffset = 0xFFFFFFFF; // sentinel: not yet measured
-
 NTSTATUS
 DriverEntry(
     _In_ PDRIVER_OBJECT  DriverObject,
