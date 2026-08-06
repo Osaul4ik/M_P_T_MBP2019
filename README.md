@@ -16,6 +16,8 @@ The driver has been extensively tested on **MacBook Pro 16,1 (2019) and Air 2015
 
 **Haptic feedback is not currently implemented. The Force Touch trackpad's actuator requires a calibration sequence to drive properly, and that process hasn't been reverse-engineered yet — so this feature is blocked until that's figured out.**
 
+> **Recommended:** Set the Windows pointer speed to **8**.
+
 ---
 
 # Features
