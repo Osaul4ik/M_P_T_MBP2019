@@ -1,6 +1,7 @@
 // HID descriptor and report handling.
 
 #include "Driver.h"
+#include <ntintsafe.h>
 #include "hid.tmh"
 
 // Centralize HID report-size validation.
@@ -9,9 +10,22 @@ HidValidateReportSize(
 	_In_ PHID_XFER_PACKET pHidPacket,
 	_In_ size_t           requiredSize)
 {
+	ULONG    requiredSizeUlong;
+	NTSTATUS convertStatus;
+
+	// requiredSize is always sizeof(...) of one of our own fixed report
+	// structs at every call site (never attacker-controlled), so this can
+	// never legitimately overflow ULONG - RtlSizeTToULong is used instead
+	// of a raw (ULONG) cast so a future call site that DOES pass a wider
+	// value fails safely instead of silently truncating.
+	convertStatus = RtlSizeTToULong(requiredSize, &requiredSizeUlong);
+	if (!NT_SUCCESS(convertStatus)) {
+		return FALSE;
+	}
+
 	// Guard against NULL buffers from user input.
 	return (pHidPacket->reportBuffer != NULL) &&
-	       (pHidPacket->reportBufferLen >= (ULONG)requiredSize);
+	       (pHidPacket->reportBufferLen >= requiredSizeUlong);
 }
 
 #ifndef _AAPL_HID_DESCRIPTOR_H_
@@ -63,6 +77,13 @@ AmtPtpGetHidDescriptor(
 
 	// All supported products use the same fixed HID descriptor.
 	szCopy = AmtPtpT2DefaultHidDescriptor.bLength;
+
+	// Internal invariant: bLength must never claim more bytes than the
+	// struct we're about to copy out of - a mismatch here would be an
+	// out-of-bounds read baked into the static descriptor definition
+	// above, not something request input can trigger.
+	NT_ASSERT(szCopy <= sizeof(AmtPtpT2DefaultHidDescriptor));
+
 	status = WdfMemoryCopyFromBuffer(
 		requestMemory,
 		0,
@@ -91,6 +112,11 @@ AmtPtpGetDeviceAttribs(
 	NTSTATUS status = STATUS_SUCCESS;
 	PDEVICE_CONTEXT pContext = DeviceGetContext(Device);
 	PHID_DEVICE_ATTRIBUTES pDeviceAttributes = NULL;
+
+	// WDF guarantees a non-NULL context for a device created with this
+	// context type; a NULL here would mean the object attributes in
+	// AmtPtpDeviceUsbKmCreateDevice regressed.
+	NT_ASSERT(pContext != NULL);
 
 	status = WdfRequestRetrieveOutputBuffer(
 		Request,
@@ -144,6 +170,13 @@ AmtPtpGetReportDescriptor(
 		goto exit;
 	}
 
+	// Internal invariant: wReportLength is initialized from
+	// sizeof(AmtPtpT2ReportDescriptor) above (see the descriptor's static
+	// init). If the two ever drift apart, the copy below reads past the
+	// end of AmtPtpT2ReportDescriptor - catch that in debug builds rather
+	// than silently leaking adjacent kernel memory into the report.
+	NT_ASSERT(szCopy == sizeof(AmtPtpT2ReportDescriptor));
+
 	status = WdfMemoryCopyFromBuffer(
 		requestMemory,
 		0,
@@ -170,7 +203,6 @@ AmtPtpReportFeatures(
 )
 {
 	NTSTATUS status;
-	PDEVICE_CONTEXT pDeviceContext;
 	PHID_XFER_PACKET pHidPacket;
 	WDF_REQUEST_PARAMETERS RequestParameters;
 	size_t ReportSize;
@@ -178,7 +210,12 @@ AmtPtpReportFeatures(
 	PAGED_CODE();
 
 	status = STATUS_SUCCESS;
-	pDeviceContext = DeviceGetContext(Device);
+
+	// AmtPtpReportFeatures (GET_FEATURE) doesn't need per-device state -
+	// unlike AmtPtpSetFeatures, every case below only reads/writes the
+	// caller's buffer. Dropping the unused DeviceGetContext() call that
+	// used to sit here (dead code / unused local).
+	UNREFERENCED_PARAMETER(Device);
 
 	WDF_REQUEST_PARAMETERS_INIT(&RequestParameters);
 	WdfRequestGetParameters(Request, &RequestParameters);
@@ -266,6 +303,7 @@ AmtPtpSetFeatures(
 
 	status = STATUS_SUCCESS;
 	pDeviceContext = DeviceGetContext(Device);
+	NT_ASSERT(pDeviceContext != NULL);
 
 	WDF_REQUEST_PARAMETERS_INIT(&RequestParameters);
 	WdfRequestGetParameters(Request, &RequestParameters);
@@ -322,8 +360,15 @@ AmtPtpSetFeatures(
 				}
 				default:
 				{
-					// Unknown Mode: previously fell through silently claiming success.
-					break;
+					// Unknown Mode: previously fell through silently claiming
+					// success (STATUS_SUCCESS left over from function entry).
+					// The Mode field is a parameter within an otherwise-
+					// supported report, not an unsupported report itself -
+					// STATUS_INVALID_PARAMETER reflects that distinction and
+					// lets the caller/HID class driver detect the rejection
+					// instead of believing the mode switch took effect.
+					status = STATUS_INVALID_PARAMETER;
+					goto exit;
 				}
 			}
 
