@@ -95,14 +95,15 @@ AmtMatchBuildCandidates(
         LONG   bestDistSq   = -1;
 
         for (size_t p = 0; p < MAX_CONTACTS; p++) {
-            if (Pool[p].State != CONTACT_ACTIVE)
+            const ACTIVE_CONTACT* poolEntry = &Pool[p];
+            if (poolEntry->State != CONTACT_ACTIVE)
                 continue;
-            if (Pool[p].LastSlotHint != rc->SlotIndex)
+            if (poolEntry->LastSlotHint != rc->SlotIndex)
                 continue;
 
-            INT dxAbs = (INT)rc->X - (INT)Pool[p].ReportX;
+            INT dxAbs = (INT)rc->X - (INT)poolEntry->ReportX;
             if (dxAbs < 0) dxAbs = -dxAbs;
-            INT dyAbs = (INT)rc->Y - (INT)Pool[p].ReportY;
+            INT dyAbs = (INT)rc->Y - (INT)poolEntry->ReportY;
             if (dyAbs < 0) dyAbs = -dyAbs;
 
             if (dxAbs > TIP_DROP_MAX_REPOSITION_DELTA ||
@@ -127,16 +128,19 @@ AmtMatchBuildCandidates(
         }
 
         // Bridge candidate through; real coords if moving, anchor if stationary.
-        INT dxMove = (INT)rc->X - (INT)Pool[bestPoolIdx].ReportX;
-        INT dyMove = (INT)rc->Y - (INT)Pool[bestPoolIdx].ReportY;
+        USHORT anchorX = Pool[bestPoolIdx].ReportX;
+        USHORT anchorY = Pool[bestPoolIdx].ReportY;
+
+        INT dxMove = (INT)rc->X - (INT)anchorX;
+        INT dyMove = (INT)rc->Y - (INT)anchorY;
         if (dxMove < 0) dxMove = -dxMove;
         if (dyMove < 0) dyMove = -dyMove;
 
         BOOLEAN isStationary = (dxMove <= TIP_DROP_STATIONARY_DELTA) &&
                                (dyMove <= TIP_DROP_STATIONARY_DELTA);
 
-        cand.X = isStationary ? Pool[bestPoolIdx].ReportX : rc->X;
-        cand.Y = isStationary ? Pool[bestPoolIdx].ReportY : rc->Y;
+        cand.X = isStationary ? anchorX : rc->X;
+        cand.Y = isStationary ? anchorY : rc->Y;
 
         // Only the stationary bridge reports a stale position.
         cand.TipDropApplied = isStationary ? 1 : 0;
@@ -187,18 +191,19 @@ AmtMatchCorrespond(
             continue;
 
         for (size_t p = 0; p < MAX_CONTACTS; p++) {
-            if (Pool[p].State != CONTACT_ACTIVE)
+            const ACTIVE_CONTACT* poolEntry = &Pool[p];
+            if (poolEntry->State != CONTACT_ACTIVE)
                 continue;
 
-            INT dx = (INT)cand->X - (INT)Pool[p].ReportX;
-            INT dy = (INT)cand->Y - (INT)Pool[p].ReportY;
+            INT dx = (INT)cand->X - (INT)poolEntry->ReportX;
+            INT dy = (INT)cand->Y - (INT)poolEntry->ReportY;
             LONG dist = (LONG)dx * dx + (LONG)dy * dy; // squared distance
 
             pairs[pairCount].candIdx       = ci;
             pairs[pairCount].poolIdx       = (UCHAR)p;
             pairs[pairCount].cost          = dist;
-            pairs[pairCount].shapeDist     = AmtMatchShapeDistance(cand, &Pool[p]);
-            pairs[pairCount].slotHintMatch = (cand->SlotIndex == Pool[p].LastSlotHint);
+            pairs[pairCount].shapeDist     = AmtMatchShapeDistance(cand, poolEntry);
+            pairs[pairCount].slotHintMatch = (cand->SlotIndex == poolEntry->LastSlotHint);
             pairCount++;
         }
     }

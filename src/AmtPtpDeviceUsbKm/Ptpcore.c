@@ -259,12 +259,14 @@ PTPCore_ProcessFrame(
     // (matched via LastSlotHint) in Phase A instead of killing them.
     BOOLEAN palmLocalFrozen[MAX_CONTACTS] = { 0 };
     for (UCHAR ci = 0; ci < candidates.Count; ci++) {
-        if (!candidates.Candidates[ci].PalmLocal)
+        const MATCH_CANDIDATE* cand = &candidates.Candidates[ci];
+        if (!cand->PalmLocal)
             continue;
 
+        USHORT slotIndex = cand->SlotIndex;
         for (size_t p = 0; p < MAX_CONTACTS; p++) {
             if (pCtx->ActiveContacts[p].State == CONTACT_ACTIVE &&
-                pCtx->ActiveContacts[p].LastSlotHint == candidates.Candidates[ci].SlotIndex)
+                pCtx->ActiveContacts[p].LastSlotHint == slotIndex)
             {
                 palmLocalFrozen[p] = TRUE;
                 break;
@@ -280,6 +282,7 @@ PTPCore_ProcessFrame(
 
     for (UCHAR u = 0; u < matchResult.UnmatchedCount; u++) {
         size_t p = matchResult.UnmatchedPoolIndices[u];
+        PACTIVE_CONTACT ac = &pCtx->ActiveContacts[p];
 
         if (palmSuppressedFrame || palmLocalFrozen[p]) {
             // Still physically down but classified as palm or in the edge
@@ -294,18 +297,17 @@ PTPCore_ProcessFrame(
             // correct spatial match on re-qualification - killing and
             // re-birthing a finger that never left the pad. Refresh
             // LastSeenQpc directly.
-            pCtx->ActiveContacts[p].LastSeenQpc = NowQpc;
+            ac->LastSeenQpc = NowQpc;
 
-            AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
-                               pCtx->ActiveContacts[p].ReportX,
-                               pCtx->ActiveContacts[p].ReportY,
+            AmtCoreEmitContact(pCtx, OutResult, ac->ContactID,
+                               ac->ReportX, ac->ReportY,
                                CONTACT_PHASE_MOVE, FALSE);
             continue;
         }
 
         ULONG  oldId; USHORT oldX, oldY;
 
-        if (pCtx->ActiveContacts[p].WasInGesture) {
+        if (ac->WasInGesture) {
             // Gesture-tainted: lift immediately. The previous fake-MOVE-then-UP
             // deferral delayed the real UP by up to 4 frames (~33ms @ 120Hz),
             // breaking 3-finger swipe completion and 2-finger soft taps.
@@ -362,10 +364,11 @@ PTPCore_ProcessFrame(
 
             size_t p = matchResult.CorrespondingPoolIndex[ci];
             if (p == MATCH_NO_CORRESPONDENCE) continue;
-            if (pCtx->ActiveContacts[p].LastSeenQpc == 0) continue; // born this frame
+            PACTIVE_CONTACT ac = &pCtx->ActiveContacts[p];
+            if (ac->LastSeenQpc == 0) continue; // born this frame
 
-            USHORT oldX = pCtx->ActiveContacts[p].ReportX;
-            USHORT oldY = pCtx->ActiveContacts[p].ReportY;
+            USHORT oldX = ac->ReportX;
+            USHORT oldY = ac->ReportY;
 
             ULONG oldId;
             AmtContactRebindIdentity(pCtx->ActiveContacts, p, &pCtx->NextContactId, &oldId);
@@ -380,7 +383,7 @@ PTPCore_ProcessFrame(
             // forcing it to 0, the new ContactID would report MOVE instead
             // of DOWN, defeating the non-snapping soft-tap path.
             // AmtContactUpdate overwrites it with real NowQpc shortly after.
-            pCtx->ActiveContacts[p].LastSeenQpc = 0;
+            ac->LastSeenQpc = 0;
         }
     }
 
@@ -440,8 +443,9 @@ PTPCore_ProcessFrame(
         if (candidates.Candidates[pc].PalmLocal) continue;
         size_t pp = matchResult.CorrespondingPoolIndex[pc];
         if (pp == MATCH_NO_CORRESPONDENCE) continue;
-        candidateJustBorn[pc]    = (pCtx->ActiveContacts[pp].LastSeenQpc == 0);
-        candidateWasTainted[pc]  = pCtx->ActiveContacts[pp].WasInGesture;
+        const ACTIVE_CONTACT* acPre = &pCtx->ActiveContacts[pp];
+        candidateJustBorn[pc]    = (acPre->LastSeenQpc == 0);
+        candidateWasTainted[pc]  = acPre->WasInGesture;
         candidateIsTrueBirth[pc] = candidateJustBorn[pc] && !rebindThisFrame[pp];
     }
 
@@ -451,6 +455,7 @@ PTPCore_ProcessFrame(
 
         size_t p = matchResult.CorrespondingPoolIndex[ci];
         if (p == MATCH_NO_CORRESPONDENCE) continue;
+        PACTIVE_CONTACT c = &pCtx->ActiveContacts[p];
 
         BOOLEAN justBorn = candidateJustBorn[ci];
 
@@ -493,11 +498,11 @@ PTPCore_ProcessFrame(
         }
 
         if (shouldTaint) {
-            pCtx->ActiveContacts[p].WasInGesture = TRUE;
+            c->WasInGesture = TRUE;
         }
 
         USHORT repX, repY;
-        AmtContactUpdate(&pCtx->ActiveContacts[p], cand->X, cand->Y,
+        AmtContactUpdate(c, cand->X, cand->Y,
                          cand->Major, cand->Minor, cand->Pressure,
                          cand->SlotIndex, NowQpc, pCtx->PerfFrequency.QuadPart,
                          (BOOLEAN)(aliveCount == 1), gestureThisFrame,
@@ -524,7 +529,7 @@ PTPCore_ProcessFrame(
         // is unaffected.
         BOOLEAN reportConfident = TRUE;
 
-        AmtCoreEmitContact(pCtx, OutResult, pCtx->ActiveContacts[p].ContactID,
+        AmtCoreEmitContact(pCtx, OutResult, c->ContactID,
                            repX, repY,
                            justBorn ? CONTACT_PHASE_DOWN : CONTACT_PHASE_MOVE,
                            reportConfident);

@@ -5,16 +5,14 @@
 
 // Adaptive deadzone reduces steppy two-finger scrolling.
 #define XY_DEADZONE_UNITS          1  // fallback: VELOCITY_UNKNOWN/MEDIUM
-#define XY_DEADZONE_UNITS_SLOW     4  // near-stationary: absorb tilt/small-lift drift
+#define XY_DEADZONE_UNITS_SLOW     5  // near-stationary: absorb tilt/small-lift drift
 #define XY_DEADZONE_UNITS_FAST     0  // fast motion: no deadzone lag
 
 // Velocity buckets choose deadzone and smoothing.
 #define VELOCITY_SLOW_UNITS_PER_SEC   120
-#define VELOCITY_FAST_UNITS_PER_SEC   950
+#define VELOCITY_FAST_UNITS_PER_SEC   800
 
-// Separate FAST threshold for two-finger scroll gestures. Decoupled from
-// the cursor (single-finger) threshold above so scroll deadzone/scale
-// behavior can be tuned independently of pointer smoothing.
+// Separate FAST threshold for two-finger scroll gestures. 
 #define VELOCITY_FAST_SCROLL_UNITS_PER_SEC   1200
 
 typedef enum _CONTACT_VELOCITY_BUCKET
