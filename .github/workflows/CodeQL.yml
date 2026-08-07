@@ -11,32 +11,12 @@ env:
   DRIVER_NAME: AmtPtpDeviceUsbKm
   CONFIGURATION: Release
   PLATFORM: x64
-  # Версії зафіксовані під WindowsTargetPlatformVersion=10.0.26100.0
-  # (Windows 11 24H2 SDK), яку білдить основний workflow. Це
-  # задокументована Microsoft пара версій (гілка WHCP_24H2):
-  # https://learn.microsoft.com/windows-hardware/drivers/devtest/static-tools-and-codeql
   CODEQL_CLI_VERSION: 2.15.4
   CODEQL_DRIVERS_PACK_VERSION: 1.1.0
 
 jobs:
   codeql:
     runs-on: windows-2022
-
-    # =========================================================================
-    # SDV (Static Driver Verifier) офіційно deprecated і відсутній у WDK
-    # новіших за build 26017 / у Windows 24H2 WDK - тобто в тому WDK, який
-    # ставить основний build workflow. Microsoft прямо рекомендує CodeQL
-    # як заміну для аналізу драйверів іде впред:
-    # https://learn.microsoft.com/windows-hardware/drivers/devtest/using-sdv-and-the-sample-drivers
-    #
-    # Пак microsoft/windows-drivers несе спеціалізовані запити саме під
-    # KMDF/WDM-патерни (IRQL, парність lock acquire/release, PnP/Power
-    # callback-послідовності, deprecated pool API тощо) - той самий клас
-    # проблем, який раніше ловив SDV.
-    #
-    # Окремий job без підпису драйвера - секрети не потрібні, працює й
-    # на PR з форків.
-    # =========================================================================
     permissions:
       contents: read
       security-events: write
@@ -55,11 +35,6 @@ jobs:
         Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet /norestart" -Wait
       shell: pwsh
 
-    # =====================================================================
-    # Завантаження CodeQL CLI (не github/codeql-action - той не має
-    # готового драйверного C++ query pack; беремо офіційний CLI-архів
-    # напряму з github/codeql-cli-binaries).
-    # =====================================================================
     - name: Download CodeQL CLI
       run: |
         $ErrorActionPreference = "Stop"
@@ -86,11 +61,7 @@ jobs:
         & "$env:CODEQL_DIR\codeql.exe" pack download "microsoft/windows-drivers@$env:CODEQL_DRIVERS_PACK_VERSION"
       shell: pwsh
 
-    # =====================================================================
-    # Створення CodeQL-бази: CodeQL сам перехоплює компіляцію під час
-    # вказаної build-команди (msbuild rebuild цього vcxproj) і індексує
-    # реальний скомпільований код, а не парсить файли окремо.
-    # =====================================================================
+
     - name: Build CodeQL database
       run: |
         $ErrorActionPreference = "Stop"
@@ -105,11 +76,6 @@ jobs:
         Add-Content -Path $env:GITHUB_ENV -Value "CODEQL_DB=$dbPath"
       shell: pwsh
 
-    # =====================================================================
-    # recommended.qls - широкий набір перевірок під типові драйверні й
-    # C/C++ баги (той самий пак містить mustrun.qls/mustfix.qls для
-    # офіційної WHCP-сертифікації, якщо колись знадобиться).
-    # =====================================================================
     - name: Analyze with CodeQL
       run: |
         & "$env:CODEQL_DIR\codeql.exe" database analyze "$env:CODEQL_DB" `
@@ -126,8 +92,6 @@ jobs:
         name: codeql-results
         path: ${{ env.SARIF_PATH }}
 
-    # Публікує результати у вкладку Security > Code scanning репозиторію,
-    # з анотаціями прямо в діафі PR.
     - name: Upload SARIF to GitHub code scanning
       uses: github/codeql-action/upload-sarif@v3
       with:

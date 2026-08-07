@@ -78,10 +78,12 @@ AmtRecentLiftFindNearby(
         }
     }
 
-    if (found) {
-        *OutX = bestX;
-        *OutY = bestY;
-    }
+    // Always written (even when !found, in which case these are just the
+    // zero-initialized defaults above) so OutX/OutY satisfy their _Out_
+    // contract on every path. Callers gate on the return value before
+    // reading these, so this doesn't change any observed behavior.
+    *OutX = bestX;
+    *OutY = bestY;
     return found;
 }
 

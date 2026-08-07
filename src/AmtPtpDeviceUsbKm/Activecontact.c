@@ -49,15 +49,16 @@ AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal, _In_ INT alphaNum
     return (USHORT)blended;
 }
 
-// Estimate motion speed and (optionally) the continuous smoothing alpha
-// from a single distance/unitsPerSec computation, shared between the two
-// consumers below instead of each recomputing dx/dy/distance separately.
+// Estimate motion speed and the continuous smoothing alpha from a single
+// distance/unitsPerSec computation, shared between the two consumers below
+// instead of each recomputing dx/dy/distance separately.
 //
 // Bucket uses FastThresholdUnitsPerSec (caller picks cursor vs. scroll
 // threshold). Alpha always ramps against the cursor thresholds
-// (VELOCITY_SLOW/FAST_UNITS_PER_SEC), since it's only ever consumed on the
-// non-gesture (single-finger) path - callers pass NeedAlpha = FALSE for
-// gesture frames to skip that extra work entirely.
+// (VELOCITY_SLOW/FAST_UNITS_PER_SEC) regardless of which threshold the
+// bucket used - it's only ever consumed by the caller on the non-gesture
+// (single-finger) path, but is always computed and written here so
+// OutAlphaNum is unconditionally valid on return.
 static CONTACT_VELOCITY_BUCKET
 AmtContactEvaluateVelocity(
     _In_  USHORT   rawX,
@@ -67,13 +68,12 @@ AmtContactEvaluateVelocity(
     _In_  LONGLONG DtQpcTicks,
     _In_  LONGLONG PerfFrequencyHz,
     _In_  LONGLONG FastThresholdUnitsPerSec,
-    _In_  BOOLEAN  NeedAlpha,
-    _Out_ INT*     OutAlphaNum  // untouched when NeedAlpha == FALSE
+    _Out_ INT*     OutAlphaNum
 )
 {
     if (DtQpcTicks <= 0 || PerfFrequencyHz <= 0) {
         // No timestamp basis yet - same default as before: raw/unknown.
-        if (NeedAlpha) *OutAlphaNum = ALPHA_NUM_MAX;
+        *OutAlphaNum = ALPHA_NUM_MAX;
         return VELOCITY_UNKNOWN;
     }
 
@@ -92,22 +92,25 @@ AmtContactEvaluateVelocity(
         bucket = VELOCITY_MEDIUM;
     }
 
-    if (NeedAlpha) {
-        // Continuous ramp between ALPHA_NUM_MIN (at/below
-        // VELOCITY_SLOW_UNITS_PER_SEC) and ALPHA_NUM_MAX (at/above
-        // VELOCITY_FAST_UNITS_PER_SEC, bit-identical to raw), so a speed
-        // anywhere in between gets a proportionally lighter blend instead
-        // of snapping between two fixed states at a single threshold.
-        if (unitsPerSec <= VELOCITY_SLOW_UNITS_PER_SEC) {
-            *OutAlphaNum = ALPHA_NUM_MIN;
-        } else if (unitsPerSec >= VELOCITY_FAST_UNITS_PER_SEC) {
-            *OutAlphaNum = ALPHA_NUM_MAX;
-        } else {
-            LONGLONG span   = VELOCITY_FAST_UNITS_PER_SEC - VELOCITY_SLOW_UNITS_PER_SEC;
-            LONGLONG offset = unitsPerSec - VELOCITY_SLOW_UNITS_PER_SEC;
-            *OutAlphaNum = ALPHA_NUM_MIN +
-                           (INT)(((ALPHA_NUM_MAX - ALPHA_NUM_MIN) * offset) / span);
-        }
+    // Continuous ramp between ALPHA_NUM_MIN (at/below
+    // VELOCITY_SLOW_UNITS_PER_SEC) and ALPHA_NUM_MAX (at/above
+    // VELOCITY_FAST_UNITS_PER_SEC, bit-identical to raw), so a speed
+    // anywhere in between gets a proportionally lighter blend instead
+    // of snapping between two fixed states at a single threshold.
+    //
+    // Always computed so OutAlphaNum satisfies its _Out_ contract on
+    // every path - the extra work here is a couple of compares plus a
+    // division, and callers on the gesture-frame path simply don't read
+    // the result afterward.
+    if (unitsPerSec <= VELOCITY_SLOW_UNITS_PER_SEC) {
+        *OutAlphaNum = ALPHA_NUM_MIN;
+    } else if (unitsPerSec >= VELOCITY_FAST_UNITS_PER_SEC) {
+        *OutAlphaNum = ALPHA_NUM_MAX;
+    } else {
+        LONGLONG span   = VELOCITY_FAST_UNITS_PER_SEC - VELOCITY_SLOW_UNITS_PER_SEC;
+        LONGLONG offset = unitsPerSec - VELOCITY_SLOW_UNITS_PER_SEC;
+        *OutAlphaNum = ALPHA_NUM_MIN +
+                       (INT)(((ALPHA_NUM_MAX - ALPHA_NUM_MIN) * offset) / span);
     }
 
     return bucket;
@@ -485,14 +488,15 @@ AmtContactUpdate(
 
     // Scroll gestures classify FAST against their own threshold, decoupled
     // from single-finger cursor movement below. Alpha is only meaningful
-    // on the non-gesture path (see AmtContactCommitSample), so skip
-    // computing it on gesture frames entirely.
+    // on the non-gesture path (see AmtContactCommitSample) - it's still
+    // computed unconditionally by AmtContactEvaluateVelocity, but simply
+    // goes unread here when gestureActive.
     LONGLONG fastThreshold = gestureActive ? VELOCITY_FAST_SCROLL_UNITS_PER_SEC
                                             : VELOCITY_FAST_UNITS_PER_SEC;
-    INT alphaNum = ALPHA_NUM_MAX; // unused when gestureActive
+    INT alphaNum;
     CONTACT_VELOCITY_BUCKET velocity = AmtContactEvaluateVelocity(
         rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz,
-        fastThreshold, /* NeedAlpha */ !gestureActive, &alphaNum);
+        fastThreshold, &alphaNum);
 
     INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity, gestureActive);
 

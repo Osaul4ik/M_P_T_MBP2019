@@ -7,6 +7,11 @@
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (PAGE, AmtPtpDeviceUsbKmCreateDevice)
 #pragma alloc_text (PAGE, AmtPtpDeviceUsbKmEvtDevicePrepareHardware)
+// Both PASSIVE_LEVEL-only and both already call PAGED_CODE(); previously
+// missing here, which left them PAGED_CODE()-asserting from a non-paged
+// segment (PREfast C28172).
+#pragma alloc_text (PAGE, AmtPtpEvtDeviceD0Exit)
+#pragma alloc_text (PAGE, SelectInterruptInterface)
 #endif
 
 #define ACTIVE_CONTACTS_ALIGNMENT 64

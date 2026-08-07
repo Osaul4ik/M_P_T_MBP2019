@@ -4,6 +4,13 @@
 #include <ntintsafe.h>
 #include "hid.tmh"
 
+#ifdef ALLOC_PRAGMA
+// AmtPtpReportFeatures is the only function in this file that calls
+// PAGED_CODE(); without this it was PAGED_CODE()-asserting from a
+// non-paged segment (PREfast C28172).
+#pragma alloc_text (PAGE, AmtPtpReportFeatures)
+#endif
+
 // Centralize HID report-size validation.
 static __inline BOOLEAN
 HidValidateReportSize(
