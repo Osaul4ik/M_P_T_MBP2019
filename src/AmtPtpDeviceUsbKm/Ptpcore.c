@@ -63,15 +63,13 @@ AmtRecentLiftFindNearby(
         if (NowQpc - e->LiftQpc > WindowTicks)
             continue;
 
-        INT dx = (INT)CandX - (INT)e->X;
-        INT dy = (INT)CandY - (INT)e->Y;
-        if (dx < 0) dx = -dx;
-        if (dy < 0) dy = -dy;
+        INT dx = AmtAbsDelta((INT)CandX, (INT)e->X);
+        INT dy = AmtAbsDelta((INT)CandY, (INT)e->Y);
 
         if (dx > RETAP_MAX_DISTANCE || dy > RETAP_MAX_DISTANCE)
             continue;
 
-        LONG distSq = (LONG)dx * dx + (LONG)dy * dy;
+        LONG distSq = AmtDistSq(dx, dy);
         if (!found || distSq < bestDistSq) {
             bestDistSq = distSq;
             bestX      = e->X;
@@ -586,7 +584,7 @@ PTPCore_ProcessFrame(
             for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
                 INT dx = (INT)RawFrame->Contacts[fi].X - (INT)pCtx->ForceTouchAnchorX;
                 INT dy = (INT)RawFrame->Contacts[fi].Y - (INT)pCtx->ForceTouchAnchorY;
-                LONG distSq = (LONG)dx * dx + (LONG)dy * dy;
+                LONG distSq = AmtDistSq(dx, dy);
                 if (bestDistSq < 0 || distSq < bestDistSq) {
                     bestDistSq = distSq;
                     bestDx     = dx;

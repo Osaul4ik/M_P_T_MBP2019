@@ -30,12 +30,9 @@ AmtMatchShapeDistance(
     _In_ const ACTIVE_CONTACT*  Contact
 )
 {
-    INT dMajor = (INT)Cand->Major - (INT)Contact->LastMajor;
-    if (dMajor < 0) dMajor = -dMajor;
-    INT dMinor = (INT)Cand->Minor - (INT)Contact->LastMinor;
-    if (dMinor < 0) dMinor = -dMinor;
-    INT dPressure = (INT)Cand->Pressure - (INT)Contact->LastPressure;
-    if (dPressure < 0) dPressure = -dPressure;
+    INT dMajor    = AmtAbsDelta((INT)Cand->Major, (INT)Contact->LastMajor);
+    INT dMinor    = AmtAbsDelta((INT)Cand->Minor, (INT)Contact->LastMinor);
+    INT dPressure = AmtAbsDelta((INT)Cand->Pressure, (INT)Contact->LastPressure);
 
     return (LONG)dMajor + dMinor + dPressure;
 }
@@ -133,16 +130,14 @@ AmtMatchBuildCandidates(
             if (poolEntry->State != CONTACT_ACTIVE)
                 continue;
 
-            INT dxAbs = rcX - (INT)poolEntry->ReportX;
-            if (dxAbs < 0) dxAbs = -dxAbs;
-            INT dyAbs = rcY - (INT)poolEntry->ReportY;
-            if (dyAbs < 0) dyAbs = -dyAbs;
+            INT dxAbs = AmtAbsDelta(rcX, (INT)poolEntry->ReportX);
+            INT dyAbs = AmtAbsDelta(rcY, (INT)poolEntry->ReportY);
 
             if (dxAbs > TIP_DROP_MAX_REPOSITION_DELTA ||
                 dyAbs > TIP_DROP_MAX_REPOSITION_DELTA)
                 continue;
 
-            LONG    distSq        = (LONG)dxAbs * dxAbs + (LONG)dyAbs * dyAbs;
+            LONG    distSq        = AmtDistSq(dxAbs, dyAbs);
             BOOLEAN slotHintMatch = (poolEntry->LastSlotHint == rc->SlotIndex);
 
             if (bestPoolIdx == MAX_CONTACTS) {
@@ -183,10 +178,8 @@ AmtMatchBuildCandidates(
         USHORT anchorX = Pool[bestPoolIdx].ReportX;
         USHORT anchorY = Pool[bestPoolIdx].ReportY;
 
-        INT dxMove = (INT)rc->X - (INT)anchorX;
-        INT dyMove = (INT)rc->Y - (INT)anchorY;
-        if (dxMove < 0) dxMove = -dxMove;
-        if (dyMove < 0) dyMove = -dyMove;
+        INT dxMove = AmtAbsDelta((INT)rc->X, (INT)anchorX);
+        INT dyMove = AmtAbsDelta((INT)rc->Y, (INT)anchorY);
 
         BOOLEAN isStationary = (dxMove <= TIP_DROP_STATIONARY_DELTA) &&
                                (dyMove <= TIP_DROP_STATIONARY_DELTA);
@@ -249,7 +242,7 @@ AmtMatchCorrespond(
 
             INT dx = (INT)cand->X - (INT)poolEntry->ReportX;
             INT dy = (INT)cand->Y - (INT)poolEntry->ReportY;
-            LONG dist = (LONG)dx * dx + (LONG)dy * dy; // squared distance
+            LONG dist = AmtDistSq(dx, dy); // squared distance
 
             pairs[pairCount].candIdx       = ci;
             pairs[pairCount].poolIdx       = (UCHAR)p;

@@ -3,12 +3,6 @@
 #include "Driver.h"
 #include "Input.h"
 
-static inline INT
-AmtInputRawToInteger(_In_ USHORT x)
-{
-    return (signed short)x;
-}
-
 static inline USHORT
 AmtInputClampCoord(_In_ INT raw, _In_ INT minVal, _In_ INT maxVal)
 {
@@ -46,9 +40,9 @@ AmtInputParseFrame(
         const struct TRACKPAD_FINGER* f =
             (const struct TRACKPAD_FINGER*)(FrameBase + i * FingerSize);
 
-        INT major = AmtInputRawToInteger(f->touch_major);
-        INT minor = AmtInputRawToInteger(f->touch_minor);
-        INT pressure = AmtInputRawToInteger(f->pressure);
+        INT major = AmtRawToSignedInt(f->touch_major);
+        INT minor = AmtRawToSignedInt(f->touch_minor);
+        INT pressure = AmtRawToSignedInt(f->pressure);
         if (pressure < 0) pressure = 0; // Clamp negative pressure.
 
         // Skip empty contacts.
@@ -56,9 +50,9 @@ AmtInputParseFrame(
             continue;
 
         INT nx = (INT)AmtInputClampCoord(
-            AmtInputRawToInteger(f->abs_x), DevInfo->x.min, DevInfo->x.max);
+            AmtRawToSignedInt(f->abs_x), DevInfo->x.min, DevInfo->x.max);
 
-        INT nyRaw  = DevInfo->y.max - AmtInputRawToInteger(f->abs_y);
+        INT nyRaw  = DevInfo->y.max - AmtRawToSignedInt(f->abs_y);
         INT ny     = (nyRaw < 0) ? 0 : (nyRaw > yRange ? yRange : nyRaw);
 
         PRAW_CONTACT rc = &OutFrame->Contacts[emitted];

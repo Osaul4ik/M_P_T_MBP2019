@@ -77,10 +77,8 @@ AmtContactEvaluateVelocity(
         return VELOCITY_UNKNOWN;
     }
 
-    INT dx = (INT)rawX - (INT)prevX;
-    if (dx < 0) dx = -dx;
-    INT dy = (INT)rawY - (INT)prevY;
-    if (dy < 0) dy = -dy;
+    INT dx = AmtAbsDelta((INT)rawX, (INT)prevX);
+    INT dy = AmtAbsDelta((INT)rawY, (INT)prevY);
     INT distance = (dx > dy) ? dx : dy;
 
     LONGLONG unitsPerSec = ((LONGLONG)distance * PerfFrequencyHz) / DtQpcTicks;
@@ -271,10 +269,8 @@ AmtContactIsRecentLiftNearby(
     if (deltaTicks > windowTicks)
         return FALSE;
 
-    INT dx = (INT)CandX - (INT)LiftX;
-    if (dx < 0) dx = -dx;
-    INT dy = (INT)CandY - (INT)LiftY;
-    if (dy < 0) dy = -dy;
+    INT dx = AmtAbsDelta((INT)CandX, (INT)LiftX);
+    INT dy = AmtAbsDelta((INT)CandY, (INT)LiftY);
 
     return (dx <= RETAP_MAX_DISTANCE) && (dy <= RETAP_MAX_DISTANCE);
 }
@@ -366,10 +362,8 @@ AmtContactEvaluateDeadzone(
         return TRUE;
     }
 
-    INT dx = (INT)candX - (INT)Contact->HystX;
-    if (dx < 0) dx = -dx;
-    INT dy = (INT)candY - (INT)Contact->HystY;
-    if (dy < 0) dy = -dy;
+    INT dx = AmtAbsDelta((INT)candX, (INT)Contact->HystX);
+    INT dy = AmtAbsDelta((INT)candY, (INT)Contact->HystY);
 
     return (dx >= ThresholdUnits) || (dy >= ThresholdUnits);
 }
