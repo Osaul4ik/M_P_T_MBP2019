@@ -85,6 +85,30 @@ AmtRecentLiftFindNearby(
     return found;
 }
 
+// Fill one committed PTP_CORE_CONTACT slot and advance ContactCount.
+// Identical fill logic previously duplicated between AmtCoreEmitContact
+// (fresh reports) and AmtCoreDrainOverflow (deferred reports) - both only
+// differ in where the field values come from and what they do after.
+static __inline VOID
+AmtCoreWriteContactSlot(
+    _Inout_ PTP_CORE_FRAME* OutResult,
+    _In_    ULONG           ContactID,
+    _In_    USHORT          X,
+    _In_    USHORT          Y,
+    _In_    CONTACT_PHASE   Phase,
+    _In_    BOOLEAN         Confident
+)
+{
+    PPTP_CORE_CONTACT outC = &OutResult->Contacts[OutResult->ContactCount];
+    outC->ContactID   = ContactID;
+    outC->X           = X;
+    outC->Y           = Y;
+    outC->Phase       = Phase;
+    outC->Confident   = Confident;
+    outC->PalmSuspect = FALSE;
+    OutResult->ContactCount++;
+}
+
 // Emit a contact report and queue overflow entries when needed.
 static VOID
 AmtCoreEmitContact(
@@ -98,14 +122,7 @@ AmtCoreEmitContact(
 )
 {
     if (OutResult->ContactCount < PTP_MAX_CONTACT_POINTS) {
-        PPTP_CORE_CONTACT outC = &OutResult->Contacts[OutResult->ContactCount];
-        outC->ContactID   = ContactID;
-        outC->X           = X;
-        outC->Y           = Y;
-        outC->Phase       = Phase;
-        outC->Confident   = Confident;
-        outC->PalmSuspect = FALSE;
-        OutResult->ContactCount++;
+        AmtCoreWriteContactSlot(OutResult, ContactID, X, Y, Phase, Confident);
         return;
     }
 
@@ -157,14 +174,9 @@ AmtCoreDrainOverflow(
         }
 
         if (OutResult->ContactCount < PTP_MAX_CONTACT_POINTS) {
-            PPTP_CORE_CONTACT outC = &OutResult->Contacts[OutResult->ContactCount];
-            outC->ContactID   = pCtx->OverflowContactID[k];
-            outC->X           = pCtx->OverflowX[k];
-            outC->Y           = pCtx->OverflowY[k];
-            outC->Phase       = pCtx->OverflowPhase[k];
-            outC->Confident   = pCtx->OverflowConfident[k];
-            outC->PalmSuspect = FALSE;
-            OutResult->ContactCount++;
+            AmtCoreWriteContactSlot(OutResult, pCtx->OverflowContactID[k],
+                                    pCtx->OverflowX[k], pCtx->OverflowY[k],
+                                    pCtx->OverflowPhase[k], pCtx->OverflowConfident[k]);
             continue;
         }
 
@@ -251,23 +263,23 @@ PTPCore_ProcessFrame(
     // FIX: an Unconfirmed candidate (new, below-tip-threshold, no pool
     // anchor) must not count as a finger - a single-frame noise blob could
     // falsely taint a solo tap as WasInGesture and break retap smoothing.
-    UCHAR aliveCount = 0;
-    for (UCHAR ci = 0; ci < candidates.Count; ci++) {
-        if (!candidates.Candidates[ci].PalmLocal &&
-            !candidates.Candidates[ci].Unconfirmed)
-            aliveCount++;
-    }
-
-    // Per-frame taint gate: >=2 fingers down this frame.
-    BOOLEAN gestureThisFrame = (aliveCount >= 2);
-
+    //
     // BUG FIX (phantom UP from bottom/edge cutoff): PALM_LOCAL candidates
     // are never matched to pool entries, so a tracked contact dragging into
     // the edge dead zone looked like a lift. Freeze those pool slots
     // (matched via LastSlotHint) in Phase A instead of killing them.
+    //
+    // Merged into one candidates.Count pass - aliveCount and
+    // palmLocalFrozen are independent per-candidate computations that
+    // were previously two separate full scans of the same array.
+    UCHAR   aliveCount = 0;
     BOOLEAN palmLocalFrozen[MAX_CONTACTS] = { 0 };
     for (UCHAR ci = 0; ci < candidates.Count; ci++) {
         const MATCH_CANDIDATE* cand = &candidates.Candidates[ci];
+
+        if (!cand->PalmLocal && !cand->Unconfirmed)
+            aliveCount++;
+
         if (!cand->PalmLocal)
             continue;
 
@@ -281,6 +293,9 @@ PTPCore_ProcessFrame(
             }
         }
     }
+
+    // Per-frame taint gate: >=2 fingers down this frame.
+    BOOLEAN gestureThisFrame = (aliveCount >= 2);
 
     // Drain deferred lift-offs
     AmtCoreDrainOverflow(pCtx, OutResult);
@@ -557,9 +572,14 @@ PTPCore_ProcessFrame(
         return;
     }
 
-    // Force-touch drag lockout. Recomputed every frame from the RAW frame,
-    // BEFORE the pressure check, so a press that has turned into a drag can
-    // never still trip force-touch this same frame.
+    // Force-touch drag lockout + peak pressure. Both used to scan
+    // RawFrame->Contacts in two separate loops, gated on the same
+    // ButtonDown condition and independent of each other - merged into
+    // one pass. Arming the anchor stays its own step BEFORE the pass
+    // (unchanged order/timing: a same-frame arm is still immediately
+    // eligible for the distance search below, exactly as before).
+    USHORT framePeakPressure = 0;
+
     if (!ButtonDown) {
         pCtx->ForceTouchAnchorValid = FALSE;
         pCtx->ForceTouchDragLockout = FALSE;
@@ -575,43 +595,40 @@ PTPCore_ProcessFrame(
             pCtx->ForceTouchAnchorValid = TRUE;
         }
 
-        if (pCtx->ForceTouchAnchorValid) {
-            // BUG FIX: compare only the ONE contact nearest the anchor.
-            // Contacts are in sensor scan order, not stable slots - testing
-            // all of them let an unrelated second finger trip the lockout.
-            LONG bestDistSq = -1;
-            INT  bestDx = 0, bestDy = 0;
-            for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
-                INT dx = (INT)RawFrame->Contacts[fi].X - (INT)pCtx->ForceTouchAnchorX;
-                INT dy = (INT)RawFrame->Contacts[fi].Y - (INT)pCtx->ForceTouchAnchorY;
-                LONG distSq = AmtDistSq(dx, dy);
-                if (bestDistSq < 0 || distSq < bestDistSq) {
-                    bestDistSq = distSq;
-                    bestDx     = dx;
-                    bestDy     = dy;
-                }
-            }
+        // BUG FIX: compare only the ONE contact nearest the anchor.
+        // Contacts are in sensor scan order, not stable slots - testing
+        // all of them let an unrelated second finger trip the lockout.
+        BOOLEAN trackAnchor = pCtx->ForceTouchAnchorValid;
+        LONG    bestDistSq  = -1;
+        INT     bestDx = 0, bestDy = 0;
 
-            if (bestDistSq >= 0) {
-                INT adx = (bestDx < 0) ? -bestDx : bestDx;
-                INT ady = (bestDy < 0) ? -bestDy : bestDy;
-                if (adx > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE ||
-                    ady > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE) {
-                    pCtx->ForceTouchDragLockout = TRUE;
-                }
-            }
-        }
-    }
-
-    // Peak raw pressure this frame, shared by click arbitration and
-    // force-touch below. Use the RAW frame (same click-flex rationale).
-    // Only meaningful while the button is held - skip the scan entirely on
-    // ordinary movement-only frames (the most common case by far).
-    USHORT framePeakPressure = 0;
-    if (ButtonDown) {
         for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
+            // Peak raw pressure this frame, shared by click arbitration
+            // and force-touch below. Use the RAW frame (same click-flex
+            // rationale).
             if (RawFrame->Contacts[fi].Pressure > framePeakPressure)
                 framePeakPressure = RawFrame->Contacts[fi].Pressure;
+
+            if (!trackAnchor)
+                continue;
+
+            INT dx = (INT)RawFrame->Contacts[fi].X - (INT)pCtx->ForceTouchAnchorX;
+            INT dy = (INT)RawFrame->Contacts[fi].Y - (INT)pCtx->ForceTouchAnchorY;
+            LONG distSq = AmtDistSq(dx, dy);
+            if (bestDistSq < 0 || distSq < bestDistSq) {
+                bestDistSq = distSq;
+                bestDx     = dx;
+                bestDy     = dy;
+            }
+        }
+
+        if (trackAnchor && bestDistSq >= 0) {
+            INT adx = (bestDx < 0) ? -bestDx : bestDx;
+            INT ady = (bestDy < 0) ? -bestDy : bestDy;
+            if (adx > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE ||
+                ady > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE) {
+                pCtx->ForceTouchDragLockout = TRUE;
+            }
         }
     }
 
