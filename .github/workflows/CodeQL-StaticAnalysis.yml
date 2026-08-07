@@ -1,0 +1,231 @@
+name: CodeQL + StaticAnalysis
+
+on:
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-static-analysis-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PROJECT_DIR: src/AmtPtpDeviceUsbKm
+  DRIVER_NAME: AmtPtpDeviceUsbKm
+  CONFIGURATION: Release
+  PLATFORM: x64
+  CODEQL_CLI_VERSION: 2.24.1
+  CODEQL_DRIVERS_PACK_VERSION: 1.8.2
+  CODEQL_CPP_QUERIES_PACK_VERSION: 0.0.4
+  CA_TREAT_WARNINGS_AS_ERRORS: true
+
+jobs:
+  analysis:
+    name: CodeQL (WHCP) + StaticAnalysis
+    runs-on: windows-2022
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Install WDK
+      run: |
+        $ErrorActionPreference = "Stop"
+        $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2085767"
+        $wdkInstaller = "$env:TEMP\wdksetup.exe"
+        Invoke-WebRequest -Uri $wdkUrl -OutFile $wdkInstaller
+        $proc = Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet /norestart" -Wait -PassThru
+        $exitCode = $proc.ExitCode
+        if ($exitCode -ne 0 -and $exitCode -ne 3010) {
+          Write-Error "WDK installer exited with code $exitCode"
+          exit 1
+        }
+        Write-Host "OK: WDK installer exited with code $exitCode"
+      shell: pwsh
+
+    - name: Create combined results folder
+      run: |
+        New-Item -ItemType Directory -Path "results\codeql" -Force | Out-Null
+        New-Item -ItemType Directory -Path "results\static-analysis" -Force | Out-Null
+      shell: pwsh
+
+    # =====================================================================
+    # Part 1: CodeQL - WHCP Static Tools Logo Test
+    # =====================================================================
+
+    - name: Download CodeQL CLI
+      run: |
+        $ErrorActionPreference = "Stop"
+        $url = "https://github.com/github/codeql-cli-binaries/releases/download/v$env:CODEQL_CLI_VERSION/codeql-win64.zip"
+        Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\codeql.zip"
+        Expand-Archive -Path "$env:TEMP\codeql.zip" -DestinationPath "$env:TEMP\codeql-home" -Force
+        $codeqlExe = Get-ChildItem -Path "$env:TEMP\codeql-home" -Filter "codeql.exe" -Recurse | Select-Object -First 1
+        if (-not $codeqlExe) {
+          Write-Error "codeql.exe not found after extraction."
+          exit 1
+        }
+        Add-Content -Path $env:GITHUB_ENV -Value "CODEQL_DIR=$($codeqlExe.DirectoryName)"
+      shell: pwsh
+
+    - name: Download windows-drivers query pack
+      run: |
+        $ErrorActionPreference = "Stop"
+        & "$env:CODEQL_DIR\codeql.exe" pack download "microsoft/windows-drivers@$env:CODEQL_DRIVERS_PACK_VERSION"
+      shell: pwsh
+
+    - name: Download cpp-queries dependency pack
+      run: |
+        $ErrorActionPreference = "Stop"
+        & "$env:CODEQL_DIR\codeql.exe" pack download "microsoft/cpp-queries@$env:CODEQL_CPP_QUERIES_PACK_VERSION"
+      shell: pwsh
+
+    - name: Build CodeQL database
+      run: |
+        $ErrorActionPreference = "Stop"
+        $dbPath = "$env:TEMP\codeql-db"
+        $buildCmd = "msbuild /p:Configuration=$env:CONFIGURATION /p:Platform=$env:PLATFORM /p:WindowsTargetPlatformVersion=10.0.26100.0 $env:PROJECT_DIR\$env:DRIVER_NAME.vcxproj /t:rebuild"
+
+        & "$env:CODEQL_DIR\codeql.exe" database create $dbPath `
+          --language=cpp `
+          --source-root=. `
+          --command=$buildCmd
+
+        Add-Content -Path $env:GITHUB_ENV -Value "CODEQL_DB=$dbPath"
+      shell: pwsh
+
+    - name: Analyze with mustrun.qls (informational)
+      # Does not fail the job by itself - mustrun is informational per WHCP.
+      run: |
+        & "$env:CODEQL_DIR\codeql.exe" database analyze "$env:CODEQL_DB" `
+          "microsoft/windows-drivers:windows-driver-suites/mustrun.qls" `
+          --format=sarifv2.1.0 `
+          --output="results\codeql\codeql-mustrun.sarif"
+        Add-Content -Path $env:GITHUB_ENV -Value "SARIF_MUSTRUN=results\codeql\codeql-mustrun.sarif"
+      shell: pwsh
+
+    - name: Analyze with mustfix.qls (blocking)
+      # Intentionally does NOT call exit on failure here - both analyses
+      # must run and their results must land in the combined archive
+      # before the job is allowed to fail. Overall pass/fail is decided
+      # in the "Evaluate combined results" step at the end.
+      run: |
+        $sarifPath = "results\codeql\codeql-mustfix.sarif"
+
+        & "$env:CODEQL_DIR\codeql.exe" database analyze "$env:CODEQL_DB" `
+          "microsoft/windows-drivers:windows-driver-suites/mustfix.qls" `
+          --format=sarifv2.1.0 `
+          --output=$sarifPath
+
+        Add-Content -Path $env:GITHUB_ENV -Value "SARIF_MUSTFIX=$sarifPath"
+
+        $resultCount = 0
+        if (Test-Path $sarifPath) {
+          $sarif = Get-Content -Path $sarifPath -Raw | ConvertFrom-Json
+          foreach ($run in $sarif.runs) {
+            if ($run.results) { $resultCount += $run.results.Count }
+          }
+        } else {
+          Write-Host "::warning::mustfix.qls did not produce a SARIF file - treating as failed analysis."
+          $resultCount = -1
+        }
+
+        Write-Host "==> mustfix.qls results: $resultCount"
+        Add-Content -Path $env:GITHUB_ENV -Value "CODEQL_MUSTFIX_COUNT=$resultCount"
+      shell: pwsh
+
+    - name: Upload mustrun.qls SARIF to GitHub code scanning
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ env.SARIF_MUSTRUN }}
+        category: mustrun
+
+    - name: Upload mustfix.qls SARIF to GitHub code scanning
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ env.SARIF_MUSTFIX }}
+        category: mustfix
+
+    # =====================================================================
+    # Part 2: PREfast / Code Analysis (/analyze)
+    # =====================================================================
+
+    - name: Build with PREfast (/analyze) enabled
+      # Same rule as above: capture the outcome, don't exit here, so the
+      # combined artifact always gets uploaded regardless of which check
+      # (if any) failed.
+      run: |
+        $binLog = "results\static-analysis\build.binlog"
+        $buildLog = "results\static-analysis\build.log"
+        $treatAsErrors = $env:CA_TREAT_WARNINGS_AS_ERRORS
+
+        & msbuild "$env:PROJECT_DIR\$env:DRIVER_NAME.vcxproj" `
+          /p:Configuration=$env:CONFIGURATION `
+          /p:Platform=$env:PLATFORM `
+          /p:WindowsTargetPlatformVersion=10.0.26100.0 `
+          /p:RunCodeAnalysis=true `
+          /p:EnableCppCoreCheck=true `
+          /p:CodeAnalysisTreatWarningsAsErrors=$treatAsErrors `
+          /nologo `
+          /verbosity:normal `
+          /clp:Summary `
+          "/bl:$binLog" `
+          2>&1 | Tee-Object -FilePath $buildLog
+
+        $exitCode = $LASTEXITCODE
+        Write-Host "==> PREfast build exit code: $exitCode"
+        Add-Content -Path $env:GITHUB_ENV -Value "STATIC_ANALYSIS_EXIT_CODE=$exitCode"
+      shell: pwsh
+
+    # =====================================================================
+    # Combined artifact - always uploaded, regardless of pass/fail above.
+    # =====================================================================
+    - name: Upload combined CodeQL + StaticAnalysis results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: codeql-and-static-analysis-results
+        retention-days: 14
+        if-no-files-found: warn
+        path: results/
+
+    # =====================================================================
+    # Decide overall pass/fail AFTER the artifact is safely uploaded, so a
+    # red job never means "results are missing" - they're always attached.
+    # =====================================================================
+    - name: Evaluate combined results
+      if: always()
+      run: |
+        $failed = $false
+
+        $mustfixCount = [int]$env:CODEQL_MUSTFIX_COUNT
+        if ($mustfixCount -ne 0) {
+          Write-Host "::error::CodeQL mustfix.qls: $mustfixCount Must-Fix defect(s) (or analysis failed to produce results)."
+          $failed = $true
+        } else {
+          Write-Host "OK: CodeQL mustfix.qls - 0 defects."
+        }
+
+        $caExitCode = [int]$env:STATIC_ANALYSIS_EXIT_CODE
+        if ($caExitCode -ne 0) {
+          Write-Host "::error::StaticAnalysis (PREfast) build failed with exit code $caExitCode - see build.log in the uploaded artifact."
+          $failed = $true
+        } else {
+          Write-Host "OK: StaticAnalysis (PREfast) - 0 warnings."
+        }
+
+        if ($failed) {
+          Write-Host "::error::One or more checks failed. Full results are in the 'codeql-and-static-analysis-results' artifact."
+          exit 1
+        }
+
+        Write-Host "OK: both CodeQL and StaticAnalysis passed."
+      shell: pwsh
