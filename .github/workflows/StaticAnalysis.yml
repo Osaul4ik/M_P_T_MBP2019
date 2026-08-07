@@ -1,0 +1,62 @@
+name: StaticAnalysis
+
+on:
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PROJECT_DIR: src/AmtPtpDeviceUsbKm
+  DRIVER_NAME: AmtPtpDeviceUsbKm
+  CONFIGURATION: Release
+  PLATFORM: x64
+
+jobs:
+  analyze:
+    runs-on: windows-2022
+
+    # =========================================================================
+    # Окремий job (без підпису драйвера, тому секрети не потрібні - працює
+    # й на PR з форків) для статичного аналізу коду через вбудований у
+    # MSVC/WDK toolset PREfast (/analyze).
+    #
+    # RunCodeAnalysis=true + EnableCppCoreCheck=true вмикають /analyze для
+    # цієї збірки; попередження від аналізатора виводяться в лог MSBuild
+    # окремо від звичайних warning'ів компілятора (C6001, C6011, C28xxx
+    # і т.д. - типові коди для aналізу IRQL/lock/pointer у kernel-mode).
+    #
+    # Примітка: Static Driver Verifier (SDV) з WDK - це окремий
+    # аналізатор саме під KMDF PnP/Power/lock-патерни, який запускається
+    # через `msbuild /t:sdv` (Visual Studio: Driver > Run Static Driver
+    # Verifier). Не додаю його сюди автоматично - не маю змоги перевірити
+    # точні назви target'ів/параметрів для встановленої тут версії WDK на
+    # цьому раннері без реального прогону на Windows з WDK. Раджу
+    # спробувати `msbuild AmtPtpDeviceUsbKm.vcxproj /t:sdv` локально у
+    # Visual Studio й, якщо все ОК, додати той самий виклик сюди окремим
+    # step'ом.
+    # =========================================================================
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Install WDK
+      run: |
+        $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2085767"
+        $wdkInstaller = "$env:TEMP\wdksetup.exe"
+        Invoke-WebRequest -Uri $wdkUrl -OutFile $wdkInstaller
+        Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet /norestart" -Wait
+      shell: pwsh
+
+    - name: Build with PREfast (/analyze) enabled
+      run: |
+        msbuild src/AmtPtpDeviceUsbKm/AmtPtpDeviceUsbKm.vcxproj `
+          /p:Configuration=Release `
+          /p:Platform=x64 `
+          /p:WindowsTargetPlatformVersion=10.0.26100.0 `
+          /p:RunCodeAnalysis=true `
+          /p:EnableCppCoreCheck=true `
+          /p:CodeAnalysisTreatWarningsAsErrors=false
+      shell: pwsh
