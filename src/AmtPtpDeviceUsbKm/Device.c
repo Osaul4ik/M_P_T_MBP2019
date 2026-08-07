@@ -233,7 +233,17 @@ AmtPtpEvtDeviceD0Entry(
         pDeviceContext->RetapWindowTicks             = 0;
         pDeviceContext->MatchMaxTimeDeltaTicks        = 0;
         pDeviceContext->ClickArbitrationTimeoutTicks = 0;
-        pDeviceContext->ScanTimeScaleQ16             = 0;
+
+        // OPTIMIZATION: fold the "no usable clock" fallback into the same
+        // Q16 scale used by the normal path, instead of branching on
+        // PerfFrequency on every single interrupt completion (see
+        // AmtPtpEvtUsbInterruptPipeReadComplete). The old fallback did
+        // "PerfDelta /= 100LL"; solving (x*scale)>>16 == x/100 for scale
+        // gives 65536/100 = 655.36, rounded to 655 - same approximation,
+        // computed once here instead of re-branched every completion. This
+        // path is already the degenerate "no usable clock" case, so the
+        // extra ~0.05% rounding difference from 655 vs 655.36 is moot.
+        pDeviceContext->ScanTimeScaleQ16             = 655;
     }
 
     // Reset per-session timing and contact state on D0 entry.

@@ -104,18 +104,24 @@ typedef struct _DEVICE_CONTEXT
     LONGLONG      ClickArbitrationTimeoutTicks; // click arbitration safety-net
 
     // MICRO-OPT: Q16 fixed-point form of (10000 / PerfFrequency), computed
-    // once at D0Entry instead of a 64-bit divide on every single USB
-    // interrupt completion (the hottest routine in the driver - see
-    // AmtPtpEvtUsbInterruptPipeReadComplete). Runtime becomes a multiply +
-    // shift: (PerfDelta * ScanTimeScaleQ16) >> 16, same result as the old
+    // once at D0Entry instead of a 64-bit divide (and a PerfFrequency>0
+    // branch) on every single USB interrupt completion (the hottest
+    // routine in the driver - see AmtPtpEvtUsbInterruptPipeReadComplete).
+    // Runtime becomes an unconditional multiply + shift:
+    // (PerfDelta * ScanTimeScaleQ16) >> 16, same result as the old
     // "* 10000LL / PerfFrequency.QuadPart" to within the ScanTime field's
     // USHORT-truncated precision (rounding differs by at most 1 part in
     // 65536, invisible after the field's own 0xFFFF wraparound). Q16 (not
     // Q32) is deliberate: it keeps PerfDelta*ScanTimeScaleQ16 far from
     // LONGLONG overflow even after a multi-day idle gap between reports,
     // where Q32's much larger scale factor would leave far less headroom.
-    // 0 when there's no usable clock, matching the original PerfFrequency
-    // <= 0 fallback exactly.
+    // When there's no usable clock (PerfFrequency.QuadPart <= 0, meaning
+    // KeQueryPerformanceCounter reported a degenerate frequency - not
+    // expected on real hardware), this is set to 655 instead of 0: solving
+    // (x*scale)>>16 == x/100 for scale gives 65536/100 = 655.36, matching
+    // the old "/100LL" fallback formula while still avoiding a branch on
+    // the hot path - the fallback is already a best-effort approximation,
+    // so the ~0.05% rounding difference from truncating to 655 is moot.
     LONGLONG      ScanTimeScaleQ16;
 
     // Deferred overflow queue for contact events.

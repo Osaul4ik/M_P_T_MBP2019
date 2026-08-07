@@ -88,7 +88,16 @@ AmtPtpConfigContReaderForInterruptEndPoint(_In_ PDEVICE_CONTEXT DeviceContext)
         goto exit;
     }
 
-    if (transferLength == 0) {
+    // OPTIMIZATION: validate tp_fsize here, once, at PASSIVE_LEVEL setup
+    // time - not on every single USB interrupt completion. tp_fsize never
+    // changes for the life of this DeviceContext (it's a field copied from
+    // the static Bcm5974ConfigTable entry chosen once in
+    // AmtPtpGetDeviceConfig), so re-checking "!= 0" on every completion was
+    // paying a branch, every ~8-16ms, for a value that can only ever be
+    // wrong here - at setup - if a future table entry is misconfigured.
+    // Catching that here also fails the bind with a clear status instead
+    // of silently no-op'ing every future completion forever.
+    if (transferLength == 0 || DeviceContext->DeviceInfo->tp_fsize == 0) {
         status = STATUS_UNKNOWN_REVISION;
         goto exit;
     }
@@ -132,15 +141,15 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     // USB read completion
 
-    // Internal invariant: every Bcm5974ConfigTable entry has a nonzero
-    // FSIZE_TYPEn, which backs both the modulo and the division below.
-    // NT_ASSERT catches a misconfigured table entry in debug builds; the
-    // explicit fingerSize==0 check guards release builds against a
-    // divide-by-zero bugcheck regardless.
+    // fingerSize/headerSize come from the static config entry latched once
+    // for this device (see AmtPtpGetDeviceConfig / D0Entry) and can't
+    // change during a session. The fingerSize==0 case is now rejected once
+    // at setup time (AmtPtpConfigContReaderForInterruptEndPoint) instead of
+    // being re-checked on every completion - NT_ASSERT still catches a
+    // regression there in debug builds.
     NT_ASSERT(fingerSize != 0);
 
-    if (fingerSize == 0 ||
-        NumBytesTransferred < headerSize ||
+    if (NumBytesTransferred < headerSize ||
         (NumBytesTransferred - headerSize) % fingerSize != 0) {
         return;
     }
@@ -179,14 +188,15 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // Accumulate elapsed time onto a running ULONG and truncate the low
     // 16 bits into the report field (USHORT wraparound is expected).
     PerfDelta = Now.QuadPart - pCtx->LastReportTime.QuadPart;
-    if (pCtx->PerfFrequency.QuadPart > 0)
-        // MICRO-OPT: was "* 10000LL / PerfFrequency.QuadPart" - a 64-bit
-        // divide on every completion. ScanTimeScaleQ16 is precomputed once
-        // at D0Entry (Device.c); see its field comment in Device.h for the
-        // overflow-headroom reasoning behind Q16 over Q32.
-        PerfDelta = (PerfDelta * pCtx->ScanTimeScaleQ16) >> 16;
-    else
-        PerfDelta /= 100LL;
+
+    // OPTIMIZATION: PerfFrequency (and therefore which formula applies) is
+    // fixed for the life of a D0 session - see Device.c's D0Entry, which
+    // now folds both the normal case and the "no usable clock" fallback
+    // into the same precomputed ScanTimeScaleQ16 (field comment in
+    // Device.h has the derivation). Branching on PerfFrequency here, every
+    // completion, tested a value that can only change across a D0Exit/
+    // D0Entry cycle - i.e. never within this routine's lifetime per session.
+    PerfDelta = (PerfDelta * pCtx->ScanTimeScaleQ16) >> 16;
     if (PerfDelta < 0) PerfDelta = 0;
 
     pCtx->ScanTimeAccumulator += (ULONG)PerfDelta;
