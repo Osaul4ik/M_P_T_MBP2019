@@ -11,12 +11,12 @@ env:
   DRIVER_NAME: AmtPtpDeviceUsbKm
   CONFIGURATION: Release
   PLATFORM: x64
-  # Bumped from 2.15.4 / 1.1.0 (WHCP_24H2 pair) to the WHCP_26H1 pair below.
-  # Pack 1.1.0 does not ship windows-driver-suites/mustrun.qls under this
-  # name/path — that suite was introduced in later pack versions. 1.8.2 does
-  # include it, so no path guessing is needed.
+  # WHCP_26H1 pair. windows-driver-suites/mustfix.qls in this pack version
+  # depends on microsoft/cpp-queries@0.0.4 - that pack must be downloaded
+  # separately or "database analyze" fails with a missing-pack error.
   CODEQL_CLI_VERSION: 2.24.1
   CODEQL_DRIVERS_PACK_VERSION: 1.8.2
+  CODEQL_CPP_QUERIES_PACK_VERSION: 0.0.4
 
 jobs:
   codeql:
@@ -66,13 +66,22 @@ jobs:
         & "$env:CODEQL_DIR\codeql.exe" pack download "microsoft/windows-drivers@$env:CODEQL_DRIVERS_PACK_VERSION"
       shell: pwsh
 
-    - name: Inspect windows-drivers pack contents
-      # Safety net: prints the real .qls suite paths shipped in this pack
-      # version, so if Microsoft renames/moves things again the mismatch
-      # shows up here in the log instead of as a cryptic NoSuchFileException.
+    - name: Download cpp-queries dependency pack
+      # windows-driver-suites/mustfix.qls (and recommended.qls) reference
+      # microsoft/cpp-queries - it is not pulled in automatically by the
+      # windows-drivers pack download, so fetch it explicitly.
       run: |
-        Get-ChildItem -Path "$env:USERPROFILE\.codeql\packages\microsoft\windows-drivers\$env:CODEQL_DRIVERS_PACK_VERSION" -Recurse -File |
-          Where-Object { $_.Extension -eq ".qls" } |
+        $ErrorActionPreference = "Stop"
+        & "$env:CODEQL_DIR\codeql.exe" pack download "microsoft/cpp-queries@$env:CODEQL_CPP_QUERIES_PACK_VERSION"
+      shell: pwsh
+
+    - name: Inspect downloaded pack contents
+      run: |
+        Write-Host "== windows-drivers suites =="
+        Get-ChildItem -Path "$env:USERPROFILE\.codeql\packages\microsoft\windows-drivers\$env:CODEQL_DRIVERS_PACK_VERSION\windows-driver-suites" -File |
+          Select-Object -ExpandProperty FullName
+        Write-Host "== cpp-queries pack =="
+        Get-ChildItem -Path "$env:USERPROFILE\.codeql\packages\microsoft\cpp-queries\$env:CODEQL_CPP_QUERIES_PACK_VERSION" -Recurse -File |
           Select-Object -ExpandProperty FullName
       shell: pwsh
 
@@ -139,14 +148,14 @@ jobs:
           ${{ env.SARIF_MUSTFIX }}
 
     - name: Upload mustrun.qls SARIF to GitHub code scanning
-      if: ${{ always() && env.SARIF_MUSTRUN != '' }}
+      if: always()
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: ${{ env.SARIF_MUSTRUN }}
         category: mustrun
 
     - name: Upload mustfix.qls SARIF to GitHub code scanning
-      if: ${{ always() && env.SARIF_MUSTFIX != '' }}
+      if: always()
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: ${{ env.SARIF_MUSTFIX }}
