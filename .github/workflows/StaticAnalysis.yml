@@ -40,11 +40,23 @@ jobs:
         $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2085767"
         $wdkInstaller = "$env:TEMP\wdksetup.exe"
         Invoke-WebRequest -Uri $wdkUrl -OutFile $wdkInstaller
-        Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet /norestart" -Wait
-        if ($LASTEXITCODE -ne 0) {
-          Write-Error "WDK installer exited with code $LASTEXITCODE"
+
+        # Start-Process does NOT set $LASTEXITCODE - that variable is only
+        # populated by direct invocation of a native exe. Capture the
+        # process object with -PassThru and read its ExitCode explicitly,
+        # or this check silently "fails" every run regardless of outcome
+        # (comparing $null -ne 0 evaluates to $true in PowerShell).
+        $proc = Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet /norestart" -Wait -PassThru
+        $exitCode = $proc.ExitCode
+
+        # WDK/VS installers commonly return 3010 (success, reboot required)
+        # or 0 (success). Anything else is a real failure.
+        if ($exitCode -ne 0 -and $exitCode -ne 3010) {
+          Write-Error "WDK installer exited with code $exitCode"
           exit 1
         }
+
+        Write-Host "OK: WDK installer exited with code $exitCode"
       shell: pwsh
 
     - name: Build with PREfast (/analyze) enabled
