@@ -180,7 +180,11 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // 16 bits into the report field (USHORT wraparound is expected).
     PerfDelta = Now.QuadPart - pCtx->LastReportTime.QuadPart;
     if (pCtx->PerfFrequency.QuadPart > 0)
-        PerfDelta = PerfDelta * 10000LL / pCtx->PerfFrequency.QuadPart;
+        // MICRO-OPT: was "* 10000LL / PerfFrequency.QuadPart" - a 64-bit
+        // divide on every completion. ScanTimeScaleQ16 is precomputed once
+        // at D0Entry (Device.c); see its field comment in Device.h for the
+        // overflow-headroom reasoning behind Q16 over Q32.
+        PerfDelta = (PerfDelta * pCtx->ScanTimeScaleQ16) >> 16;
     else
         PerfDelta /= 100LL;
     if (PerfDelta < 0) PerfDelta = 0;

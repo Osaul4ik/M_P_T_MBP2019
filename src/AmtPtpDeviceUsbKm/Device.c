@@ -227,10 +227,13 @@ AmtPtpEvtDeviceD0Entry(
             (MATCH_MAX_TIME_DELTA_100NS * pDeviceContext->PerfFrequency.QuadPart) / 10000000LL;
         pDeviceContext->ClickArbitrationTimeoutTicks =
             (pDeviceContext->PerfFrequency.QuadPart * CLICK_ARBITRATION_TIMEOUT_MS) / 1000;
+        pDeviceContext->ScanTimeScaleQ16 =
+            (10000LL << 16) / pDeviceContext->PerfFrequency.QuadPart;
     } else {
         pDeviceContext->RetapWindowTicks             = 0;
         pDeviceContext->MatchMaxTimeDeltaTicks        = 0;
         pDeviceContext->ClickArbitrationTimeoutTicks = 0;
+        pDeviceContext->ScanTimeScaleQ16             = 0;
     }
 
     // Reset per-session timing and contact state on D0 entry.

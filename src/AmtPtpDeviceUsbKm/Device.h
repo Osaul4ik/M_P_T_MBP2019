@@ -103,6 +103,21 @@ typedef struct _DEVICE_CONTEXT
     LONGLONG      MatchMaxTimeDeltaTicks;       // AmtMatchCorrespond time-reject
     LONGLONG      ClickArbitrationTimeoutTicks; // click arbitration safety-net
 
+    // MICRO-OPT: Q16 fixed-point form of (10000 / PerfFrequency), computed
+    // once at D0Entry instead of a 64-bit divide on every single USB
+    // interrupt completion (the hottest routine in the driver - see
+    // AmtPtpEvtUsbInterruptPipeReadComplete). Runtime becomes a multiply +
+    // shift: (PerfDelta * ScanTimeScaleQ16) >> 16, same result as the old
+    // "* 10000LL / PerfFrequency.QuadPart" to within the ScanTime field's
+    // USHORT-truncated precision (rounding differs by at most 1 part in
+    // 65536, invisible after the field's own 0xFFFF wraparound). Q16 (not
+    // Q32) is deliberate: it keeps PerfDelta*ScanTimeScaleQ16 far from
+    // LONGLONG overflow even after a multi-day idle gap between reports,
+    // where Q32's much larger scale factor would leave far less headroom.
+    // 0 when there's no usable clock, matching the original PerfFrequency
+    // <= 0 fallback exactly.
+    LONGLONG      ScanTimeScaleQ16;
+
     // Deferred overflow queue for contact events.
     // ---------------------------------------------------------------
     ULONG         OverflowContactID[PTP_MAX_CONTACT_POINTS];
