@@ -11,8 +11,12 @@ env:
   DRIVER_NAME: AmtPtpDeviceUsbKm
   CONFIGURATION: Release
   PLATFORM: x64
-  CODEQL_CLI_VERSION: 2.15.4
-  CODEQL_DRIVERS_PACK_VERSION: 1.1.0
+  # Bumped from 2.15.4 / 1.1.0 (WHCP_24H2 pair) to the WHCP_26H1 pair below.
+  # Pack 1.1.0 does not ship windows-driver-suites/mustrun.qls under this
+  # name/path — that suite was introduced in later pack versions. 1.8.2 does
+  # include it, so no path guessing is needed.
+  CODEQL_CLI_VERSION: 2.24.1
+  CODEQL_DRIVERS_PACK_VERSION: 1.8.2
 
 jobs:
   codeql:
@@ -34,7 +38,6 @@ jobs:
         Invoke-WebRequest -Uri $wdkUrl -OutFile $wdkInstaller
         Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet /norestart" -Wait
       shell: pwsh
-
 
     - name: Download CodeQL CLI
       run: |
@@ -59,7 +62,18 @@ jobs:
 
     - name: Download windows-drivers query pack
       run: |
+        $ErrorActionPreference = "Stop"
         & "$env:CODEQL_DIR\codeql.exe" pack download "microsoft/windows-drivers@$env:CODEQL_DRIVERS_PACK_VERSION"
+      shell: pwsh
+
+    - name: Inspect windows-drivers pack contents
+      # Safety net: prints the real .qls suite paths shipped in this pack
+      # version, so if Microsoft renames/moves things again the mismatch
+      # shows up here in the log instead of as a cryptic NoSuchFileException.
+      run: |
+        Get-ChildItem -Path "$env:USERPROFILE\.codeql\packages\microsoft\windows-drivers\$env:CODEQL_DRIVERS_PACK_VERSION" -Recurse -File |
+          Where-Object { $_.Extension -eq ".qls" } |
+          Select-Object -ExpandProperty FullName
       shell: pwsh
 
     - name: Build CodeQL database
@@ -78,6 +92,7 @@ jobs:
 
     - name: Analyze with mustrun.qls (informational)
       run: |
+        $ErrorActionPreference = "Stop"
         & "$env:CODEQL_DIR\codeql.exe" database analyze "$env:CODEQL_DB" `
           "microsoft/windows-drivers:windows-driver-suites/mustrun.qls" `
           --format=sarifv2.1.0 `
@@ -123,16 +138,15 @@ jobs:
           ${{ env.SARIF_MUSTRUN }}
           ${{ env.SARIF_MUSTFIX }}
 
-
     - name: Upload mustrun.qls SARIF to GitHub code scanning
-      if: always()
+      if: ${{ always() && env.SARIF_MUSTRUN != '' }}
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: ${{ env.SARIF_MUSTRUN }}
         category: mustrun
 
     - name: Upload mustfix.qls SARIF to GitHub code scanning
-      if: always()
+      if: ${{ always() && env.SARIF_MUSTFIX != '' }}
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: ${{ env.SARIF_MUSTFIX }}
