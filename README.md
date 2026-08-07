@@ -37,7 +37,7 @@ The driver has been extensively tested on **MacBook Pro 16,1 (2019) and Air 2015
 
 - Requires Windows Test Mode.
 - Haptic feedback is not implemented.
-- Only USB Apple trackpads are supported.
+- Only USB Apple touchpads are supported.
 
 ---
 
