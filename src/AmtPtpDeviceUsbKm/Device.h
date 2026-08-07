@@ -16,6 +16,33 @@ typedef enum _CLICK_ARBITRATION_STATE
     CLICK_ARBITRATION_FORCE_TOUCH  // decided: force touch - suppress click
 } CLICK_ARBITRATION_STATE;
 
+// Synthetic right-click delivery for force-touch clicks.
+//
+// REWORKED: previously a flat ring of individual Button2 edges (down/up
+// treated as interchangeable entries), evicted from the head on overflow.
+// That could orphan an already-delivered DOWN when its matching UP got
+// evicted before delivery (e.g. several force-touch clicks landing
+// back-to-back while mouhid.sys's read cadence lagged) - Windows would
+// then see Button2 latched down with no UP ever coming: a stuck
+// right-click. Split into two pieces so that failure mode is structurally
+// impossible:
+//
+//  - ForceTouchDeliveryState: the ONE click currently being delivered.
+//    Its UP is always guaranteed to be sent (eventually) before a new
+//    click's DOWN is ever started - so a DOWN can never reach the host
+//    without its UP following.
+//  - PendingForceTouchClickCount: clicks still waiting to START. These
+//    have delivered nothing yet, so dropping the oldest on overflow (a
+//    very fast click storm outrunning available mouse read requests) is
+//    always safe - at worst a click gets silently coalesced away, never
+//    a stuck button.
+typedef enum _FORCE_TOUCH_DELIVERY_STATE
+{
+    FORCE_TOUCH_DELIVERY_IDLE = 0,     // nothing in flight
+    FORCE_TOUCH_DELIVERY_DOWN_PENDING, // DOWN not yet delivered
+    FORCE_TOUCH_DELIVERY_UP_PENDING    // DOWN delivered, UP not yet delivered
+} FORCE_TOUCH_DELIVERY_STATE;
+
 typedef struct _DEVICE_CONTEXT
 {
     // Protect shared frame-processing state across concurrent USB completions.
@@ -52,33 +79,8 @@ typedef struct _DEVICE_CONTEXT
     USHORT  ForceTouchAnchorY;
     BOOLEAN ForceTouchDragLockout;
 
-    // Synthetic right-click delivery for force-touch clicks.
-    //
-    // REWORKED: previously a flat ring of individual Button2 edges
-    // (down/up treated as interchangeable entries), evicted from the head
-    // on overflow. That could orphan an already-delivered DOWN when its
-    // matching UP got evicted before delivery (e.g. several force-touch
-    // clicks landing back-to-back while mouhid.sys's read cadence lagged)
-    // - Windows would then see Button2 latched down with no UP ever
-    // coming: a stuck right-click. Split into two pieces so that failure
-    // mode is structurally impossible:
-    //
-    //  - ForceTouchDeliveryState: the ONE click currently being delivered.
-    //    Its UP is always guaranteed to be sent (eventually) before a new
-    //    click's DOWN is ever started - so a DOWN can never reach the host
-    //    without its UP following.
-    //  - PendingForceTouchClickCount: clicks still waiting to START. These
-    //    have delivered nothing yet, so dropping the oldest on overflow
-    //    (a very fast click storm outrunning available mouse read
-    //    requests) is always safe - at worst a click gets silently
-    //    coalesced away, never a stuck button.
-    typedef enum _FORCE_TOUCH_DELIVERY_STATE
-    {
-        FORCE_TOUCH_DELIVERY_IDLE = 0,   // nothing in flight
-        FORCE_TOUCH_DELIVERY_DOWN_PENDING, // DOWN not yet delivered
-        FORCE_TOUCH_DELIVERY_UP_PENDING    // DOWN delivered, UP not yet delivered
-    } FORCE_TOUCH_DELIVERY_STATE;
-
+    // Force-touch click delivery state - see FORCE_TOUCH_DELIVERY_STATE
+    // above for the full rationale.
 #define PENDING_FORCE_TOUCH_CLICK_CAPACITY 8 // queued (not-yet-started) clicks
     FORCE_TOUCH_DELIVERY_STATE ForceTouchDeliveryState;
     UCHAR                       PendingForceTouchClickCount;
