@@ -50,7 +50,15 @@ AmtMatchBuildCandidates(
 )
 {
     *LargePalmDetected = FALSE;
-    RtlZeroMemory(OutCandidates, sizeof(MATCH_CANDIDATE_SET));
+
+    // OPTIMIZATION: was RtlZeroMemory(OutCandidates, sizeof(MATCH_CANDIDATE_SET))
+    // - zeroing all PTP_MAX_CONTACT_POINTS Candidates[] slots every frame.
+    // Same reasoning as PTP_CORE_FRAME in Ptpcore.c: every consumer (in
+    // this file and Ptpcore.c) only ever iterates ci < Count, and every
+    // slot that gets counted is assigned a fully-initialized `cand` (see
+    // below) before Count is incremented past it. Only Count itself needs
+    // a defined starting value.
+    OutCandidates->Count = 0;
 
     for (UCHAR i = 0; i < RawFrame->ContactCount; i++) {
         const RAW_CONTACT* rc = &RawFrame->Contacts[i];

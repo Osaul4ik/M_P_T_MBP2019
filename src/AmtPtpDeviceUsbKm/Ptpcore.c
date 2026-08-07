@@ -204,8 +204,18 @@ PTPCore_ProcessFrame(
     BOOLEAN buttonClickEdge = ButtonDown && !pCtx->PrevButtonClicked;
     pCtx->PrevButtonClicked = ButtonDown;
 
-    RtlZeroMemory(OutResult, sizeof(PTP_CORE_FRAME));
-    OutResult->TimestampQpc = NowQpc;
+    // OPTIMIZATION: was RtlZeroMemory(OutResult, sizeof(PTP_CORE_FRAME)) -
+    // zeroing all PTP_MAX_CONTACT_POINTS Contacts[] slots (~80 of the
+    // struct's ~96 bytes) every single frame. Unnecessary: every consumer
+    // (AmtSerializeCoreFrameToReport, and this file) only ever reads
+    // Contacts[0..ContactCount-1], and every slot that gets counted is
+    // fully field-initialized by AmtCoreEmitContact/AmtCoreDrainOverflow
+    // before ContactCount is incremented past it - nothing ever reads a
+    // stale/uninitialized tail slot. Only the 3 scalar fields actually
+    // need a defined starting value.
+    OutResult->TimestampQpc     = NowQpc;
+    OutResult->ContactCount     = 0;
+    OutResult->LargePalmBlanked = FALSE;
 
     // Build candidates (palm + tip-debounce)
     MATCH_CANDIDATE_SET candidates;
