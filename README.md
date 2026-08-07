@@ -10,7 +10,7 @@ The project started as a fork of **mac-precision-touchpad** and has since evolve
 
 # Current Status
 
-Completed 
+Stable 
 
 The driver has been extensively tested on **MacBook Pro 16,1 (2019) and Air 2015**
 
@@ -40,7 +40,7 @@ The driver has been extensively tested on **MacBook Pro 16,1 (2019) and Air 2015
 * Apple MacBook Pro 16,1 (2019, T2)
 * MacBook Air 2015 13" (7,2)
 
-### Testing (Untested, use at your own risk)
+### Expected to work (not yet tested)
 
 MacBook Pro:
 - MacBook Pro 2015 13" (12,1) — Force Touch, no Touch Bar
