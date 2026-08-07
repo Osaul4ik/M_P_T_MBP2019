@@ -5,16 +5,28 @@ on:
     branches: [ master ]
   workflow_dispatch:
 
+# Cancel superseded runs on the same PR/branch instead of burning runner time.
+concurrency:
+  group: static-analysis-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege by default; this job only needs to read the repo.
+permissions:
+  contents: read
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   PROJECT_DIR: src/AmtPtpDeviceUsbKm
   DRIVER_NAME: AmtPtpDeviceUsbKm
   CONFIGURATION: Release
   PLATFORM: x64
+  # Strict mode: PREfast warnings fail the build, not just get logged.
+  CA_TREAT_WARNINGS_AS_ERRORS: true
 
 jobs:
   analyze:
     runs-on: windows-2022
+    timeout-minutes: 45
 
     steps:
     - uses: actions/checkout@v4
@@ -24,19 +36,98 @@ jobs:
 
     - name: Install WDK
       run: |
+        $ErrorActionPreference = "Stop"
         $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2085767"
         $wdkInstaller = "$env:TEMP\wdksetup.exe"
         Invoke-WebRequest -Uri $wdkUrl -OutFile $wdkInstaller
         Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet /norestart" -Wait
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "WDK installer exited with code $LASTEXITCODE"
+          exit 1
+        }
       shell: pwsh
 
     - name: Build with PREfast (/analyze) enabled
+      id: build
       run: |
-        msbuild src/AmtPtpDeviceUsbKm/AmtPtpDeviceUsbKm.vcxproj `
-          /p:Configuration=Release `
-          /p:Platform=x64 `
+        # PowerShell does not fail a script on a non-zero exit code from a
+        # native process by default - it only sets $LASTEXITCODE. Always
+        # check it explicitly after msbuild, or a broken build will report
+        # a green checkmark.
+        $ErrorActionPreference = "Stop"
+
+        $logDir = "$env:TEMP\static-analysis-logs"
+        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+        $binLog = Join-Path $logDir "build.binlog"
+        $treatAsErrors = $env:CA_TREAT_WARNINGS_AS_ERRORS
+
+        & msbuild "$env:PROJECT_DIR\$env:DRIVER_NAME.vcxproj" `
+          /p:Configuration=$env:CONFIGURATION `
+          /p:Platform=$env:PLATFORM `
           /p:WindowsTargetPlatformVersion=10.0.26100.0 `
           /p:RunCodeAnalysis=true `
           /p:EnableCppCoreCheck=true `
-          /p:CodeAnalysisTreatWarningsAsErrors=false
+          /p:CodeAnalysisTreatWarningsAsErrors=$treatAsErrors `
+          /nologo `
+          /verbosity:normal `
+          /clp:Summary `
+          "/bl:$binLog"
+
+        $exitCode = $LASTEXITCODE
+        Add-Content -Path $env:GITHUB_ENV -Value "BUILD_LOG_DIR=$logDir"
+
+        if ($exitCode -ne 0) {
+          Write-Host "::error::msbuild exited with code $exitCode"
+          exit $exitCode
+        }
+
+        Write-Host "OK: build + PREfast analysis completed with exit code 0"
       shell: pwsh
+
+    - name: Collect and evaluate PREfast (Code Analysis) results
+      # Runs even if the build step above failed, so the CA log is still
+      # picked up for debugging - but this step re-asserts failure if any
+      # CA warning/error was recorded, in case CodeAnalysisTreatWarningsAsErrors
+      # was overridden to false somewhere in the project files.
+      if: always()
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        $caLogs = Get-ChildItem -Path "$env:PROJECT_DIR" -Recurse -Filter "*.CodeAnalysisLog.xml" -ErrorAction SilentlyContinue
+        if (-not $caLogs) {
+          Write-Host "No .CodeAnalysisLog.xml files found - PREfast may not have run. Treating as failure."
+          Write-Host "::error::No Code Analysis log files were produced; cannot confirm PREfast ran."
+          exit 1
+        }
+
+        $totalDefects = 0
+        foreach ($log in $caLogs) {
+          [xml]$xml = Get-Content -Path $log.FullName -Raw
+          $defects = $xml.SelectNodes("//DEFECT")
+          $count = $defects.Count
+          $totalDefects += $count
+          Write-Host "==> $($log.Name): $count defect(s)"
+        }
+
+        Write-Host "==> Total PREfast defects: $totalDefects"
+
+        if ($totalDefects -gt 0) {
+          Write-Host "::error::$totalDefects PREfast defect(s) found - failing the Static Analysis check."
+          exit 1
+        }
+
+        Write-Host "OK: 0 PREfast defects."
+      shell: pwsh
+
+    - name: Upload build and analysis logs
+      # Always upload, even on failure - this is the artifact you actually
+      # open to debug a red run instead of scrolling the raw log.
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: static-analysis-logs
+        retention-days: 14
+        if-no-files-found: warn
+        path: |
+          ${{ env.BUILD_LOG_DIR }}\build.binlog
+          ${{ env.PROJECT_DIR }}\**\*.CodeAnalysisLog.xml
