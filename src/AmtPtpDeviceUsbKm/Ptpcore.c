@@ -47,8 +47,11 @@ AmtRecentLiftFindNearby(
     _Out_ USHORT*                 OutY
 )
 {
-    if (WindowTicks <= 0)
+    if (WindowTicks <= 0) {
+        *OutX = 0;
+        *OutY = 0;
         return FALSE;
+    }
 
     LONG     bestDistSq = -1;
     BOOLEAN  found       = FALSE;
