@@ -10,7 +10,7 @@ The project started as a fork of **mac-precision-touchpad** and has since evolve
 
 # Current Status
 
-Testing and bug hunting.
+Completed 
 
 The driver has been extensively tested on **MacBook Pro 16,1 (2019) and Air 2015**
 
