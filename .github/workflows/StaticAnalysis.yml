@@ -68,11 +68,24 @@ jobs:
         # a green checkmark.
         $ErrorActionPreference = "Stop"
 
-        $logDir = "$env:TEMP\static-analysis-logs"
+        # Logs must live INSIDE the checked-out workspace, not $env:TEMP -
+        # actions/upload-artifact@v4 computes a single common root directory
+        # for all uploaded paths and errors out if any path falls outside
+        # the repo tree (as happened when the binlog lived under TEMP while
+        # other paths were repo-relative).
+        $logDir = Join-Path $env:GITHUB_WORKSPACE "static-analysis-logs"
         New-Item -ItemType Directory -Path $logDir -Force | Out-Null
         $binLog = Join-Path $logDir "build.binlog"
+        $buildLog = Join-Path $logDir "build.log"
         $treatAsErrors = $env:CA_TREAT_WARNINGS_AS_ERRORS
 
+        # The project already compiles with /W4 /WX, and PREfast/analyze
+        # diagnostics (C6xxx) are emitted through the same compiler
+        # diagnostic pipe as ordinary warnings - so /WX already fails the
+        # build on any PREfast finding. No separate CodeAnalysisLog.xml
+        # parsing step is needed (that file format belongs to the older,
+        # non-integrated Code Analysis MSBuild target and isn't produced
+        # by this build pipeline).
         & msbuild "$env:PROJECT_DIR\$env:DRIVER_NAME.vcxproj" `
           /p:Configuration=$env:CONFIGURATION `
           /p:Platform=$env:PLATFORM `
@@ -83,52 +96,18 @@ jobs:
           /nologo `
           /verbosity:normal `
           /clp:Summary `
-          "/bl:$binLog"
+          "/bl:$binLog" `
+          2>&1 | Tee-Object -FilePath $buildLog
 
         $exitCode = $LASTEXITCODE
         Add-Content -Path $env:GITHUB_ENV -Value "BUILD_LOG_DIR=$logDir"
 
         if ($exitCode -ne 0) {
-          Write-Host "::error::msbuild exited with code $exitCode"
+          Write-Host "::error::msbuild exited with code $exitCode (build failure and/or PREfast finding - see build.log)"
           exit $exitCode
         }
 
-        Write-Host "OK: build + PREfast analysis completed with exit code 0"
-      shell: pwsh
-
-    - name: Collect and evaluate PREfast (Code Analysis) results
-      # Runs even if the build step above failed, so the CA log is still
-      # picked up for debugging - but this step re-asserts failure if any
-      # CA warning/error was recorded, in case CodeAnalysisTreatWarningsAsErrors
-      # was overridden to false somewhere in the project files.
-      if: always()
-      run: |
-        $ErrorActionPreference = "Stop"
-
-        $caLogs = Get-ChildItem -Path "$env:PROJECT_DIR" -Recurse -Filter "*.CodeAnalysisLog.xml" -ErrorAction SilentlyContinue
-        if (-not $caLogs) {
-          Write-Host "No .CodeAnalysisLog.xml files found - PREfast may not have run. Treating as failure."
-          Write-Host "::error::No Code Analysis log files were produced; cannot confirm PREfast ran."
-          exit 1
-        }
-
-        $totalDefects = 0
-        foreach ($log in $caLogs) {
-          [xml]$xml = Get-Content -Path $log.FullName -Raw
-          $defects = $xml.SelectNodes("//DEFECT")
-          $count = $defects.Count
-          $totalDefects += $count
-          Write-Host "==> $($log.Name): $count defect(s)"
-        }
-
-        Write-Host "==> Total PREfast defects: $totalDefects"
-
-        if ($totalDefects -gt 0) {
-          Write-Host "::error::$totalDefects PREfast defect(s) found - failing the Static Analysis check."
-          exit 1
-        }
-
-        Write-Host "OK: 0 PREfast defects."
+        Write-Host "OK: build + PREfast analysis completed with exit code 0, zero warnings (enforced by /W4 /WX)"
       shell: pwsh
 
     - name: Upload build and analysis logs
@@ -140,6 +119,4 @@ jobs:
         name: static-analysis-logs
         retention-days: 14
         if-no-files-found: warn
-        path: |
-          ${{ env.BUILD_LOG_DIR }}\build.binlog
-          ${{ env.PROJECT_DIR }}\**\*.CodeAnalysisLog.xml
+        path: static-analysis-logs/
