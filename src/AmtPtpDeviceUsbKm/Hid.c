@@ -40,7 +40,8 @@ HID_REPORT_DESCRIPTOR AmtPtpT2ReportDescriptor[] = {
 };
 
 CONST HID_DESCRIPTOR AmtPtpT2DefaultHidDescriptor = {
-	0x09,   // bLength
+	(UCHAR) sizeof(HID_DESCRIPTOR), // bLength - computed, not hardcoded;
+	                                 // see C_ASSERT below
 	0x21,   // bDescriptorType
 	0x0100, // bcdHID
 	0x00,   // bCountryCode
@@ -50,6 +51,18 @@ CONST HID_DESCRIPTOR AmtPtpT2DefaultHidDescriptor = {
 		sizeof(AmtPtpT2ReportDescriptor)    // bDescriptorLength
 	},
 };
+
+// HID_DESCRIPTOR (as declared by the WDK) is a packed 9-byte layout for
+// exactly one DescriptorList entry: bLength(1) + bDescriptorType(1) +
+// bcdHID(2) + bCountryCode(1) + bNumDescriptors(1) + DescriptorList[1]
+// {bDescriptorType(1) + wDescriptorLength(2)}. bNumDescriptors above is
+// hardcoded to 0x01, matching the single-entry array the type provides.
+// If a future WDK/SDK update ever changes that layout, bLength (computed
+// from sizeof above) will silently follow it - this assert exists so a
+// layout change that changes byte count is caught at compile time
+// instead of shipping a semantically-wrong-but-still-in-bounds HID
+// descriptor to the host.
+C_ASSERT(sizeof(HID_DESCRIPTOR) == 9);
 
 #endif
 
