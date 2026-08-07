@@ -132,7 +132,15 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     // USB read completion
 
-    if (NumBytesTransferred < headerSize ||
+    // Internal invariant: every Bcm5974ConfigTable entry has a nonzero
+    // FSIZE_TYPEn, which backs both the modulo and the division below.
+    // NT_ASSERT catches a misconfigured table entry in debug builds; the
+    // explicit fingerSize==0 check guards release builds against a
+    // divide-by-zero bugcheck regardless.
+    NT_ASSERT(fingerSize != 0);
+
+    if (fingerSize == 0 ||
+        NumBytesTransferred < headerSize ||
         (NumBytesTransferred - headerSize) % fingerSize != 0) {
         return;
     }
@@ -193,11 +201,13 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         raw_n = (NumBytesTransferred - headerSize) / fingerSize;
         if (raw_n > PTP_MAX_CONTACT_POINTS) raw_n = PTP_MAX_CONTACT_POINTS;
 
-        if (raw_n * fingerSize > (NumBytesTransferred - headerSize)) {
-            WdfSpinLockRelease(pCtx->StateLock);
-            WdfRequestComplete(Request, STATUS_DATA_ERROR);
-            return;
-        }
+        // AUDIT: raw_n is floor(D/fingerSize), optionally clamped down to
+        // PTP_MAX_CONTACT_POINTS - either way raw_n*fingerSize can never
+        // exceed D, so the runtime check that used to sit here could never
+        // trigger (dead code, no actual protection). Kept as a debug-only
+        // invariant instead of dropping the guarantee's documentation
+        // entirely.
+        NT_ASSERT(raw_n * fingerSize <= (NumBytesTransferred - headerSize));
 
         UCHAR* f_base = TouchBuffer + headerSize + pCtx->DeviceInfo->tp_delta;
         AmtInputParseFrame(f_base, fingerSize, raw_n, pCtx->DeviceInfo,

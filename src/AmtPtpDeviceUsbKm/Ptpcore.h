@@ -11,8 +11,11 @@ EXTERN_C_START
 
 typedef struct _RAW_CONTACT
 {
-    USHORT SlotIndex;   // raw hardware slot index (0..PTP_MAX_CONTACT_POINTS-1)
-    USHORT X;            // normalized device units (post AmtClampCoord)
+    USHORT SlotIndex;   // scan-order position in this frame's finger array
+                        // (0..PTP_MAX_CONTACT_POINTS-1) - NOT a stable
+                        // hardware identity, the firmware doesn't expose
+                        // one. Matching hint only; see Match.c.
+    USHORT X;            // normalized device units (post AmtInputClampCoord)
     USHORT Y;
     USHORT Major;        // touch_major, raw
     USHORT Minor;        // touch_minor, raw

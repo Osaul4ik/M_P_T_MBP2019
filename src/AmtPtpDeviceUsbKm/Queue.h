@@ -8,7 +8,12 @@ AmtPtpDeviceUsbKmQueueInitialize(
     );
 
 // IoQueue events
-EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL AmtPtpDeviceUsbKmEvtIoDeviceControl;
+// Registered as EvtIoInternalDeviceControl (Queue.c) - internal, not
+// external/public IOCTLs - so it must use the INTERNAL_DEVICE_CONTROL
+// callback type. Same signature as EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL,
+// so the mismatch compiled and ran fine, but the wrong type tag here
+// mislabels this for readers and any SAL-based tooling.
+EVT_WDF_IO_QUEUE_IO_INTERNAL_DEVICE_CONTROL AmtPtpDeviceUsbKmEvtIoDeviceControl;
 EVT_WDF_IO_QUEUE_IO_STOP AmtPtpDeviceUsbKmEvtIoStop;
 
 EXTERN_C_END

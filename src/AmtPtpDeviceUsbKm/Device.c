@@ -49,7 +49,13 @@ AmtFreeAlignedContactPool(_In_opt_ PACTIVE_CONTACT Pool)
 }
 
 // Read the matching config entry for the detected device.
-
+//
+// DESIGN NOTE: an idProduct with no table entry is a deliberate best-effort
+// fallback to Bcm5974ConfigTable[0] (a TYPE4/T2 profile), not an error -
+// this lets the driver still bind (with possibly miscalibrated geometry
+// limits) on unlisted-but-compatible hardware instead of refusing to load.
+// If that's no longer the desired behavior, change this to return NULL and
+// have AmtPtpDeviceUsbKmEvtDevicePrepareHardware fail the bind instead.
 _IRQL_requires_(PASSIVE_LEVEL)
 static const struct BCM5974_CONFIG*
 AmtPtpGetDeviceConfig(_In_ const PUSB_DEVICE_DESCRIPTOR DeviceDescriptor)

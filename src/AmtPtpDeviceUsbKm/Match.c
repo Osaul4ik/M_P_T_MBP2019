@@ -20,9 +20,6 @@
 static UCHAR
 AmtMatchCandidateTip(_In_ USHORT major, _In_ USHORT minor)
 {
-    // MICRO-OPT: (x << 1) >= 200  <=>  x >= 100 (halve both sides; no
-    // overflow risk, major/minor are USHORT so <<1 always fits in INT).
-    // Same semantics, one fewer op, and reads more directly.
     return (UCHAR)((INT)major >= 100 || (INT)minor >= 75);
 }
 
@@ -91,29 +88,74 @@ AmtMatchBuildCandidates(
         }
 
         // Bridge low-signal contacts through the pool when possible.
-        size_t bestPoolIdx  = MAX_CONTACTS;
-        LONG   bestDistSq   = -1;
+        //
+        // ARCHITECTURE FIX (stale-SlotIndex bridging bug): SlotIndex is a
+        // scan-order array position assigned in AmtInputParseFrame (Input.c),
+        // not a stable hardware identity - struct TRACKPAD_FINGER
+        // (AppleDefinition.h) has no such field, the firmware doesn't expose
+        // one. Requiring an EXACT LastSlotHint == SlotIndex match here (as
+        // a hard filter, unlike AmtMatchCorrespond below which only uses it
+        // to break near-ties) meant any scan-order reshuffle between frames
+        // - e.g. a second finger landing and shifting an existing finger's
+        // array position - silently broke the bridge for a contact that
+        // never physically moved, forcing a spurious rebirth. Symptom:
+        // asymmetric "right-then-left" tap failures.
+        //
+        // Fix: geometry (distance) is now the primary key, gated by
+        // TIP_DROP_MAX_REPOSITION_DELTA exactly as before; slot-hint only
+        // breaks near-ties between two otherwise equally-plausible
+        // candidates - the same tie-break role it already plays in
+        // AmtMatchCorrespond, for consistency.
+        size_t  bestPoolIdx       = MAX_CONTACTS;
+        LONG    bestDistSq        = -1;
+        BOOLEAN bestSlotHintMatch = FALSE;
+
+        // MICRO-OPT: rc->X/rc->Y are loop-invariant across the p-loop below
+        // (only poolEntry changes per iteration) - cast and read once here
+        // instead of redoing it on every one of the up to MAX_CONTACTS
+        // iterations. Same values, same semantics, matches the hoisting
+        // style already used elsewhere in this file/Input.c.
+        INT rcX = (INT)rc->X;
+        INT rcY = (INT)rc->Y;
 
         for (size_t p = 0; p < MAX_CONTACTS; p++) {
             const ACTIVE_CONTACT* poolEntry = &Pool[p];
             if (poolEntry->State != CONTACT_ACTIVE)
                 continue;
-            if (poolEntry->LastSlotHint != rc->SlotIndex)
-                continue;
 
-            INT dxAbs = (INT)rc->X - (INT)poolEntry->ReportX;
+            INT dxAbs = rcX - (INT)poolEntry->ReportX;
             if (dxAbs < 0) dxAbs = -dxAbs;
-            INT dyAbs = (INT)rc->Y - (INT)poolEntry->ReportY;
+            INT dyAbs = rcY - (INT)poolEntry->ReportY;
             if (dyAbs < 0) dyAbs = -dyAbs;
 
             if (dxAbs > TIP_DROP_MAX_REPOSITION_DELTA ||
                 dyAbs > TIP_DROP_MAX_REPOSITION_DELTA)
                 continue;
 
-            LONG distSq = (LONG)dxAbs * dxAbs + (LONG)dyAbs * dyAbs;
-            if (bestPoolIdx == MAX_CONTACTS || distSq < bestDistSq) {
-                bestPoolIdx = p;
-                bestDistSq  = distSq;
+            LONG    distSq        = (LONG)dxAbs * dxAbs + (LONG)dyAbs * dyAbs;
+            BOOLEAN slotHintMatch = (poolEntry->LastSlotHint == rc->SlotIndex);
+
+            if (bestPoolIdx == MAX_CONTACTS) {
+                bestPoolIdx       = p;
+                bestDistSq        = distSq;
+                bestSlotHintMatch = slotHintMatch;
+                continue;
+            }
+
+            LONG delta = distSq - bestDistSq;
+            BOOLEAN withinEpsilon = (delta > -MATCH_TIE_EPSILON_SQ) &&
+                                    (delta < MATCH_TIE_EPSILON_SQ);
+
+            if (distSq < bestDistSq && !withinEpsilon) {
+                bestPoolIdx       = p;
+                bestDistSq        = distSq;
+                bestSlotHintMatch = slotHintMatch;
+            } else if (withinEpsilon && slotHintMatch && !bestSlotHintMatch) {
+                // Cost tied within epsilon and this candidate's slot-hint
+                // agrees while the current best's doesn't - prefer it.
+                bestPoolIdx       = p;
+                bestDistSq        = distSq;
+                bestSlotHintMatch = TRUE;
             }
         }
 
