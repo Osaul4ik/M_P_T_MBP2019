@@ -253,9 +253,11 @@ AmtPtpEvtDeviceD0Entry(
     pDeviceContext->PrevButtonClicked    = FALSE;
     pDeviceContext->ForceTouchAnchorValid = FALSE;
     pDeviceContext->ForceTouchDragLockout = FALSE;
-    // Drop pending force-touch edges from the previous power session.
-    pDeviceContext->PendingForceTouchEdgeHead  = 0;
-    pDeviceContext->PendingForceTouchEdgeCount = 0;
+    // Drop pending/in-flight force-touch clicks from the previous power
+    // session - nothing was delivered to a live HID client across a D0
+    // transition, so there's no in-flight UP to worry about orphaning.
+    pDeviceContext->ForceTouchDeliveryState     = FORCE_TOUCH_DELIVERY_IDLE;
+    pDeviceContext->PendingForceTouchClickCount = 0;
     pDeviceContext->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
     AmtContactPoolInit(pDeviceContext->ActiveContacts);
 

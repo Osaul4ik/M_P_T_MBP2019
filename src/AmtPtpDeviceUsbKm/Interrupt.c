@@ -45,25 +45,29 @@ AmtSerializeCoreFrameToReport(
     Report->ContactCount = n;
 }
 
-// Queue a force-touch edge for later delivery.
+// Queue one force-touch click (a full down+up pulse) for later delivery.
+//
+// Never touches ForceTouchDeliveryState directly - a click that arrives
+// while one is already in flight (or queued) just waits its turn. Only
+// clicks that haven't started delivering anything are ever dropped on
+// overflow, so a delivered DOWN can never be left without its UP (see the
+// Device.h field comment for the failure mode this replaced).
 static VOID
-AmtForceTouchEdgeEnqueue(
-    _Inout_ PDEVICE_CONTEXT pCtx,
-    _In_    BOOLEAN         Button2State
-)
+AmtForceTouchClickEnqueue(_Inout_ PDEVICE_CONTEXT pCtx)
 {
-    if (pCtx->PendingForceTouchEdgeCount == PENDING_FORCE_TOUCH_EDGE_CAPACITY) {
-        pCtx->PendingForceTouchEdgeHead = (UCHAR)
-            ((pCtx->PendingForceTouchEdgeHead + 1) % PENDING_FORCE_TOUCH_EDGE_CAPACITY);
-        pCtx->PendingForceTouchEdgeCount--;
+    if (pCtx->ForceTouchDeliveryState == FORCE_TOUCH_DELIVERY_IDLE &&
+        pCtx->PendingForceTouchClickCount == 0) {
+        // Nothing in flight and nothing queued - start immediately.
+        pCtx->ForceTouchDeliveryState = FORCE_TOUCH_DELIVERY_DOWN_PENDING;
+        return;
     }
 
-    UCHAR tail = (UCHAR)
-        ((pCtx->PendingForceTouchEdgeHead + pCtx->PendingForceTouchEdgeCount)
-         % PENDING_FORCE_TOUCH_EDGE_CAPACITY);
-
-    pCtx->PendingForceTouchEdgeQueue[tail] = Button2State;
-    pCtx->PendingForceTouchEdgeCount++;
+    if (pCtx->PendingForceTouchClickCount < PENDING_FORCE_TOUCH_CLICK_CAPACITY) {
+        pCtx->PendingForceTouchClickCount++;
+    }
+    // else: click storm far beyond anything a human can produce - drop the
+    // newest one. Safe: it never started delivering, so nothing is left
+    // half-sent.
 }
 
 _IRQL_requires_(PASSIVE_LEVEL)
@@ -271,19 +275,24 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // that pass - depending on mouhid.sys's read cadence.
     // AUDIT FIX #2: latching only the latest edge lost fast down+up pairs
     // (the up overwrote the down, so Button2 never appeared to move).
-    // Edges are now queued (PendingForceTouchEdgeQueue) and delivered in
-    // order, one per available mouse request per completion.
+    //
+    // REWORK (stuck-button fix): a flat edge ring evicted its OLDEST raw
+    // edge on overflow, which could discard a click's UP after its DOWN
+    // had already been delivered - Button2 would then latch down forever.
+    // Delivery is now a DOWN/UP state machine (ForceTouchDeliveryState)
+    // for the one click in flight, backed by a queue of not-yet-started
+    // click counts (PendingForceTouchClickCount) that's always safe to
+    // trim - see the Device.h field comment.
     //
     // SIMPLIFICATION (2026-08-03): PTPCore now decides the whole click on
     // the release frame (OutForceTouchClick) - nothing to test here.
     if (forceTouchClick) {
-        AmtForceTouchEdgeEnqueue(pCtx, TRUE);
-        AmtForceTouchEdgeEnqueue(pCtx, FALSE);
+        AmtForceTouchClickEnqueue(pCtx);
     }
 
-    if (pCtx->PendingForceTouchEdgeCount > 0) {
+    if (pCtx->ForceTouchDeliveryState != FORCE_TOUCH_DELIVERY_IDLE) {
         BOOLEAN edgeButton2State =
-            pCtx->PendingForceTouchEdgeQueue[pCtx->PendingForceTouchEdgeHead];
+            (pCtx->ForceTouchDeliveryState == FORCE_TOUCH_DELIVERY_DOWN_PENDING);
 
         WDFREQUEST mouseRequest;
         Status = WdfIoQueueRetrieveNextRequest(pCtx->InputQueue, &mouseRequest);
@@ -304,10 +313,19 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
             }
             WdfRequestComplete(mouseRequest, Status);
 
-            // Delivered (or handed to Windows): pop it off the head.
-            pCtx->PendingForceTouchEdgeHead =
-                (UCHAR)((pCtx->PendingForceTouchEdgeHead + 1) % PENDING_FORCE_TOUCH_EDGE_CAPACITY);
-            pCtx->PendingForceTouchEdgeCount--;
+            // DOWN just went out -> now the UP for this SAME click is owed
+            // and must be delivered before anything else starts. UP just
+            // went out -> this click is fully done; only now may the next
+            // queued click (if any) begin its own DOWN.
+            if (pCtx->ForceTouchDeliveryState == FORCE_TOUCH_DELIVERY_DOWN_PENDING) {
+                pCtx->ForceTouchDeliveryState = FORCE_TOUCH_DELIVERY_UP_PENDING;
+            } else {
+                pCtx->ForceTouchDeliveryState = FORCE_TOUCH_DELIVERY_IDLE;
+                if (pCtx->PendingForceTouchClickCount > 0) {
+                    pCtx->PendingForceTouchClickCount--;
+                    pCtx->ForceTouchDeliveryState = FORCE_TOUCH_DELIVERY_DOWN_PENDING;
+                }
+            }
         }
         // else: no second request yet - retry on the next completion.
     }

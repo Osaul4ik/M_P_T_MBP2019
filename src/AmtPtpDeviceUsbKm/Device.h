@@ -52,11 +52,36 @@ typedef struct _DEVICE_CONTEXT
     USHORT  ForceTouchAnchorY;
     BOOLEAN ForceTouchDragLockout;
 
-    // Queue synthetic right-click edges until they can be delivered.
-#define PENDING_FORCE_TOUCH_EDGE_CAPACITY 4
-    BOOLEAN PendingForceTouchEdgeQueue[PENDING_FORCE_TOUCH_EDGE_CAPACITY]; // each entry: Button2 state (1=down, 0=up)
-    UCHAR   PendingForceTouchEdgeHead;   // index of the oldest queued edge
-    UCHAR   PendingForceTouchEdgeCount;  // number of queued, undelivered edges
+    // Synthetic right-click delivery for force-touch clicks.
+    //
+    // REWORKED: previously a flat ring of individual Button2 edges
+    // (down/up treated as interchangeable entries), evicted from the head
+    // on overflow. That could orphan an already-delivered DOWN when its
+    // matching UP got evicted before delivery (e.g. several force-touch
+    // clicks landing back-to-back while mouhid.sys's read cadence lagged)
+    // - Windows would then see Button2 latched down with no UP ever
+    // coming: a stuck right-click. Split into two pieces so that failure
+    // mode is structurally impossible:
+    //
+    //  - ForceTouchDeliveryState: the ONE click currently being delivered.
+    //    Its UP is always guaranteed to be sent (eventually) before a new
+    //    click's DOWN is ever started - so a DOWN can never reach the host
+    //    without its UP following.
+    //  - PendingForceTouchClickCount: clicks still waiting to START. These
+    //    have delivered nothing yet, so dropping the oldest on overflow
+    //    (a very fast click storm outrunning available mouse read
+    //    requests) is always safe - at worst a click gets silently
+    //    coalesced away, never a stuck button.
+    typedef enum _FORCE_TOUCH_DELIVERY_STATE
+    {
+        FORCE_TOUCH_DELIVERY_IDLE = 0,   // nothing in flight
+        FORCE_TOUCH_DELIVERY_DOWN_PENDING, // DOWN not yet delivered
+        FORCE_TOUCH_DELIVERY_UP_PENDING    // DOWN delivered, UP not yet delivered
+    } FORCE_TOUCH_DELIVERY_STATE;
+
+#define PENDING_FORCE_TOUCH_CLICK_CAPACITY 8 // queued (not-yet-started) clicks
+    FORCE_TOUCH_DELIVERY_STATE ForceTouchDeliveryState;
+    UCHAR                       PendingForceTouchClickCount;
 
     // Click-arbitration state and timing.
     CLICK_ARBITRATION_STATE ClickArbitrationState;
