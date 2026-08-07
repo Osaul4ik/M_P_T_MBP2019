@@ -1,4 +1,4 @@
-name: CodeQL
+name: CodeQL (WHCP Static Tools Logo Test)
 
 on:
   pull_request:
@@ -35,6 +35,7 @@ jobs:
         Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet /norestart" -Wait
       shell: pwsh
 
+
     - name: Download CodeQL CLI
       run: |
         $ErrorActionPreference = "Stop"
@@ -61,7 +62,6 @@ jobs:
         & "$env:CODEQL_DIR\codeql.exe" pack download "microsoft/windows-drivers@$env:CODEQL_DRIVERS_PACK_VERSION"
       shell: pwsh
 
-
     - name: Build CodeQL database
       run: |
         $ErrorActionPreference = "Stop"
@@ -76,23 +76,64 @@ jobs:
         Add-Content -Path $env:GITHUB_ENV -Value "CODEQL_DB=$dbPath"
       shell: pwsh
 
-    - name: Analyze with CodeQL
+    - name: Analyze with mustrun.qls (informational)
       run: |
         & "$env:CODEQL_DIR\codeql.exe" database analyze "$env:CODEQL_DB" `
-          "microsoft/windows-drivers:windows-driver-suites/recommended.qls" `
+          "microsoft/windows-drivers:windows-driver-suites/mustrun.qls" `
           --format=sarifv2.1.0 `
-          --output="$env:TEMP\codeql-results.sarif"
+          --output="$env:TEMP\codeql-mustrun.sarif"
 
-        Add-Content -Path $env:GITHUB_ENV -Value "SARIF_PATH=$env:TEMP\codeql-results.sarif"
+        Add-Content -Path $env:GITHUB_ENV -Value "SARIF_MUSTRUN=$env:TEMP\codeql-mustrun.sarif"
       shell: pwsh
 
-    - name: Upload SARIF as build artifact
+    - name: Analyze with mustfix.qls (blocking)
+      run: |
+        $ErrorActionPreference = "Stop"
+        $sarifPath = "$env:TEMP\codeql-mustfix.sarif"
+
+        & "$env:CODEQL_DIR\codeql.exe" database analyze "$env:CODEQL_DB" `
+          "microsoft/windows-drivers:windows-driver-suites/mustfix.qls" `
+          --format=sarifv2.1.0 `
+          --output=$sarifPath
+
+        Add-Content -Path $env:GITHUB_ENV -Value "SARIF_MUSTFIX=$sarifPath"
+
+        $sarif = Get-Content -Path $sarifPath -Raw | ConvertFrom-Json
+        $resultCount = 0
+        foreach ($run in $sarif.runs) {
+          if ($run.results) { $resultCount += $run.results.Count }
+        }
+
+        Write-Host "==> mustfix.qls results: $resultCount"
+
+        if ($resultCount -gt 0) {
+          Write-Host "::error::$resultCount Must-Fix defect(s) found - this driver would FAIL the WHCP Static Tools Logo Test. See the uploaded SARIF/Security tab for details."
+          exit 1
+        }
+
+        Write-Host "OK: 0 Must-Fix defects - passes the mustfix.qls criterion of the Static Tools Logo Test."
+      shell: pwsh
+
+    - name: Upload SARIF results as build artifacts
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: codeql-results
-        path: ${{ env.SARIF_PATH }}
+        path: |
+          ${{ env.SARIF_MUSTRUN }}
+          ${{ env.SARIF_MUSTFIX }}
 
-    - name: Upload SARIF to GitHub code scanning
+
+    - name: Upload mustrun.qls SARIF to GitHub code scanning
+      if: always()
       uses: github/codeql-action/upload-sarif@v3
       with:
-        sarif_file: ${{ env.SARIF_PATH }}
+        sarif_file: ${{ env.SARIF_MUSTRUN }}
+        category: mustrun
+
+    - name: Upload mustfix.qls SARIF to GitHub code scanning
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ env.SARIF_MUSTFIX }}
+        category: mustfix
