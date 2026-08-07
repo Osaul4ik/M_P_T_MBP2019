@@ -502,16 +502,19 @@ AmtContactUpdate(
 
     INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity, gestureActive);
 
-    if (Contact->PendingFirstSample) {
-        if (retapSeededFirstSample) {
-            // Keep HystX/Y - they hold the seeded baseline.
-            passed = AmtContactEvaluateDeadzone(Contact, rawX, rawY, deadzoneThreshold);
-        } else {
-            Contact->HystX = rawX;
-            Contact->HystY = rawY;
-            passed = TRUE;
-        }
+    // Only the true first sample of a *non*-retap-seeded contact skips the
+    // deadzone check (baseline is seeded here, nothing to compare against
+    // yet). Every other case - a fresh sample, or a retap-seeded first
+    // sample whose HystX/Y baseline already holds the seeded position -
+    // runs the same AmtContactEvaluateDeadzone call, so it's kept as one
+    // call site instead of being duplicated across two branches.
+    if (Contact->PendingFirstSample && !retapSeededFirstSample) {
+        Contact->HystX = rawX;
+        Contact->HystY = rawY;
+        passed = TRUE;
     } else {
+        // Keep HystX/Y as-is on the retap-seeded path - they hold the
+        // seeded baseline.
         passed = AmtContactEvaluateDeadzone(Contact, rawX, rawY, deadzoneThreshold);
     }
 

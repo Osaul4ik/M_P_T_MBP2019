@@ -72,26 +72,28 @@ AmtMatchBuildCandidates(
             return;
         }
 
-        MATCH_CANDIDATE cand;
-        RtlZeroMemory(&cand, sizeof(cand));
-        cand.SlotIndex     = rc->SlotIndex;
-        cand.IdentityBreak = (rc->Origin == 0);
-        cand.Major         = rc->Major;
-        cand.Minor         = rc->Minor;
-        cand.Pressure      = rc->Pressure;
+        // Write straight into the destination slot - no stack-temp +
+        // struct-copy. Same pattern AmtCoreEmitContact (Ptpcore.c) already
+        // uses for PTP_CORE_CONTACT: take the slot pointer once, fill its
+        // fields in place, only advance Count when the slot is committed.
+        MATCH_CANDIDATE* cand = &OutCandidates->Candidates[OutCandidates->Count];
+        RtlZeroMemory(cand, sizeof(*cand));
+        cand->SlotIndex     = rc->SlotIndex;
+        cand->IdentityBreak = (rc->Origin == 0);
+        cand->Major         = rc->Major;
+        cand->Minor         = rc->Minor;
+        cand->Pressure      = rc->Pressure;
 
-        if (palm == PALM_LOCAL) {
-            cand.PalmLocal = TRUE;
-            cand.X = rc->X;
-            cand.Y = rc->Y;
-            OutCandidates->Candidates[OutCandidates->Count++] = cand;
-            continue;
-        }
-
-        if (AmtMatchCandidateTip(rc->Major, rc->Minor)) {
-            cand.X = rc->X;
-            cand.Y = rc->Y;
-            OutCandidates->Candidates[OutCandidates->Count++] = cand;
+        // High-signal contact (local palm or tip-sized): report raw coords
+        // as-is. Merged into one branch - both arms were an identical
+        // X/Y-then-commit tail, differing only in the PalmLocal flag.
+        // Short-circuit `||` preserves the original call pattern exactly:
+        // AmtMatchCandidateTip is still skipped whenever palm == PALM_LOCAL.
+        if (palm == PALM_LOCAL || AmtMatchCandidateTip(rc->Major, rc->Minor)) {
+            cand->PalmLocal = (palm == PALM_LOCAL);
+            cand->X = rc->X;
+            cand->Y = rc->Y;
+            OutCandidates->Count++;
             continue;
         }
 
@@ -169,11 +171,11 @@ AmtMatchBuildCandidates(
 
         if (bestPoolIdx == MAX_CONTACTS) {
             // A new soft tap is tracked but not trusted yet.
-            cand.X              = rc->X;
-            cand.Y              = rc->Y;
-            cand.TipDropApplied = 0;
-            cand.Unconfirmed    = 1;
-            OutCandidates->Candidates[OutCandidates->Count++] = cand;
+            cand->X              = rc->X;
+            cand->Y              = rc->Y;
+            cand->TipDropApplied = 0;
+            cand->Unconfirmed    = 1;
+            OutCandidates->Count++;
             continue;
         }
 
@@ -189,15 +191,15 @@ AmtMatchBuildCandidates(
         BOOLEAN isStationary = (dxMove <= TIP_DROP_STATIONARY_DELTA) &&
                                (dyMove <= TIP_DROP_STATIONARY_DELTA);
 
-        cand.X = isStationary ? anchorX : rc->X;
-        cand.Y = isStationary ? anchorY : rc->Y;
+        cand->X = isStationary ? anchorX : rc->X;
+        cand->Y = isStationary ? anchorY : rc->Y;
 
         // Only the stationary bridge reports a stale position.
-        cand.TipDropApplied = isStationary ? 1 : 0;
+        cand->TipDropApplied = isStationary ? 1 : 0;
 
         // Anchored bridges stay confirmed; only true births stay unconfirmed.
 
-        OutCandidates->Candidates[OutCandidates->Count++] = cand;
+        OutCandidates->Count++;
     }
 }
 
