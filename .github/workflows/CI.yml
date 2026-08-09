@@ -21,12 +21,16 @@ env:
 jobs:
 
   # ===========================================================================
-  # Gate 1: CodeQL - WHCP Static Tools Logo Test (mustrun.qls + mustfix.qls)
+  # Один job, один раннер, один build. CodeQL трасує єдину компіляцію (з
+  # прапорами PREfast всередині), потім mustrun/mustfix аналіз бази, і якщо
+  # mustfix чистий - той самий .sys, що лежить на диску цього ж раннера,
+  # стемпається/підписується й пакується. Ніякого cache/artifact для
+  # передачі .sys чи WDK-тулів між стадіями - все на одному диску.
   # ===========================================================================
-  codeql:
-    name: CodeQL (WHCP Static Tools Logo Test)
+  ci:
+    name: CodeQL + StaticAnalysis + BuildKM
     runs-on: windows-2022
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
       security-events: write
@@ -34,6 +38,7 @@ jobs:
       CODEQL_CLI_VERSION: 2.24.1
       CODEQL_DRIVERS_PACK_VERSION: 1.8.2
       CODEQL_CPP_QUERIES_PACK_VERSION: 0.0.4
+      CA_TREAT_WARNINGS_AS_ERRORS: true
 
     steps:
     - uses: actions/checkout@v4
@@ -87,11 +92,28 @@ jobs:
         & "$env:CODEQL_DIR\codeql.exe" pack download "microsoft/cpp-queries@$env:CODEQL_CPP_QUERIES_PACK_VERSION"
       shell: pwsh
 
-    - name: Build CodeQL database
+    # =====================================================================
+    # Єдина компіляція всього пайплайна: CodeQL трасує саме цей msbuild-
+    # виклик, а сам виклик вже несе прапори PREfast (/p:RunCodeAnalysis
+    # /p:EnableCppCoreCheck /p:CodeAnalysisTreatWarningsAsErrors). Якщо
+    # PREfast знайде warning (з /WX) - msbuild впаде з ненульовим кодом,
+    # і `codeql database create` впаде разом з ним.
+    # =====================================================================
+    - name: Build CodeQL database (with PREfast /analyze baked in)
       run: |
         $ErrorActionPreference = "Stop"
-        $dbPath = "$env:TEMP\codeql-db"
-        $buildCmd = "msbuild /p:Configuration=$env:CONFIGURATION /p:Platform=$env:PLATFORM /p:WindowsTargetPlatformVersion=10.0.26100.0 $env:PROJECT_DIR\$env:DRIVER_NAME.vcxproj /t:rebuild"
+        $dbPath  = "$env:TEMP\codeql-db"
+        $logDir  = Join-Path $env:GITHUB_WORKSPACE "static-analysis-logs"
+        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+        $buildLog = Join-Path $logDir "build.log"
+
+        $buildCmd = "msbuild /p:Configuration=$env:CONFIGURATION /p:Platform=$env:PLATFORM " +
+                    "/p:WindowsTargetPlatformVersion=10.0.26100.0 " +
+                    "/p:RunCodeAnalysis=true /p:EnableCppCoreCheck=true " +
+                    "/p:CodeAnalysisTreatWarningsAsErrors=$env:CA_TREAT_WARNINGS_AS_ERRORS " +
+                    "/nologo /verbosity:normal /clp:Summary " +
+                    "/flp:logfile=$buildLog;verbosity=normal " +
+                    "$env:PROJECT_DIR\$env:DRIVER_NAME.vcxproj /t:rebuild"
 
         & "$env:CODEQL_DIR\codeql.exe" database create $dbPath `
           --language=cpp `
@@ -99,7 +121,17 @@ jobs:
           --command=$buildCmd
 
         Add-Content -Path $env:GITHUB_ENV -Value "CODEQL_DB=$dbPath"
+        Add-Content -Path $env:GITHUB_ENV -Value "BUILD_LOG_DIR=$logDir"
       shell: pwsh
+
+    - name: Upload build logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: static-analysis-logs
+        retention-days: 14
+        if-no-files-found: warn
+        path: static-analysis-logs/
 
     - name: Analyze with mustrun.qls (informational)
       run: |
@@ -161,111 +193,15 @@ jobs:
         sarif_file: ${{ env.SARIF_MUSTFIX }}
         category: mustfix
 
-
-  # ===========================================================================
-  # Gate 2: PREfast / Code Analysis (/analyze) - zero-warnings enforced via /WX
-  # ===========================================================================
-  static-analysis:
-    name: StaticAnalysis
-    runs-on: windows-2022
-    timeout-minutes: 45
-    permissions:
-      contents: read
-    env:
-      CA_TREAT_WARNINGS_AS_ERRORS: true
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Add MSBuild to PATH
-      uses: microsoft/setup-msbuild@v2
-
-    - name: Install WDK
-      run: |
-        $ErrorActionPreference = "Stop"
-        $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2085767"
-        $wdkInstaller = "$env:TEMP\wdksetup.exe"
-        Invoke-WebRequest -Uri $wdkUrl -OutFile $wdkInstaller
-        $proc = Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet /norestart" -Wait -PassThru
-        $exitCode = $proc.ExitCode
-        if ($exitCode -ne 0 -and $exitCode -ne 3010) {
-          Write-Error "WDK installer exited with code $exitCode"
-          exit 1
-        }
-        Write-Host "OK: WDK installer exited with code $exitCode"
-      shell: pwsh
-
-    - name: Build with PREfast (/analyze) enabled
-      run: |
-        $ErrorActionPreference = "Stop"
-
-        $logDir = Join-Path $env:GITHUB_WORKSPACE "static-analysis-logs"
-        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
-        $binLog = Join-Path $logDir "build.binlog"
-        $buildLog = Join-Path $logDir "build.log"
-        $treatAsErrors = $env:CA_TREAT_WARNINGS_AS_ERRORS
-
-        & msbuild "$env:PROJECT_DIR\$env:DRIVER_NAME.vcxproj" `
-          /p:Configuration=$env:CONFIGURATION `
-          /p:Platform=$env:PLATFORM `
-          /p:WindowsTargetPlatformVersion=10.0.26100.0 `
-          /p:RunCodeAnalysis=true `
-          /p:EnableCppCoreCheck=true `
-          /p:CodeAnalysisTreatWarningsAsErrors=$treatAsErrors `
-          /nologo `
-          /verbosity:normal `
-          /clp:Summary `
-          "/bl:$binLog" `
-          2>&1 | Tee-Object -FilePath $buildLog
-
-        $exitCode = $LASTEXITCODE
-        Add-Content -Path $env:GITHUB_ENV -Value "BUILD_LOG_DIR=$logDir"
-
-        if ($exitCode -ne 0) {
-          Write-Host "::error::msbuild exited with code $exitCode (build failure and/or PREfast finding - see build.log)"
-          exit $exitCode
-        }
-        Write-Host "OK: build + PREfast analysis completed, zero warnings (enforced by /W4 /WX)"
-      shell: pwsh
-
-    - name: Upload build and analysis logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: static-analysis-logs
-        retention-days: 14
-        if-no-files-found: warn
-        path: static-analysis-logs/
-
-
-  # ===========================================================================
-  # Gate 3: Build, stamp, sign and package the driver - only runs if both
-  # quality gates above passed. Produces the same signed archive that
-  # BuildKM_New used to produce on its own.
-  # ===========================================================================
-  build:
-    name: BuildKM_New
-    needs: [ codeql, static-analysis ]
-    runs-on: windows-2022
-    timeout-minutes: 45
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Add MSBuild to PATH
-      uses: microsoft/setup-msbuild@v2
-
-    - name: Install WDK
-      run: |
-        $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2085767"
-        $wdkInstaller = "$env:TEMP\wdksetup.exe"
-        Invoke-WebRequest -Uri $wdkUrl -OutFile $wdkInstaller
-        Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet /norestart" -Wait
-      shell: pwsh
+    # =====================================================================
+    # Все, що нижче, виконається лише якщо mustfix.qls вище пройшов чисто
+    # (exit 0) - жоден із цих кроків не має if: always(), тому при
+    # Must-Fix дефекті job зупиняється на кроці вище і сюди не доходить:
+    # ані стемп/підпис не запуститься, ані фінальний артефакт не з'явиться.
+    # =====================================================================
 
     # =====================================================================
-    # Перевірка секретів підпису ДО збірки, щоб не витрачати час
-    # раннера на компіляцію, якщо секрети для test-signing не налаштовані.
+    # Перевірка секретів підпису перед пакуванням.
     # =====================================================================
     - name: Validate signing secrets are present
       run: |
@@ -306,15 +242,9 @@ jobs:
         Add-Content -Path $env:GITHUB_ENV -Value "DRIVER_VERSION=$driverVersion"
       shell: pwsh
 
-    - name: Build USB KM Driver
-      run: |
-        msbuild src/AmtPtpDeviceUsbKm/AmtPtpDeviceUsbKm.vcxproj `
-          /p:Configuration=Release `
-          /p:Platform=x64 `
-          /p:WindowsTargetPlatformVersion=10.0.26100.0
-      shell: pwsh
-
     # =====================================================================
+    # .sys уже лежить на диску цього ж раннера (той самий build вище) -
+    # просто беремо його з build-виводу проєкту, без cache/download.
     # Готуємо окрему "staging" теку package/, куди кладемо тільки
     # .sys та .inf, що стосуються AmtPtpDeviceUsbKm.
     # =====================================================================
@@ -329,7 +259,7 @@ jobs:
 
         Write-Host "==> Expected .sys path: $sysPath"
         if (-not (Test-Path $sysPath)) {
-          Write-Error "Built .sys not found: $sysPath. Check the 'Build USB KM Driver' step."
+          Write-Error "Built .sys not found: $sysPath. Check the 'Build CodeQL database' step."
           exit 1
         }
         if (-not (Test-Path $infSrcPath)) {
@@ -351,7 +281,7 @@ jobs:
       shell: pwsh
 
     # =====================================================================
-    # Автопошук StampInf.exe
+    # Автопошук StampInf.exe (WDK вже стоїть на цьому ж раннері)
     # =====================================================================
     - name: Locate StampInf.exe
       run: |
