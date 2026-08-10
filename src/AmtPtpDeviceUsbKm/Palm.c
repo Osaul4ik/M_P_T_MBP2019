@@ -63,9 +63,9 @@ AmtPalmClassify(
 
         // Edge weighting favors the top edge for taps and widens the lower edges for palms.
         #define EDGE_DIVISOR_TOP     28   // tight zone, near NormY=0
-        #define EDGE_DIVISOR_LEFT    12
-        #define EDGE_DIVISOR_RIGHT   12
-        #define EDGE_DIVISOR_BOTTOM  6    // wide zone, near NormY=yRange
+        #define EDGE_DIVISOR_LEFT    7
+        #define EDGE_DIVISOR_RIGHT   7
+        #define EDGE_DIVISOR_BOTTOM  4    // wide zone, near NormY=yRange
 
         INT edgeLeft   = xRange / EDGE_DIVISOR_LEFT;
         INT edgeRight  = xRange / EDGE_DIVISOR_RIGHT;
