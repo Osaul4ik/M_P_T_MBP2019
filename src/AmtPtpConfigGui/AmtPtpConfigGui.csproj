@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AmtPtpConfigGui</RootNamespace>
+    <AssemblyName>AmtPtpConfigGui</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64;ARM64</Platforms>
+    <!-- Talks to a kernel-mode device via SetupAPI/DeviceIoControl - no
+         admin rights are required to open the device interface (same as
+         any other HID-class app), so we intentionally do NOT request
+         elevation here. -->
+  </PropertyGroup>
+
+</Project>
