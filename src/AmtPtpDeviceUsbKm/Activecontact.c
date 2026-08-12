@@ -5,7 +5,7 @@
 
 // Adaptive deadzone reduces steppy two-finger scrolling.
 #define XY_DEADZONE_UNITS          1  // fallback: VELOCITY_UNKNOWN/MEDIUM
-#define XY_DEADZONE_UNITS_SLOW     5  // near-stationary: absorb tilt/small-lift drift
+#define XY_DEADZONE_UNITS_SLOW     6  // near-stationary: absorb tilt/small-lift drift
 #define XY_DEADZONE_UNITS_FAST     0  // fast motion: no deadzone lag
 
 // Velocity buckets choose deadzone and smoothing.
