@@ -9,14 +9,45 @@
 #define PALM_MIN_MAJOR  80   // мінімальний major для підозри на долоню
 #define PALM_MIN_MINOR  40   // мінімальний minor для підозри на долоню
 
-// Edge-zone widths, shared by the birth hard-reject and the soft edge
-// score bonus below. Top stays tight (near NormY=0); left/right/bottom
-// are wide - real accidental contacts (palm heel, wrist) land there far
-// more than deliberate taps.
-#define EDGE_DIVISOR_TOP     28   // tight zone, near NormY=0
-#define EDGE_DIVISOR_LEFT    7
-#define EDGE_DIVISOR_RIGHT   7
-#define EDGE_DIVISOR_BOTTOM  4    // wide zone, near NormY=yRange
+// ============================================================================
+// Edge-zone size, in PERMILLE (parts per 1000 = 0.1%) of the pad's usable
+// width (left/right) or height (top/bottom). TUNE HERE per trackpad model -
+// different pads (e.g. 2015 MacBook Air vs a T2 machine) have different
+// physical-size-to-sensor-range ratios, so a fixed absolute or divisor-based
+// zone can end up way too big/small on a different model. Percent of range
+// is the portable knob.
+//
+//   36   ->  3.6%
+//   143  -> 14.3%
+//   250  -> 25.0%
+//
+// Old divisor equivalents (kept as reference): /28 ~= 36 permille,
+// /7 ~= 143 permille, /4 = 250 permille exactly.
+#define EDGE_PERMILLE_TOP     36   // tight zone, near NormY=0
+#define EDGE_PERMILLE_LEFT   143
+#define EDGE_PERMILLE_RIGHT  143
+#define EDGE_PERMILLE_BOTTOM 250   // wide zone, near NormY=yRange
+// ============================================================================
+
+// MICRO-OPT: "range * permille / 1000" replaced with fixed-point
+// "range * factor >> SHIFT" - no runtime division (same reasoning as the
+// ratio cross-multiplication above: avoids a div/64-bit-div-helper per
+// contact per frame). factor = (permille << SHIFT) / 1000 is a division of
+// two compile-time constants, folded away entirely by the compiler - only
+// the multiply+shift below runs at runtime.
+#define EDGE_FIXED_SHIFT 16
+#define EDGE_FACTOR(permille) (((INT64)(permille) << EDGE_FIXED_SHIFT) / 1000)
+
+#define EDGE_FACTOR_TOP    EDGE_FACTOR(EDGE_PERMILLE_TOP)
+#define EDGE_FACTOR_LEFT   EDGE_FACTOR(EDGE_PERMILLE_LEFT)
+#define EDGE_FACTOR_RIGHT  EDGE_FACTOR(EDGE_PERMILLE_RIGHT)
+#define EDGE_FACTOR_BOTTOM EDGE_FACTOR(EDGE_PERMILLE_BOTTOM)
+
+static inline INT
+AmtPalmEdgeWidth(_In_ INT Range, _In_ INT64 Factor)
+{
+    return (INT)(((INT64)Range * Factor) >> EDGE_FIXED_SHIFT);
+}
 
 static BOOLEAN
 AmtPalmInEdgeZone(
@@ -28,10 +59,10 @@ AmtPalmInEdgeZone(
     INT xRange = DevInfo->x.max - DevInfo->x.min;
     INT yRange = DevInfo->y.max - DevInfo->y.min;
 
-    INT edgeLeft   = xRange / EDGE_DIVISOR_LEFT;
-    INT edgeRight  = xRange / EDGE_DIVISOR_RIGHT;
-    INT edgeTop    = yRange / EDGE_DIVISOR_TOP;
-    INT edgeBottom = yRange / EDGE_DIVISOR_BOTTOM;
+    INT edgeLeft   = AmtPalmEdgeWidth(xRange, EDGE_FACTOR_LEFT);
+    INT edgeRight  = AmtPalmEdgeWidth(xRange, EDGE_FACTOR_RIGHT);
+    INT edgeTop    = AmtPalmEdgeWidth(yRange, EDGE_FACTOR_TOP);
+    INT edgeBottom = AmtPalmEdgeWidth(yRange, EDGE_FACTOR_BOTTOM);
 
     return (BOOLEAN)(NormX < edgeLeft || NormX > (xRange - edgeRight) ||
                       NormY < edgeTop  || NormY > (yRange - edgeBottom));
