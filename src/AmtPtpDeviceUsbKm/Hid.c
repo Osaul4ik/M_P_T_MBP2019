@@ -38,14 +38,51 @@ HidValidateReportSize(
 #ifndef _AAPL_HID_DESCRIPTOR_H_
 #define _AAPL_HID_DESCRIPTOR_H_
 
-HID_REPORT_DESCRIPTOR AmtPtpT2ReportDescriptor[] = {
-	AAPL_WELLSPRING_T2_PTP_TLC,
-	AAPL_PTP_WINDOWS_CONFIGURATION_TLC,
-	// Additive: separate Mouse TLC, force-touch right-click delivery
-	// only. Does not alter the PTP TLC above in any way.
-	AAPL_WELLSPRING_T2_FORCETOUCH_MOUSE_TLC,
-};
+// One compiled report descriptor per distinct trackpad geometry group
+// (see the header comment in metadata/WellspringT2.h for what each
+// LOGX/PHYSX/LOGY/PHYSY value means and where it came from). Every array
+// below shares the exact same structure - only the 8 geometry bytes per
+// finger collection differ - so they are all guaranteed to be the same
+// length (checked by C_ASSERT below, once, for all of them at once).
 
+#define AAPL_DEFINE_PTP_DESCRIPTOR(NAME, LOGX, PHYSX, LOGY, PHYSY) \
+	static const HID_REPORT_DESCRIPTOR NAME[] = { \
+		AAPL_WELLSPRING_PTP_TLC(LOGX, PHYSX, LOGY, PHYSY), \
+		AAPL_PTP_WINDOWS_CONFIGURATION_TLC, \
+		AAPL_WELLSPRING_T2_FORCETOUCH_MOUSE_TLC, \
+	}
+
+AAPL_DEFINE_PTP_DESCRIPTOR(AmtPtpReportDescriptor_Fallback,
+	AAPL_WS_PTP_LOGX_FALLBACK, AAPL_WS_PTP_PHYSX10_FALLBACK,
+	AAPL_WS_PTP_LOGY_FALLBACK, AAPL_WS_PTP_PHYSY10_FALLBACK);
+
+AAPL_DEFINE_PTP_DESCRIPTOR(AmtPtpReportDescriptor_T2_16,
+	AAPL_WS_PTP_LOGX_T2_16, AAPL_WS_PTP_PHYSX10_T2_16,
+	AAPL_WS_PTP_LOGY_T2_16, AAPL_WS_PTP_PHYSY10_T2_16);
+
+AAPL_DEFINE_PTP_DESCRIPTOR(AmtPtpReportDescriptor_T2_15,
+	AAPL_WS_PTP_LOGX_T2_15, AAPL_WS_PTP_PHYSX10_T2_15,
+	AAPL_WS_PTP_LOGY_T2_15, AAPL_WS_PTP_PHYSY10_T2_15);
+
+AAPL_DEFINE_PTP_DESCRIPTOR(AmtPtpReportDescriptor_T2_13,
+	AAPL_WS_PTP_LOGX_T2_13, AAPL_WS_PTP_PHYSX10_T2_13,
+	AAPL_WS_PTP_LOGY_T2_13, AAPL_WS_PTP_PHYSY10_T2_13);
+
+AAPL_DEFINE_PTP_DESCRIPTOR(AmtPtpReportDescriptor_WS9,
+	AAPL_WS_PTP_LOGX_WS9, AAPL_WS_PTP_PHYSX10_WS9,
+	AAPL_WS_PTP_LOGY_WS9, AAPL_WS_PTP_PHYSY10_WS9);
+
+AAPL_DEFINE_PTP_DESCRIPTOR(AmtPtpReportDescriptor_WS8,
+	AAPL_WS_PTP_LOGX_WS8, AAPL_WS_PTP_PHYSX10_WS8,
+	AAPL_WS_PTP_LOGY_WS8, AAPL_WS_PTP_PHYSY10_WS8);
+
+#undef AAPL_DEFINE_PTP_DESCRIPTOR
+
+// Same wrapper for every group - only DescriptorList[0].wReportLength
+// would ever need to differ, and the C_ASSERTs below guarantee it never
+// does (every geometry value is small enough to stay in the *_2, i.e.
+// 2-byte, HID item encoding, so no array's byte length can drift from the
+// others just because its numbers are bigger).
 CONST HID_DESCRIPTOR AmtPtpT2DefaultHidDescriptor = {
 	(UCHAR) sizeof(HID_DESCRIPTOR), // bLength - computed, not hardcoded;
 	                                 // see C_ASSERT below
@@ -54,8 +91,8 @@ CONST HID_DESCRIPTOR AmtPtpT2DefaultHidDescriptor = {
 	0x00,   // bCountryCode
 	0x01,   // bNumDescriptors
 	{
-		0x22,                               // bDescriptorType
-		sizeof(AmtPtpT2ReportDescriptor)    // bDescriptorLength
+		0x22,                                        // bDescriptorType
+		sizeof(AmtPtpReportDescriptor_T2_16)          // bDescriptorLength
 	},
 };
 
@@ -70,6 +107,72 @@ CONST HID_DESCRIPTOR AmtPtpT2DefaultHidDescriptor = {
 // instead of shipping a semantically-wrong-but-still-in-bounds HID
 // descriptor to the host.
 C_ASSERT(sizeof(HID_DESCRIPTOR) == 9);
+
+// All per-model descriptors MUST be byte-identical in length - Queue.c /
+// AmtPtpGetReportDescriptor serve whichever one matches this device's PID,
+// but AmtPtpT2DefaultHidDescriptor above (returned unconditionally by
+// AmtPtpGetHidDescriptor before the report descriptor itself is ever
+// requested) advertises one fixed wReportLength for all of them. If a
+// future geometry value ever needed a *_3 (4-byte) item instead of *_2,
+// this would silently break every model except the one that grew - catch
+// it here instead.
+C_ASSERT(sizeof(AmtPtpReportDescriptor_Fallback) == sizeof(AmtPtpReportDescriptor_T2_16));
+C_ASSERT(sizeof(AmtPtpReportDescriptor_T2_15)    == sizeof(AmtPtpReportDescriptor_T2_16));
+C_ASSERT(sizeof(AmtPtpReportDescriptor_T2_13)    == sizeof(AmtPtpReportDescriptor_T2_16));
+C_ASSERT(sizeof(AmtPtpReportDescriptor_WS9)      == sizeof(AmtPtpReportDescriptor_T2_16));
+C_ASSERT(sizeof(AmtPtpReportDescriptor_WS8)      == sizeof(AmtPtpReportDescriptor_T2_16));
+
+// PID -> report descriptor. Deliberately mirrors AmtPtpGetDeviceConfig's
+// grouping in Device.c (same USB_DEVICE_ID_* constants, same fallback
+// semantics: an unrecognized PID still binds, using the generic
+// oversampled geometry instead of failing) - if a PID is ever added to
+// Bcm5974ConfigTable in AppleDefinition.h, add the matching row here too.
+typedef struct _PTP_DESCRIPTOR_ENTRY {
+	USHORT                       ProductId;
+	const HID_REPORT_DESCRIPTOR* Descriptor;
+	size_t                       DescriptorLength;
+} PTP_DESCRIPTOR_ENTRY;
+
+#define PTP_DESCRIPTOR_ROW(PID, ARR) { (PID), (ARR), sizeof(ARR) }
+
+static const PTP_DESCRIPTOR_ENTRY AmtPtpDescriptorTable[] = {
+	PTP_DESCRIPTOR_ROW(USB_DEVICE_ID_APPLE_T2_J152F,         AmtPtpReportDescriptor_T2_16),
+	PTP_DESCRIPTOR_ROW(USB_DEVICE_ID_APPLE_T2_J680,          AmtPtpReportDescriptor_T2_15),
+	PTP_DESCRIPTOR_ROW(USB_DEVICE_ID_APPLE_T2_J140K,         AmtPtpReportDescriptor_T2_13),
+	PTP_DESCRIPTOR_ROW(USB_DEVICE_ID_APPLE_T2_J132,          AmtPtpReportDescriptor_T2_13),
+	PTP_DESCRIPTOR_ROW(USB_DEVICE_ID_APPLE_T2_J213,          AmtPtpReportDescriptor_T2_13),
+	PTP_DESCRIPTOR_ROW(USB_DEVICE_ID_APPLE_T2_J214K,         AmtPtpReportDescriptor_T2_13),
+	PTP_DESCRIPTOR_ROW(USB_DEVICE_ID_APPLE_T2_J223,          AmtPtpReportDescriptor_T2_13),
+	PTP_DESCRIPTOR_ROW(USB_DEVICE_ID_APPLE_T2_J230K,         AmtPtpReportDescriptor_T2_13),
+	PTP_DESCRIPTOR_ROW(USB_DEVICE_ID_APPLE_WELLSPRING9_ANSI, AmtPtpReportDescriptor_WS9),
+	PTP_DESCRIPTOR_ROW(USB_DEVICE_ID_APPLE_WELLSPRING9_ISO,  AmtPtpReportDescriptor_WS9),
+	PTP_DESCRIPTOR_ROW(USB_DEVICE_ID_APPLE_WELLSPRING9_JIS,  AmtPtpReportDescriptor_WS9),
+	PTP_DESCRIPTOR_ROW(USB_DEVICE_ID_APPLE_WELLSPRING8_ANSI, AmtPtpReportDescriptor_WS8),
+	PTP_DESCRIPTOR_ROW(USB_DEVICE_ID_APPLE_WELLSPRING8_ISO,  AmtPtpReportDescriptor_WS8),
+};
+
+#undef PTP_DESCRIPTOR_ROW
+
+// Resolve this device's report descriptor by its USB Product ID. Unknown
+// PID -> the same generic oversampled fallback AmtPtpGetDeviceConfig()
+// (Device.c) uses for Bcm5974ConfigTable, so an unlisted-but-compatible
+// device still binds instead of refusing to load.
+static const PTP_DESCRIPTOR_ENTRY*
+AmtPtpResolveReportDescriptor(_In_ USHORT ProductId)
+{
+	for (size_t i = 0; i < sizeof(AmtPtpDescriptorTable) / sizeof(AmtPtpDescriptorTable[0]); i++) {
+		if (AmtPtpDescriptorTable[i].ProductId == ProductId) {
+			return &AmtPtpDescriptorTable[i];
+		}
+	}
+
+	static const PTP_DESCRIPTOR_ENTRY fallback = {
+		USB_DEVICE_ID_DEFAULT_FALLBACK,
+		AmtPtpReportDescriptor_Fallback,
+		sizeof(AmtPtpReportDescriptor_Fallback)
+	};
+	return &fallback;
+}
 
 #endif
 
@@ -95,7 +198,9 @@ AmtPtpGetHidDescriptor(
 		goto exit;
 	}
 
-	// All supported products use the same fixed HID descriptor.
+	// The outer HID_DESCRIPTOR wrapper (bLength/bcdHID/wReportLength) is
+	// identical across all models - only the report descriptor it points
+	// to (served by AmtPtpGetReportDescriptor below) varies per model.
 	szCopy = AmtPtpT2DefaultHidDescriptor.bLength;
 
 	// Internal invariant: bLength must never claim more bytes than the
@@ -171,8 +276,10 @@ AmtPtpGetReportDescriptor(
 	NTSTATUS status = STATUS_SUCCESS;
 	size_t szCopy = 0;
 	WDFMEMORY requestMemory;
+	PDEVICE_CONTEXT pContext = DeviceGetContext(Device);
+	const PTP_DESCRIPTOR_ENTRY* pDescEntry;
 
-	UNREFERENCED_PARAMETER(Device);
+	NT_ASSERT(pContext != NULL);
 
 	status = WdfRequestRetrieveOutputMemory(
 		Request,
@@ -183,24 +290,27 @@ AmtPtpGetReportDescriptor(
 		goto exit;
 	}
 
-	// All supported products share the same report descriptor.
-	szCopy = AmtPtpT2DefaultHidDescriptor.DescriptorList[0].wReportLength;
+	// Per-model report descriptor, keyed by this device's USB Product ID -
+	// see AmtPtpResolveReportDescriptor and metadata/WellspringT2.h. This
+	// is what previously always served MacBookPro16,1's geometry
+	// (LOGICAL_MAXIMUM/PHYSICAL_MAXIMUM) to every model.
+	pDescEntry = AmtPtpResolveReportDescriptor(pContext->DeviceDescriptor.idProduct);
+	szCopy = pDescEntry->DescriptorLength;
 	if (szCopy == 0) {
 		status = STATUS_INVALID_DEVICE_STATE;
 		goto exit;
 	}
 
-	// Internal invariant: wReportLength is initialized from
-	// sizeof(AmtPtpT2ReportDescriptor) above (see the descriptor's static
-	// init). If the two ever drift apart, the copy below reads past the
-	// end of AmtPtpT2ReportDescriptor - catch that in debug builds rather
-	// than silently leaking adjacent kernel memory into the report.
-	NT_ASSERT(szCopy == sizeof(AmtPtpT2ReportDescriptor));
+	// Internal invariant: every per-model array is asserted equal length
+	// at compile time (see the C_ASSERTs above AmtPtpDescriptorTable), and
+	// AmtPtpT2DefaultHidDescriptor's wReportLength is that same shared
+	// length - so this must always hold regardless of which model matched.
+	NT_ASSERT(szCopy == AmtPtpT2DefaultHidDescriptor.DescriptorList[0].wReportLength);
 
 	status = WdfMemoryCopyFromBuffer(
 		requestMemory,
 		0,
-		(PVOID) &AmtPtpT2ReportDescriptor,
+		(PVOID) pDescEntry->Descriptor,
 		szCopy
 	);
 

@@ -40,3 +40,13 @@
 
 // Force-touch -> synthetic right-click
 #define FORCE_TOUCH_PRESSURE_THRESHOLD 240
+
+// Split a 16-bit HID item value into its little-endian byte pair, for use
+// with the *_2 (2-byte) item opcodes above (e.g. LOGICAL_MAXIMUM_2,
+// PHYSICAL_MAXIMUM_2). Lets per-model descriptor tables be written as plain
+// decimal constants instead of hand-split hex byte pairs, which is where
+// the old single-shared-descriptor bug hid: every finger collection was
+// hand-written with MacBookPro16,1's literal bytes baked in, so nothing
+// caught it silently applying to every other model.
+#define HID_U16_LO(v) ((UCHAR)((v) & 0xFF))
+#define HID_U16_HI(v) ((UCHAR)(((v) >> 8) & 0xFF))
