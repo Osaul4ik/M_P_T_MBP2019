@@ -60,8 +60,12 @@ AmtMatchBuildCandidates(
     for (UCHAR i = 0; i < RawFrame->ContactCount; i++) {
         const RAW_CONTACT* rc = &RawFrame->Contacts[i];
 
+        // rc->Origin==0 is the firmware identity-break signal - a fresh
+        // finger, not a continuation. Feeds the birth-in-edge-zone hard
+        // reject in AmtPalmClassify (Palm.c).
         PALM_CLASS palm = AmtPalmClassify(rc->Major, rc->Minor, DevInfo,
-                                          (INT)rc->X, (INT)rc->Y);
+                                          (INT)rc->X, (INT)rc->Y,
+                                          (BOOLEAN)(rc->Origin == 0));
 
         if (palm == PALM_LARGE) {
             *LargePalmDetected = TRUE;
