@@ -9,20 +9,6 @@ EXTERN_C_START
 typedef enum { PALM_NONE = 0, PALM_LOCAL = 1, PALM_LARGE = 2 } PALM_CLASS;
 
 // Classify one contact as palm or finger.
-PALM_CLASS
-AmtPalmClassify(
-    _In_ USHORT                       Major,
-    _In_ USHORT                       // Palm classification for a single sample.
-
-#pragma once
-
-#include "PTPCore.h"
-
-EXTERN_C_START
-
-typedef enum { PALM_NONE = 0, PALM_LOCAL = 1, PALM_LARGE = 2 } PALM_CLASS;
-
-// Classify one contact as palm or finger.
 // IsBirth: TRUE when this raw contact is a fresh finger per firmware
 // (Origin==0 / identity-break signal), not a continuation of a contact
 // already being tracked. A birth landing inside the edge zone is a hard
@@ -36,12 +22,6 @@ AmtPalmClassify(
     _In_ INT                          NormX,
     _In_ INT                          NormY,
     _In_ BOOLEAN                      IsBirth
-);
-
-EXTERN_C_END,
-    _In_ const struct BCM5974_CONFIG* DevInfo,
-    _In_ INT                          NormX,
-    _In_ INT                          NormY
 );
 
 EXTERN_C_END
