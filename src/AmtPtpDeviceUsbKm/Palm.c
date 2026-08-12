@@ -3,45 +3,31 @@
 #include "Driver.h"
 #include "Palm.h"
 
-#define PALM_LARGE_MAJOR    380
-#define PALM_LARGE_RATIO    180  // Real palms are elongated; round pads are not.
-#define PALM_SCORE_THRESH   55   // Require stronger evidence before suppressing a wide pad.
-#define PALM_MIN_MAJOR  80   // мінімальний major для підозри на долоню
-#define PALM_MIN_MINOR  40   // мінімальний minor для підозри на долоню
-
 // ============================================================================
-// Edge-zone size, in PERMILLE (parts per 1000 = 0.1%) of the pad's usable
-// width (left/right) or height (top/bottom). TUNE HERE per trackpad model -
-// different pads (e.g. 2015 MacBook Air vs a T2 machine) have different
-// physical-size-to-sensor-range ratios, so a fixed absolute or divisor-based
-// zone can end up way too big/small on a different model. Percent of range
-// is the portable knob.
+// All thresholds below used to be compile-time #defines. They are now read
+// from AMT_PALM_CONFIG (Config parameter) so AmtPtpConfigGui can tune them
+// live via IOCTL_AMT_PTP_SET_PALM_CONFIG - no reboot/reinstall needed. The
+// AMT_PALM_CONFIG_DEFAULT_INIT values in Public.h are byte-for-byte the old
+// hardcoded numbers, so a fresh install behaves identically to before.
 //
-//   36   ->  3.6%
-//   143  -> 14.3%
-//   250  -> 25.0%
-//
-// Old divisor equivalents (kept as reference): /28 ~= 36 permille,
-// /7 ~= 143 permille, /4 = 250 permille exactly.
-#define EDGE_PERMILLE_TOP     36   // tight zone, near NormY=0
-#define EDGE_PERMILLE_LEFT   143
-#define EDGE_PERMILLE_RIGHT  143
-#define EDGE_PERMILLE_BOTTOM 250   // wide zone, near NormY=yRange
+// Edge-zone size is expressed in PERMILLE (parts-per-1000 = 0.1%) of the
+// pad's usable width (left/right) or height (top/bottom) - percent-of-range
+// is the portable knob across different trackpad models (e.g. 2015 MacBook
+// Air vs a T2 machine have different physical-size-to-sensor-range ratios).
 // ============================================================================
 
-// MICRO-OPT: "range * permille / 1000" replaced with fixed-point
-// "range * factor >> SHIFT" - no runtime division (same reasoning as the
-// ratio cross-multiplication above: avoids a div/64-bit-div-helper per
-// contact per frame). factor = (permille << SHIFT) / 1000 is a division of
-// two compile-time constants, folded away entirely by the compiler - only
-// the multiply+shift below runs at runtime.
+// MICRO-OPT: "range * permille / 1000" as fixed-point "range * factor >>
+// SHIFT" instead of a runtime division - avoids a div/64-bit-div-helper per
+// contact per frame. Computed from the live (GUI-tunable) permille value,
+// so this can no longer be a compile-time constant; the multiply+shift is
+// still far cheaper than a division on the hot per-contact path.
 #define EDGE_FIXED_SHIFT 16
-#define EDGE_FACTOR(permille) (((INT64)(permille) << EDGE_FIXED_SHIFT) / 1000)
 
-#define EDGE_FACTOR_TOP    EDGE_FACTOR(EDGE_PERMILLE_TOP)
-#define EDGE_FACTOR_LEFT   EDGE_FACTOR(EDGE_PERMILLE_LEFT)
-#define EDGE_FACTOR_RIGHT  EDGE_FACTOR(EDGE_PERMILLE_RIGHT)
-#define EDGE_FACTOR_BOTTOM EDGE_FACTOR(EDGE_PERMILLE_BOTTOM)
+static inline INT64
+AmtPalmEdgeFactor(_In_ ULONG Permille)
+{
+    return ((INT64)Permille << EDGE_FIXED_SHIFT) / 1000;
+}
 
 static inline INT
 AmtPalmEdgeWidth(_In_ INT Range, _In_ INT64 Factor)
@@ -52,6 +38,7 @@ AmtPalmEdgeWidth(_In_ INT Range, _In_ INT64 Factor)
 static BOOLEAN
 AmtPalmInEdgeZone(
     _In_ const struct BCM5974_CONFIG* DevInfo,
+    _In_ const AMT_PALM_CONFIG*       Config,
     _In_ INT                          NormX,
     _In_ INT                          NormY
 )
@@ -59,10 +46,10 @@ AmtPalmInEdgeZone(
     INT xRange = DevInfo->x.max - DevInfo->x.min;
     INT yRange = DevInfo->y.max - DevInfo->y.min;
 
-    INT edgeLeft   = AmtPalmEdgeWidth(xRange, EDGE_FACTOR_LEFT);
-    INT edgeRight  = AmtPalmEdgeWidth(xRange, EDGE_FACTOR_RIGHT);
-    INT edgeTop    = AmtPalmEdgeWidth(yRange, EDGE_FACTOR_TOP);
-    INT edgeBottom = AmtPalmEdgeWidth(yRange, EDGE_FACTOR_BOTTOM);
+    INT edgeLeft   = AmtPalmEdgeWidth(xRange, AmtPalmEdgeFactor(Config->EdgePermilleLeft));
+    INT edgeRight  = AmtPalmEdgeWidth(xRange, AmtPalmEdgeFactor(Config->EdgePermilleRight));
+    INT edgeTop    = AmtPalmEdgeWidth(yRange, AmtPalmEdgeFactor(Config->EdgePermilleTop));
+    INT edgeBottom = AmtPalmEdgeWidth(yRange, AmtPalmEdgeFactor(Config->EdgePermilleBottom));
 
     return (BOOLEAN)(NormX < edgeLeft || NormX > (xRange - edgeRight) ||
                       NormY < edgeTop  || NormY > (yRange - edgeBottom));
@@ -73,6 +60,7 @@ AmtPalmClassify(
     _In_ USHORT                       Major,
     _In_ USHORT                       Minor,
     _In_ const struct BCM5974_CONFIG* DevInfo,
+    _In_ const AMT_PALM_CONFIG*       Config,
     _In_ INT                          NormX,
     _In_ INT                          NormY,
     _In_ BOOLEAN                      IsBirth
@@ -85,14 +73,20 @@ AmtPalmClassify(
     // suppress accidental edge touches, not just wide palm-shaped ones.
     // Contacts already being tracked that merely move through the zone are
     // NOT affected - only IsBirth is checked here.
-    if (IsBirth && AmtPalmInEdgeZone(DevInfo, NormX, NormY)) {
+    if (IsBirth && AmtPalmInEdgeZone(DevInfo, Config, NormX, NormY)) {
         return PALM_LOCAL;
     }
 
     INT major = AmtRawToSignedInt(Major);
     INT minor = AmtRawToSignedInt(Minor);
 
-    if (major < PALM_MIN_MAJOR && minor < PALM_MIN_MINOR) {
+    INT palmMinMajor  = (INT)Config->PalmMinMajor;
+    INT palmMinMinor  = (INT)Config->PalmMinMinor;
+    INT palmLargeMajor = (INT)Config->PalmLargeMajor;
+    INT palmLargeRatio = (INT)Config->PalmLargeRatio;
+    INT palmScoreThresh = (INT)Config->PalmScoreThresh;
+
+    if (major < palmMinMajor && minor < palmMinMinor) {
         return PALM_NONE;
     }
     INT score = 0;
@@ -100,18 +94,18 @@ AmtPalmClassify(
     if (major <= 0 && minor <= 0)
         return PALM_NONE;
 
-    if (major >= PALM_LARGE_MAJOR) {
+    if (major >= palmLargeMajor) {
         // Treat missing shape data as palm; otherwise require a strong elongation signal.
         if (minor <= 0)
             return PALM_LARGE;
 
         // MICRO-OPT: division replaced with cross-multiplication.
         // floor(A/B) > C  <=>  A >= (C+1)*B  for non-negative A,B,C, B>0.
-        // Exactly equivalent to (major*100/minor) > PALM_LARGE_RATIO,
+        // Exactly equivalent to (major*100/minor) > PalmLargeRatio,
         // just without the runtime div. INT64 guards against overflow
         // (major/minor are USHORT-derived, no realistic overflow risk,
         // but kept explicit for clarity).
-        if ((INT64)major * 100 >= (INT64)(PALM_LARGE_RATIO + 1) * minor)
+        if ((INT64)major * 100 >= (INT64)(palmLargeRatio + 1) * minor)
             return PALM_LARGE;
     }
 
@@ -131,8 +125,8 @@ AmtPalmClassify(
     // Soft edge bonus for continuations (or births that weren't caught by
     // the hard-reject above, e.g. a birth reported with major==0 for one
     // frame). Kept as a secondary signal on top of the hard reject.
-    if (major > 130 && AmtPalmInEdgeZone(DevInfo, NormX, NormY))
+    if (major > 130 && AmtPalmInEdgeZone(DevInfo, Config, NormX, NormY))
         score += 10;
 
-    return (score >= PALM_SCORE_THRESH) ? PALM_LOCAL : PALM_NONE;
+    return (score >= palmScoreThresh) ? PALM_LOCAL : PALM_NONE;
 }

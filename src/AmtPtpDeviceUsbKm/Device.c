@@ -113,6 +113,16 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     deviceContext->PtpReportButton = TRUE;
     deviceContext->PtpReportTouch  = TRUE;
 
+    // Palm-rejection config: compiled-in defaults first (so the device is
+    // always in a valid state even if registry access below fails), then
+    // best-effort overridden from the registry if a GUI previously saved
+    // custom values there.
+    {
+        AMT_PALM_CONFIG defaultCfg = AMT_PALM_CONFIG_DEFAULT_INIT;
+        deviceContext->PalmConfig = defaultCfg;
+    }
+    AmtPalmConfigLoadFromRegistry(device, &deviceContext->PalmConfig);
+
     // Create the shared state lock for frame processing.
     {
         WDF_OBJECT_ATTRIBUTES lockAttributes;

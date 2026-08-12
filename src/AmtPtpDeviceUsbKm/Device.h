@@ -57,6 +57,15 @@ typedef struct _DEVICE_CONTEXT
     const struct BCM5974_CONFIG* DeviceInfo;
     BOOLEAN IsWellspringModeOn;
 
+    // Runtime-tunable palm-rejection thresholds (see AMT_PALM_CONFIG in
+    // Public.h). Initialized to AMT_PALM_CONFIG_DEFAULT_INIT in
+    // AmtPtpDeviceUsbKmCreateDevice, then optionally overridden from the
+    // registry (AmtPalmConfigLoadFromRegistry) and/or live via
+    // IOCTL_AMT_PTP_SET_PALM_CONFIG from AmtPtpConfigGui. Read every frame
+    // by AmtPalmClassify (Palm.c) - protected by StateLock on write so a
+    // config update from the GUI thread can't race a frame in flight.
+    AMT_PALM_CONFIG PalmConfig;
+
     // TRUE only for trackpads whose packet format actually carries a
     // pressure reading (TYPE4/TYPE5 - see AppleDefinition.h). Derived once
     // from DeviceInfo->tp_type in EvtDevicePrepareHardware. TYPE1-3
@@ -227,5 +236,36 @@ NTSTATUS AmtPtpReportFeatures(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
 
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AmtPtpSetFeatures(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+
+// ConfigIoctl.c - AmtPtpConfigGui <-> driver custom IOCTL surface.
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS AmtPtpGetPalmConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS AmtPtpSetPalmConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS AmtPtpGetPadGeometry(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS AmtPtpResetPalmConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+
+// Best-effort registry persistence under the device's driver-software key
+// (HKLM\SYSTEM\...\Enum\...\Device Parameters, via WdfDeviceOpenRegistryKey).
+// Failure to read/write the registry is never fatal - PalmConfig always
+// falls back to AMT_PALM_CONFIG_DEFAULT_INIT.
+_IRQL_requires_(PASSIVE_LEVEL)
+VOID AmtPalmConfigLoadFromRegistry(_In_ WDFDEVICE Device, _Inout_ PAMT_PALM_CONFIG Config);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID AmtPalmConfigSaveToRegistry(_In_ WDFDEVICE Device, _In_ const AMT_PALM_CONFIG* Config);
+
+// Clamps every tunable field of Config in place to the ranges declared in
+// Public.h (AMT_PALM_*_MAX). Used on every path that accepts values from
+// user mode (SET IOCTL and registry load) so a corrupt registry value or a
+// buggy/malicious caller can never push the classifier into a degenerate
+// state (e.g. an edge zone covering the whole pad).
+VOID AmtPalmConfigClamp(_Inout_ PAMT_PALM_CONFIG Config);
 
 EXTERN_C_END

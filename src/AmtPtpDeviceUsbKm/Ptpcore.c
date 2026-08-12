@@ -236,8 +236,8 @@ PTPCore_ProcessFrame(
     MATCH_CANDIDATE_SET candidates;
     BOOLEAN              largePalm = FALSE;
 
-    AmtMatchBuildCandidates(RawFrame, pCtx->DeviceInfo, pCtx->ActiveContacts,
-                            &candidates, &largePalm);
+    AmtMatchBuildCandidates(RawFrame, pCtx->DeviceInfo, &pCtx->PalmConfig,
+                            pCtx->ActiveContacts, &candidates, &largePalm);
 
     // Palm session: suppress candidates when palm active. Contacts that go
     // unmatched purely because of this suppression are NOT lifted (see

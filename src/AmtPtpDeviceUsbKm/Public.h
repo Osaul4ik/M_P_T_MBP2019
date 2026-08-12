@@ -1,4 +1,9 @@
 // Public.h - Shared declarations for driver and user apps.
+//
+// This header is included by BOTH the kernel-mode driver and any user-mode
+// configuration application (e.g. AmtPtpConfigGui). Keep it free of
+// kernel-only or user-only types - only PODs that are safe to marshal
+// across the DeviceIoControl boundary belong here.
 
 #pragma once
 
@@ -7,3 +12,109 @@
 DEFINE_GUID (GUID_DEVINTERFACE_AmtPtpDeviceUsbKm,
     0x4aa332cc,0x5777,0x4afd,0xaa,0x4e,0x95,0x38,0x73,0x30,0x61,0x2a);
 // {4aa332cc-5777-4afd-aa4e-95387330612a}
+
+// ============================================================================
+// Palm-rejection runtime configuration - shared wire format.
+//
+// This mirrors (and, at runtime, replaces) the tuning constants that used
+// to be hardcoded #defines in Palm.c. A user-mode control panel
+// (AmtPtpConfigGui) can read/write this struct live via the custom IOCTLs
+// below, the same way Elan's/Synaptics' OEM control panels expose palm
+// rejection / edge-zone sliders.
+//
+// All fields are plain ULONG so the struct is trivially blittable from C#
+// (Marshal.SizeOf / [StructLayout(LayoutKind.Sequential)]) with no padding
+// surprises - every field is the same size, so no compiler will insert
+// alignment padding between them on either x86 or x64.
+// ============================================================================
+
+typedef struct _AMT_PALM_CONFIG
+{
+    ULONG StructVersion;   // AMT_PALM_CONFIG_VERSION - bump on layout change
+
+    // Edge-zone size, in PERMILLE (parts-per-1000, i.e. 0.1%) of the pad's
+    // usable width/height. A birth (fresh finger) landing inside this zone
+    // is hard-rejected as palm. See Palm.c / AmtPalmInEdgeZone.
+    ULONG EdgePermilleTop;
+    ULONG EdgePermilleLeft;
+    ULONG EdgePermilleRight;
+    ULONG EdgePermilleBottom;
+
+    // Contact-shape thresholds (raw sensor units - same scale as the
+    // Major/Minor axis values reported by the trackpad firmware).
+    ULONG PalmLargeMajor;   // major >= this -> candidate for instant PALM_LARGE
+    ULONG PalmLargeRatio;   // major/minor*100 >= this (with PalmLargeMajor) -> PALM_LARGE
+    ULONG PalmScoreThresh;  // soft-score threshold -> PALM_LOCAL
+    ULONG PalmMinMajor;     // below this AND PalmMinMinor -> never palm (early out)
+    ULONG PalmMinMinor;
+
+    ULONG Reserved[4];      // future growth, keep struct size stable
+} AMT_PALM_CONFIG, *PAMT_PALM_CONFIG;
+
+#define AMT_PALM_CONFIG_VERSION 1
+
+// Compiled-in defaults - identical to the previous hardcoded values in
+// Palm.c, so a fresh install / registry-less first boot behaves exactly
+// like the driver did before this config became runtime-tunable.
+#define AMT_PALM_CONFIG_DEFAULT_INIT                                        \
+{                                                                            \
+    /* StructVersion       */ AMT_PALM_CONFIG_VERSION,                      \
+    /* EdgePermilleTop     */ 36,                                           \
+    /* EdgePermilleLeft    */ 143,                                          \
+    /* EdgePermilleRight   */ 143,                                          \
+    /* EdgePermilleBottom  */ 250,                                          \
+    /* PalmLargeMajor      */ 380,                                          \
+    /* PalmLargeRatio      */ 180,                                          \
+    /* PalmScoreThresh     */ 55,                                           \
+    /* PalmMinMajor        */ 80,                                           \
+    /* PalmMinMinor        */ 40,                                           \
+    /* Reserved            */ { 0, 0, 0, 0 }                                \
+}
+
+// Sane clamp range for the GUI/driver to enforce on every field except
+// StructVersion/Reserved - keeps a fat-fingered value from disabling palm
+// rejection outright or rejecting every touch as palm.
+#define AMT_PALM_EDGE_PERMILLE_MAX   400   // 40% - beyond this, "edge zone" eats the whole pad
+#define AMT_PALM_MAJOR_MAX          2000
+#define AMT_PALM_RATIO_MAX          1000
+#define AMT_PALM_SCORE_MAX           200
+
+// ============================================================================
+// Custom IOCTLs for AmtPtpConfigGui <-> driver communication.
+//
+// FILE_DEVICE_UNKNOWN + METHOD_BUFFERED + FILE_ANY_ACCESS: standard,
+// conservative choice for a small buffered get/set pair - no direct
+// pointers cross the user/kernel boundary, and any authenticated user can
+// open the device interface (matches how the rest of this driver's HID
+// surface is exposed).
+// ============================================================================
+
+#define AMT_PTP_IOCTL_INDEX 0x900
+
+#define IOCTL_AMT_PTP_GET_PALM_CONFIG \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 0, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define IOCTL_AMT_PTP_SET_PALM_CONFIG \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 1, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// Returns the pad's usable sensor range (BCM5974_CONFIG x/y min/max) so the
+// GUI can draw the edge zones and a to-scale finger ellipse without
+// guessing at hardware geometry. Read-only.
+#define IOCTL_AMT_PTP_GET_PAD_GEOMETRY \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 2, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// Resets AMT_PALM_CONFIG (in memory and in the registry) to
+// AMT_PALM_CONFIG_DEFAULT_INIT. No input/output buffer.
+#define IOCTL_AMT_PTP_RESET_PALM_CONFIG \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 3, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+typedef struct _AMT_PAD_GEOMETRY
+{
+    ULONG StructVersion;
+    LONG  XMin;
+    LONG  XMax;
+    LONG  YMin;
+    LONG  YMax;
+} AMT_PAD_GEOMETRY, *PAMT_PAD_GEOMETRY;
+
+#define AMT_PAD_GEOMETRY_VERSION 1

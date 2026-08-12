@@ -26,6 +26,7 @@ AmtPtpDeviceUsbKmQueueInitialize(
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchParallel);
 
     queueConfig.EvtIoInternalDeviceControl = AmtPtpDeviceUsbKmEvtIoDeviceControl;
+    queueConfig.EvtIoDeviceControl         = AmtPtpDeviceUsbKmEvtIoDeviceControlExternal;
     queueConfig.EvtIoStop = AmtPtpDeviceUsbKmEvtIoStop;
 
     status = WdfIoQueueCreate(
@@ -108,6 +109,47 @@ AmtPtpDeviceUsbKmEvtIoDeviceControl(
     }
 
     return;
+}
+
+VOID
+AmtPtpDeviceUsbKmEvtIoDeviceControlExternal(
+    _In_ WDFQUEUE Queue,
+    _In_ WDFREQUEST Request,
+    _In_ size_t OutputBufferLength,
+    _In_ size_t InputBufferLength,
+    _In_ ULONG IoControlCode
+    )
+// Dispatches the AmtPtpConfigGui-facing IOCTL_AMT_PTP_* control codes
+// (Public.h). Anything else falls through to STATUS_NOT_SUPPORTED - the
+// HID surface is never reachable through this path, only through
+// EvtIoInternalDeviceControl (HIDCLASS sits above this driver for that).
+{
+    NTSTATUS status;
+    WDFDEVICE device = WdfIoQueueGetDevice(Queue);
+
+    UNREFERENCED_PARAMETER(InputBufferLength);
+    UNREFERENCED_PARAMETER(OutputBufferLength);
+
+    switch (IoControlCode)
+    {
+    case IOCTL_AMT_PTP_GET_PALM_CONFIG:
+        status = AmtPtpGetPalmConfig(device, Request);
+        break;
+    case IOCTL_AMT_PTP_SET_PALM_CONFIG:
+        status = AmtPtpSetPalmConfig(device, Request);
+        break;
+    case IOCTL_AMT_PTP_GET_PAD_GEOMETRY:
+        status = AmtPtpGetPadGeometry(device, Request);
+        break;
+    case IOCTL_AMT_PTP_RESET_PALM_CONFIG:
+        status = AmtPtpResetPalmConfig(device, Request);
+        break;
+    default:
+        status = STATUS_NOT_SUPPORTED;
+        break;
+    }
+
+    WdfRequestComplete(Request, status);
 }
 
 NTSTATUS
