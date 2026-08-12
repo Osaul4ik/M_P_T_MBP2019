@@ -18,10 +18,12 @@ namespace AmtPtpConfigGui
         private bool _geometryFromDevice;
         private bool _suppressEvents;
         private bool _draggingTestPoint;
+        private bool _uiReady;
 
         public MainWindow()
         {
             InitializeComponent();
+            _uiReady = true;
             Loaded += (_, _) => Reconnect();
         }
 
@@ -143,7 +145,11 @@ namespace AmtPtpConfigGui
 
         private void Slider_Changed(object sender, RoutedEventArgs e)
         {
-            if (_suppressEvents) return;
+            // Setting Minimum/Maximum on sliders declared earlier in the XAML
+            // can coerce Value and fire this handler while InitializeComponent()
+            // is still parsing later controls (e.g. SlLargeMajor's Min/Max is
+            // set before SlLargeRatio exists) — those fields are still null then.
+            if (!_uiReady || _suppressEvents) return;
             UpdateAllLabels();
             DrawPreview();
         }
