@@ -55,6 +55,9 @@
     <ClInclude Include="Palm.h">
       <Filter>PTPCore</Filter>
     </ClInclude>
+    <ClInclude Include="ConfigIoctl.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Device.c">
@@ -86,6 +89,9 @@
     </ClCompile>
     <ClCompile Include="Palm.c">
       <Filter>PTPCore</Filter>
+    </ClCompile>
+    <ClCompile Include="ConfigIoctl.c">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
