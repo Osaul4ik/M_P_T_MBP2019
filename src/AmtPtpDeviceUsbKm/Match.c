@@ -37,6 +37,33 @@ AmtMatchShapeDistance(
     return (LONG)dMajor + dMinor + dPressure;
 }
 
+// Geometric birth check: is there ALREADY an active pool contact near this
+// raw position? Used instead of the firmware Origin==0 flag, which proved
+// unreliable on some T2 firmware (never/rarely resets to 0 on a genuine
+// new touch, silently defeating the edge-zone hard reject in Palm.c).
+// Same distance semantics as the bridging search below, for consistency.
+static BOOLEAN
+AmtMatchHasNearbyActiveContact(
+    _In_reads_(MAX_CONTACTS) const ACTIVE_CONTACT* Pool,
+    _In_ INT                                       RcX,
+    _In_ INT                                       RcY
+)
+{
+    for (size_t p = 0; p < MAX_CONTACTS; p++) {
+        const ACTIVE_CONTACT* poolEntry = &Pool[p];
+        if (poolEntry->State != CONTACT_ACTIVE)
+            continue;
+
+        INT dxAbs = AmtAbsDelta(RcX, (INT)poolEntry->ReportX);
+        INT dyAbs = AmtAbsDelta(RcY, (INT)poolEntry->ReportY);
+
+        if (dxAbs <= MATCH_MAX_CONTINUATION_DELTA &&
+            dyAbs <= MATCH_MAX_CONTINUATION_DELTA)
+            return TRUE;
+    }
+    return FALSE;
+}
+
 VOID
 AmtMatchBuildCandidates(
     _In_  const RAW_FRAME*                        RawFrame,
@@ -60,12 +87,14 @@ AmtMatchBuildCandidates(
     for (UCHAR i = 0; i < RawFrame->ContactCount; i++) {
         const RAW_CONTACT* rc = &RawFrame->Contacts[i];
 
-        // rc->Origin==0 is the firmware identity-break signal - a fresh
-        // finger, not a continuation. Feeds the birth-in-edge-zone hard
-        // reject in AmtPalmClassify (Palm.c).
+        // Birth = no already-active pool contact sits near this raw
+        // position. Geometric, not firmware-flag-based - feeds the
+        // birth-in-edge-zone hard reject in AmtPalmClassify (Palm.c).
+        BOOLEAN isBirth = !AmtMatchHasNearbyActiveContact(
+            Pool, (INT)rc->X, (INT)rc->Y);
+
         PALM_CLASS palm = AmtPalmClassify(rc->Major, rc->Minor, DevInfo,
-                                          (INT)rc->X, (INT)rc->Y,
-                                          (BOOLEAN)(rc->Origin == 0));
+                                          (INT)rc->X, (INT)rc->Y, isBirth);
 
         if (palm == PALM_LARGE) {
             *LargePalmDetected = TRUE;
