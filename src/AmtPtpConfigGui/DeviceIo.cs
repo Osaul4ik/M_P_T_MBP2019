@@ -389,12 +389,14 @@ namespace AmtPtpConfigGui.Native
     public struct LiveContact
     {
         public uint ContactID;
-        public ushort X;
-        public ushort Y;
+        public ushort X;       // normalized X
+        public ushort Y;       // normalized Y
         public uint Phase;
         public byte Confident;
         public byte PalmSuspect;
         public ushort Reserved;
+        public short RawX;     // exact raw USB abs_x
+        public short RawY;     // exact raw USB abs_y
     }
 
     [StructLayout(LayoutKind.Sequential)]

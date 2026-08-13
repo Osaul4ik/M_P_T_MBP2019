@@ -49,16 +49,21 @@ AmtInputParseFrame(
         if (major <= 0 && minor <= 0)
             continue;
 
-        INT nx = (INT)AmtInputClampCoord(
-            AmtRawToSignedInt(f->abs_x), DevInfo->x.min, DevInfo->x.max);
+        INT rawX = AmtRawToSignedInt(f->abs_x);
+        INT rawY = AmtRawToSignedInt(f->abs_y);
 
-        INT nyRaw  = DevInfo->y.max - AmtRawToSignedInt(f->abs_y);
+        INT nx = (INT)AmtInputClampCoord(
+            rawX, DevInfo->x.min, DevInfo->x.max);
+
+        INT nyRaw  = DevInfo->y.max - rawY;
         INT ny     = (nyRaw < 0) ? 0 : (nyRaw > yRange ? yRange : nyRaw);
 
         PRAW_CONTACT rc = &OutFrame->Contacts[emitted];
         rc->SlotIndex = (USHORT)i;
         rc->X         = (USHORT)nx;
         rc->Y         = (USHORT)ny;
+        rc->RawX      = (SHORT)rawX;
+        rc->RawY      = (SHORT)rawY;
         rc->Major     = (USHORT)major;
         rc->Minor     = (USHORT)minor;
         rc->Pressure  = (USHORT)pressure;

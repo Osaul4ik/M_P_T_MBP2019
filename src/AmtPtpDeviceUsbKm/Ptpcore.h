@@ -17,6 +17,8 @@ typedef struct _RAW_CONTACT
                         // one. Matching hint only; see Match.c.
     USHORT X;            // normalized device units (post AmtInputClampCoord)
     USHORT Y;
+    SHORT  RawX;         // exact raw USB abs_x
+    SHORT  RawY;         // exact raw USB abs_y
     USHORT Major;        // touch_major, raw
     USHORT Minor;        // touch_minor, raw
     USHORT Pressure;     // force-touch trackpad pressure, raw ADC units (~0-300)

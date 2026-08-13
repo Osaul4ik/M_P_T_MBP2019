@@ -178,6 +178,7 @@ namespace AmtPtpConfigGui
                 if (ChkLive.IsChecked == true)
                     ChkLive.IsChecked = false;
                 LiveStatusText.Text = "Live: помилка";
+                LiveCoordText.Text = "Live: координати —";
                 return;
             }
 
@@ -193,6 +194,7 @@ namespace AmtPtpConfigGui
             {
                 _liveTimer.Stop();
                 LiveStatusText.Text = "Live: вимкнено";
+                LiveCoordText.Text = "Live: координати —";
                 DrawPreview();
             }
         }
@@ -210,6 +212,27 @@ namespace AmtPtpConfigGui
 
             _lastLiveSequence = frame.Sequence;
             DrawLiveOverlay(frame);
+
+            if (frame.ContactCount > 0 && frame.Contacts != null)
+            {
+                var coordLines = new System.Collections.Generic.List<string>();
+
+                for (int i = 0; i < frame.ContactCount && i < frame.Contacts.Length; i++)
+                {
+                    var c = frame.Contacts[i];
+
+                    coordLines.Add(
+                        $"C{i} ID {c.ContactID}: " +
+                        $"Raw X={c.RawX}, Y={c.RawY}  |  " +
+                        $"Norm X={c.X}, Y={c.Y}");
+                }
+
+                LiveCoordText.Text = string.Join("   •   ", coordLines);
+            }
+            else
+            {
+                LiveCoordText.Text = "Live: координати — немає активних контактів";
+            }
 
             LiveStatusText.Text =
                 $"Live: {frame.ContactCount} дот. | seq {frame.Sequence}" +

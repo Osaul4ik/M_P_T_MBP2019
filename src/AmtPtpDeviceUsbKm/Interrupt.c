@@ -278,6 +278,11 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         for (i = 0;
              i < coreFrame.ContactCount && i < AMT_LIVE_MAX_CONTACTS;
              ++i) {
+            ULONG j;
+            ULONG bestRawIndex = 0;
+            ULONG bestDistance = 0xFFFFFFFFUL;
+            BOOLEAN haveRawMatch = FALSE;
+
             pCtx->LiveFrame.Contacts[i].ContactID =
                 coreFrame.Contacts[i].ContactID;
             pCtx->LiveFrame.Contacts[i].X =
@@ -290,6 +295,44 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
                 coreFrame.Contacts[i].Confident ? 1 : 0;
             pCtx->LiveFrame.Contacts[i].PalmSuspect =
                 coreFrame.Contacts[i].PalmSuspect ? 1 : 0;
+
+            //
+            // Live-only calibration data: associate this processed contact
+            // with the nearest raw contact from the same USB frame.
+            //
+            for (j = 0; j < rawFrame.ContactCount; ++j) {
+                LONG dx = (LONG)coreFrame.Contacts[i].X -
+                          (LONG)rawFrame.Contacts[j].X;
+                LONG dy = (LONG)coreFrame.Contacts[i].Y -
+                          (LONG)rawFrame.Contacts[j].Y;
+                ULONG distance = (ULONG)(dx * dx + dy * dy);
+
+                if (!haveRawMatch || distance < bestDistance) {
+                    haveRawMatch = TRUE;
+                    bestDistance = distance;
+                    bestRawIndex = j;
+                }
+            }
+
+            if (haveRawMatch) {
+                pCtx->LiveFrame.Contacts[i].RawX =
+                    rawFrame.Contacts[bestRawIndex].RawX;
+                pCtx->LiveFrame.Contacts[i].RawY =
+                    rawFrame.Contacts[bestRawIndex].RawY;
+            } else {
+                //
+                // For a UP/deferred contact there may be no raw contact in
+                // the current frame. Reconstruct the best available raw
+                // coordinate from the normalized processed coordinate.
+                //
+                pCtx->LiveFrame.Contacts[i].RawX =
+                    (SHORT)((LONG)coreFrame.Contacts[i].X +
+                            pCtx->DeviceInfo->x.min);
+
+                pCtx->LiveFrame.Contacts[i].RawY =
+                    (SHORT)(pCtx->DeviceInfo->y.max -
+                            (LONG)coreFrame.Contacts[i].Y);
+            }
         }
     }
 

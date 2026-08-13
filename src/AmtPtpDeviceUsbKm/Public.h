@@ -95,12 +95,14 @@ typedef struct _AMT_PALM_CONFIG
 typedef struct _AMT_LIVE_CONTACT
 {
     ULONG ContactID;
-    USHORT X;
-    USHORT Y;
-    ULONG Phase;       // CONTACT_PHASE_* value from PTPCore.h
+    USHORT X;              // normalized X: 0 .. (XMax - XMin)
+    USHORT Y;              // normalized Y: 0 .. (YMax - YMin)
+    ULONG Phase;           // CONTACT_PHASE_* value from PTPCore.h
     UCHAR Confident;
     UCHAR PalmSuspect;
     USHORT Reserved;
+    SHORT RawX;            // exact raw USB abs_x
+    SHORT RawY;            // exact raw USB abs_y
 } AMT_LIVE_CONTACT, *PAMT_LIVE_CONTACT;
 
 typedef struct _AMT_LIVE_FRAME
