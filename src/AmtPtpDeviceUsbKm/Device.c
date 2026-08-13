@@ -129,8 +129,10 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
             // SY = LocalSystem, BA = Administrators, AU = Authenticated Users
 
         status = WdfDeviceInitAssignSDDLString(DeviceInit, &sddl);
-        if (!NT_SUCCESS(status))
+        if (!NT_SUCCESS(status)) {
+            AMT_LOG("WdfDeviceInitAssignSDDLString FAILED, status=0x%08X", status);
             return status;
+        }
     }
 
     // See the comment on AmtPtpEvtDeviceFileCreate's declaration (Device.h):
@@ -152,14 +154,18 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     }
 
     status = WdfDeviceCreate(&DeviceInit, &deviceAttributes, &device);
-    if (!NT_SUCCESS(status))
+    if (!NT_SUCCESS(status)) {
+        AMT_LOG("WdfDeviceCreate FAILED, status=0x%08X", status);
         return status;
+    }
+    AMT_LOG("WdfDeviceCreate succeeded");
 
     deviceContext = DeviceGetContext(device);
     RtlZeroMemory(deviceContext, sizeof(DEVICE_CONTEXT));
 
     deviceContext->ActiveContacts = AmtAllocateAlignedContactPool();
     if (deviceContext->ActiveContacts == NULL) {
+        AMT_LOG("AmtAllocateAlignedContactPool FAILED (STATUS_INSUFFICIENT_RESOURCES)");
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
@@ -184,15 +190,31 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
 
         status = WdfSpinLockCreate(&lockAttributes, &deviceContext->StateLock);
         if (!NT_SUCCESS(status)) {
+            AMT_LOG("WdfSpinLockCreate FAILED, status=0x%08X", status);
             return status;
         }
     }
 
+    // THE call that puts the device interface SetupDiEnumDeviceInterfaces
+    // (DeviceIo.cs, GUI side) is looking for. If this fails, or is never
+    // reached because something above returned early, the GUID simply
+    // never appears in the device-interface list and TryConnect() fails at
+    // "SetupDiEnumDeviceInterfaces (no device interface present)" - which
+    // looks identical, from the GUI's side, to "driver not installed at
+    // all". This line is the one fact that tells them apart.
     status = WdfDeviceCreateDeviceInterface(
         device, &GUID_DEVINTERFACE_AmtPtpDeviceUsbKm, NULL);
+    if (!NT_SUCCESS(status)) {
+        AMT_LOG("WdfDeviceCreateDeviceInterface FAILED, status=0x%08X - "
+                "GUID_DEVINTERFACE_AmtPtpDeviceUsbKm will NOT be enumerable, GUI cannot find us", status);
+        return status;
+    }
+    AMT_LOG("WdfDeviceCreateDeviceInterface succeeded - interface is now registered and enumerable");
 
-    if (NT_SUCCESS(status))
-        status = AmtPtpDeviceUsbKmQueueInitialize(device);
+    status = AmtPtpDeviceUsbKmQueueInitialize(device);
+    if (!NT_SUCCESS(status)) {
+        AMT_LOG("AmtPtpDeviceUsbKmQueueInitialize FAILED, status=0x%08X", status);
+    }
 
     return status;
 }
@@ -215,10 +237,13 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
 
     pDeviceContext = DeviceGetContext(Device);
 
+    AMT_LOG("EvtDevicePrepareHardware called");
+
     if (pDeviceContext->UsbDevice == NULL) {
         status = WdfUsbTargetDeviceCreate(
             Device, WDF_NO_OBJECT_ATTRIBUTES, &pDeviceContext->UsbDevice);
         if (!NT_SUCCESS(status)) {
+            AMT_LOG("WdfUsbTargetDeviceCreate FAILED, status=0x%08X", status);
             return status;
         }
     }
@@ -228,6 +253,10 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
 
     pDeviceContext->DeviceInfo = AmtPtpGetDeviceConfig(&pDeviceContext->DeviceDescriptor);
     if (pDeviceContext->DeviceInfo == NULL) {
+        AMT_LOG("AmtPtpGetDeviceConfig returned NULL (VID/PID/tp_type not recognized) - "
+                "vid=0x%04X pid=0x%04X, STATUS_INVALID_DEVICE_STATE",
+                pDeviceContext->DeviceDescriptor.idVendor,
+                pDeviceContext->DeviceDescriptor.idProduct);
         return STATUS_INVALID_DEVICE_STATE;
     }
 
@@ -251,17 +280,20 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
 
     status = SelectInterruptInterface(Device);
     if (!NT_SUCCESS(status)) {
+        AMT_LOG("SelectInterruptInterface FAILED, status=0x%08X", status);
         return status;
     }
 
     status = AmtPtpConfigContReaderForInterruptEndPoint(pDeviceContext);
     if (!NT_SUCCESS(status)) {
+        AMT_LOG("AmtPtpConfigContReaderForInterruptEndPoint FAILED, status=0x%08X", status);
         return status;
     }
 
     pDeviceContext->PtpReportButton = TRUE;
     pDeviceContext->PtpReportTouch  = TRUE;
 
+    AMT_LOG("EvtDevicePrepareHardware succeeded");
     return status;
 }
 
@@ -280,6 +312,8 @@ AmtPtpEvtDeviceD0Entry(
 
     pDeviceContext  = DeviceGetContext(Device);
     isTargetStarted = FALSE;
+
+    AMT_LOG("EvtDeviceD0Entry called");
 
     pDeviceContext->LastReportTime =
         KeQueryPerformanceCounter(&pDeviceContext->PerfFrequency);
@@ -339,9 +373,11 @@ AmtPtpEvtDeviceD0Entry(
     status = WdfIoTargetStart(
         WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe));
     if (!NT_SUCCESS(status)) {
+        AMT_LOG("WdfIoTargetStart (interrupt pipe) FAILED, status=0x%08X", status);
         goto end;
     }
     isTargetStarted = TRUE;
+    AMT_LOG("EvtDeviceD0Entry succeeded, interrupt pipe started");
 
 end:
     if (!NT_SUCCESS(status) && isTargetStarted) {
@@ -537,10 +573,10 @@ AmtPtpEvtDeviceFileCreate(
     UNREFERENCED_PARAMETER(FileObject);
 
     // TEMP DIAGNOSTIC: confirms whether Create requests actually reach
-    // this handler at all. Visible in DebugView (Sysinternals) with
-    // "Capture Kernel" + "Enable Verbose Kernel Output" turned on, or in
-    // WinDbg. Remove once the GetLastError()==31 issue is root-caused.
-    KdPrint(("AmtPtpDeviceUsbKm: AmtPtpEvtDeviceFileCreate HIT - completing with STATUS_SUCCESS\n"));
+    // this handler at all. AMT_LOG (DbgPrintEx, not KdPrint) so it shows
+    // up in DebugView / WinDbg in Release and ReleaseSigned builds too.
+    // Remove once the GetLastError()==31 issue is root-caused.
+    AMT_LOG("AmtPtpEvtDeviceFileCreate HIT - completing with STATUS_SUCCESS");
 
     WdfRequestComplete(Request, STATUS_SUCCESS);
 }

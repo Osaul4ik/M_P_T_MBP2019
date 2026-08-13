@@ -13,6 +13,30 @@
 
 EXTERN_C_START
 
+// AMT_LOG - unconditional diagnostic print, visible in DebugView (Capture
+// Kernel) or a local/remote WinDbg session regardless of build config.
+//
+// Deliberately NOT KdPrint(): KdPrint() expands to nothing unless DBG is
+// defined by the build (checked/Debug configuration only) - in Release and
+// ReleaseSigned it's a silent no-op, which is why the previous single
+// KdPrint in AmtPtpEvtDeviceFileCreate produced nothing when the driver was
+// built/deployed as ReleaseSigned. DbgPrintEx has no such gate: it always
+// compiles in and always emits, in every configuration.
+//
+// Also deliberately NOT the WPP TraceEvents() machinery wired up in
+// Trace.h: WPP output only goes to an ETW trace session (TraceView.exe /
+// tracelog+tracefmt), never to DebugView or a plain WinDbg "kd" prompt, and
+// nothing in this driver actually calls TraceEvents() yet.
+//
+// DPFLTR_ERROR_LEVEL is used (not INFO/WARNING/TRACE) specifically because
+// it is the one level DbgPrintEx always shows regardless of the
+// "Debug Print Filter" component mask in the registry - no extra registry
+// setup is required to see these in DebugView. Prefix every line with
+// [AmtPtpUsbKm] so it's easy to filter in DebugView's Filter/Highlight box.
+#define AMT_LOG(fmt, ...) \
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, \
+        "[AmtPtpUsbKm] %s: " fmt "\n", __FUNCTION__, ##__VA_ARGS__)
+
 // Shared small geometry/decoding helpers. Every one of these used to be
 // re-derived inline at each call site (ActiveContact.c, Match.c, Ptpcore.c,
 // Input.c, Palm.c) - centralized here since Driver.h is already the first
