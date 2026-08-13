@@ -536,5 +536,11 @@ AmtPtpEvtDeviceFileCreate(
     UNREFERENCED_PARAMETER(Device);
     UNREFERENCED_PARAMETER(FileObject);
 
+    // TEMP DIAGNOSTIC: confirms whether Create requests actually reach
+    // this handler at all. Visible in DebugView (Sysinternals) with
+    // "Capture Kernel" + "Enable Verbose Kernel Output" turned on, or in
+    // WinDbg. Remove once the GetLastError()==31 issue is root-caused.
+    KdPrint(("AmtPtpDeviceUsbKm: AmtPtpEvtDeviceFileCreate HIT - completing with STATUS_SUCCESS\n"));
+
     WdfRequestComplete(Request, STATUS_SUCCESS);
 }
