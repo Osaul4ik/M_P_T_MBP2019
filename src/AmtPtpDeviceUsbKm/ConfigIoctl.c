@@ -350,6 +350,14 @@ AmtPtpConfigControlEvtIoDeviceControl(
         status = AmtPtpResetPalmConfig(targetDevice, Request);
         break;
 
+    case IOCTL_AMT_PTP_SET_LIVE_ENABLED:
+        status = AmtPtpSetLiveEnabled(controlDevice, Request);
+        break;
+
+    case IOCTL_AMT_PTP_GET_LIVE_FRAME:
+        status = AmtPtpGetLiveFrame(controlDevice, Request);
+        break;
+
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;
         break;
