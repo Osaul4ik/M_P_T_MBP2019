@@ -112,7 +112,8 @@ namespace AmtPtpConfigGui.Native
                         return Fail("SetupDiGetDeviceInterfaceDetail (fetch)");
                     }
 
-                    string devicePath = Marshal.PtrToStringUni(detailBuffer + 4)!;
+                    int devicePathOffset = IntPtr.Size == 8 ? 8 : 6;
+                    string devicePath = Marshal.PtrToStringUni(detailBuffer + devicePathOffset)!;
 
                     var handle = CreateFile(
                         devicePath,
