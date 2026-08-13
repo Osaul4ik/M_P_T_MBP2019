@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using AmtPtpConfigGui.Native;
@@ -15,21 +16,6 @@ namespace AmtPtpConfigGui
 {
     public partial class MainWindow : Window
     {
-        // ---------------------------------------------------------------
-        // Cached, frozen brushes.
-        //
-        // DrawPreview() and DrawLiveOverlay() used to allocate a fresh
-        // SolidColorBrush per call for every status dot, zone band,
-        // classification color, and per-contact fill/outline. With the
-        // live monitor running, DrawLiveOverlay fires from a 33 ms
-        // DispatcherTimer (~30 fps) and draws up to 5 contacts, so that
-        // was up to a couple hundred short-lived Brush allocations per
-        // second purely for rendering, feeding the GC for no reason since
-        // the palette is fixed. Brushes are immutable once Freeze()'d, so
-        // a small static set is reused instead - same visuals, no
-        // per-frame allocation, and frozen brushes are also cheaper for
-        // WPF to render (no per-frame-update / cross-thread checks).
-        // ---------------------------------------------------------------
         private static SolidColorBrush Frozen(byte a, byte r, byte g, byte b)
         {
             var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
@@ -37,21 +23,48 @@ namespace AmtPtpConfigGui
             return brush;
         }
 
-        private static readonly SolidColorBrush ConnectedBrush = Frozen(0xFF, 0x2E, 0xA0, 0x4A);
-        private static readonly SolidColorBrush DisconnectedBrush = Frozen(0xFF, 0xC0, 0x39, 0x2B);
-        private static readonly SolidColorBrush EdgeZoneBrush = Frozen(60, 0xE0, 0x3B, 0x2E);
+        private static readonly SolidColorBrush ConnectedBrush = Frozen(0xFF, 0x1D, 0x9A, 0x6C);
+        private static readonly SolidColorBrush DisconnectedBrush = Frozen(0xFF, 0xE5, 0x48, 0x4D);
+        private static readonly SolidColorBrush LiveDotIdleBrush = Frozen(0xFF, 0x9A, 0xA1, 0xAC);
+        private static readonly LinearGradientBrush GlassPadBrush = CreateGlassPadBrush();
 
-        private static readonly SolidColorBrush PalmNoneBrush = Frozen(180, 0x2E, 0xA0, 0x4A);
-        private static readonly SolidColorBrush PalmLocalBrush = Frozen(180, 0xE6, 0x9B, 0x1A);
-        private static readonly SolidColorBrush PalmLargeBrush = Frozen(180, 0xC0, 0x39, 0x2B);
+        private static LinearGradientBrush CreateGlassPadBrush()
+        {
+            var brush = new LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(1, 1),
+            };
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(0x35, 0x3B, 0x47), 0.0));
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(0x1C, 0x1F, 0x26), 0.55));
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(0x14, 0x16, 0x1B), 1.0));
+            brush.Freeze();
+            return brush;
+        }
+
+        private static readonly SolidColorBrush GlassPadStrokeBrush = Frozen(0xFF, 0x40, 0x46, 0x53);
+        private static readonly SolidColorBrush CrosshairBrush = Frozen(0xE0, 0xFF, 0xFF, 0xFF);
+        private static readonly SolidColorBrush EdgeZoneBrush = Frozen(70, 0xFF, 0x8A, 0x65);
+        private static readonly SolidColorBrush EdgeZoneLabelBrush = Frozen(0xFF, 0xFF, 0xAB, 0x91);
+
+        // Test-touch classification fill - brightened "neon on dark glass"
+        // variants of the semantic accepted/soft-reject/hard-reject colors,
+        // tuned to stay legible on the dark pad surface above.
+        private static readonly SolidColorBrush PalmNoneBrush = Frozen(210, 0x34, 0xD3, 0x99);
+        private static readonly SolidColorBrush PalmLocalBrush = Frozen(210, 0xFB, 0xBF, 0x24);
+        private static readonly SolidColorBrush PalmLargeBrush = Frozen(210, 0xF8, 0x71, 0x71);
 
         // Live-overlay outline colors reuse WPF's own static Brushes.* -
-        // those are already immutable singletons, no allocation there.
-        // Only the semi-transparent *fill* variants needed precomputing.
+        // those are already immutable singletons, no allocation there -
+        // except the palm-suspect outline, which is unified with
+        // LiveFillPalm's exact hue below instead of the mismatched
+        // built-in Brushes.Firebrick previously used only for the outline.
+        private static readonly SolidColorBrush LivePalmOutline = Frozen(0xFF, 0xE8, 0x11, 0x23);
         private static readonly SolidColorBrush LiveFillDown = Frozen(90, Colors.LimeGreen.R, Colors.LimeGreen.G, Colors.LimeGreen.B);
         private static readonly SolidColorBrush LiveFillUp = Frozen(90, Colors.Orange.R, Colors.Orange.G, Colors.Orange.B);
         private static readonly SolidColorBrush LiveFillMove = Frozen(90, Colors.DeepSkyBlue.R, Colors.DeepSkyBlue.G, Colors.DeepSkyBlue.B);
         private static readonly SolidColorBrush LiveFillPalm = Frozen(150, 0xE8, 0x11, 0x23);
+        private static readonly SolidColorBrush LiveTagBgBrush = Frozen(230, 0x14, 0x16, 0x1B);
 
         private readonly DeviceIo _device = new DeviceIo();
         private readonly List<string> _diagnosticLog = new();
@@ -65,22 +78,6 @@ namespace AmtPtpConfigGui
         private bool _liveEnabled;
         private uint _lastLiveSequence;
 
-        // Per-contact EMA smoothing state for the live overlay's ellipse
-        // size only (Major/Minor as *rendered*, never touches the raw
-        // values used for palm classification thresholds elsewhere).
-        //
-        // Root cause of visible height jitter on a static, fully-rested
-        // touch: Major/Minor are the sensor firmware's own touch-ellipse
-        // long/short axis fit (touch_major/touch_minor), not literally
-        // "extent along the pad's X axis" / "extent along the pad's Y
-        // axis" - there's no orientation angle in the wire format. The
-        // long axis (mapped here to width) is well-conditioned and stable
-        // frame-to-frame; the short axis (mapped to height) is a much
-        // smaller residual in the firmware's ellipse fit and is inherently
-        // noisier per-frame, even for a perfectly still finger - that's
-        // why width looked rock solid while height wobbled a little.
-        // Smoothing only the display, not the classifier input, keeps
-        // palm-rejection tuning honest while fixing the visual wobble.
         private readonly Dictionary<uint, (double Major, double Minor)> _liveGeometrySmooth = new();
         private const double LiveGeometrySmoothAlpha = 0.25; // lower = smoother/slower to react
 
@@ -145,13 +142,6 @@ namespace AmtPtpConfigGui
             _liveTimer.Tick += LiveTimer_Tick;
 
             Loaded += (_, _) => Reconnect();
-            // Teardown lives solely in OnClosed() below - it used to be
-            // duplicated here *and* in an OnClosed override (both called
-            // _device.Dispose(), and only this handler stopped the live
-            // timer / told the driver to turn Live off). Disposing twice
-            // was harmless, but having two teardown paths for one event is
-            // the kind of duplication that quietly rots: it's easy to add
-            // new cleanup to one path and forget the other.
         }
 
         // ---------------------------------------------------------------
@@ -359,6 +349,7 @@ namespace AmtPtpConfigGui
                 _liveEnabled = false;
                 _liveTimer.Stop();
                 LiveStatusText.Text = "Live: пристрій не підключено";
+                SetLiveDot(active: false);
                 return;
             }
 
@@ -371,6 +362,7 @@ namespace AmtPtpConfigGui
                 LiveStatusText.Text = "Live: помилка";
                 LiveCoordText.Text = "Live: координати —";
                 LiveCornerText.Text = "Кути: TL 0 | TR 0 | BL 0 | BR 0";
+                SetLiveDot(active: null); // error - solid red, no pulse
                 return;
             }
 
@@ -383,6 +375,7 @@ namespace AmtPtpConfigGui
                 ResetCornerExtrema();
                 _liveTimer.Start();
                 LiveStatusText.Text = "Live: очікування… | кути: збираються";
+                SetLiveDot(active: true);
             }
             else
             {
@@ -390,7 +383,36 @@ namespace AmtPtpConfigGui
                 LiveStatusText.Text = "Live: вимкнено";
                 LiveCoordText.Text = "Live: координати —";
                 LiveCornerText.Text = "Кути: TL 0 | TR 0 | BL 0 | BR 0";
+                SetLiveDot(active: false);
                 DrawPreview();
+            }
+        }
+
+        // Drives the small dot next to "Live: ..." in the header toolbar:
+        // a soft pulsing green while frames are actively streaming, a
+        // steady muted gray when idle, and a steady red (no pulse - a
+        // pulse would suggest "working", which an error state isn't) if
+        // enabling live mode failed.
+        private void SetLiveDot(bool? active)
+        {
+            if (LiveDot == null) return;
+
+            var pulse = (Storyboard)FindResource("LivePulseStoryboard");
+            pulse.Stop(this);
+            LiveDot.Opacity = 1.0;
+
+            switch (active)
+            {
+                case true:
+                    LiveDot.Fill = ConnectedBrush;
+                    pulse.Begin(this, isControllable: true);
+                    break;
+                case false:
+                    LiveDot.Fill = LiveDotIdleBrush;
+                    break;
+                case null:
+                    LiveDot.Fill = DisconnectedBrush;
+                    break;
             }
         }
 
@@ -488,7 +510,7 @@ namespace AmtPtpConfigGui
 
                 if (isPalm)
                 {
-                    outline = Brushes.Firebrick;
+                    outline = LivePalmOutline;
                     fill = LiveFillPalm;
                 }
                 else if (c.Phase == 1)
@@ -569,18 +591,13 @@ namespace AmtPtpConfigGui
                     FontSize = 11,
                     FontWeight = FontWeights.SemiBold,
                     Foreground = isPalm ? Brushes.White : outline,
-                    Background = isPalm ? Brushes.Firebrick : Brushes.White,
-                    Padding = new Thickness(4, 1, 4, 1)
+                    Background = isPalm ? LivePalmOutline : LiveTagBgBrush,
+                    Padding = new Thickness(5, 2, 5, 2)
                 };
                 Canvas.SetLeft(label, px + Math.Max(18, majorPx / 2 + 4));
                 Canvas.SetTop(label, py - 9);
                 PreviewCanvas.Children.Add(label);
             }
-
-            // Drop smoothing state for any contact that isn't in this frame
-            // anymore (lifted, or dropped) so it doesn't linger indefinitely
-            // and doesn't leak into a later, unrelated contact that happens
-            // to reuse the same ContactID far in the future.
             if (_liveGeometrySmooth.Count > 0)
             {
                 var stale = new List<uint>();
@@ -691,20 +708,28 @@ namespace AmtPtpConfigGui
 
             var cfg = ReadConfigFromSliders();
 
-            // Pad outline.
+            // Pad surface, drawn as a dark glass panel (see GlassPadBrush)
+            // instead of a plain white rectangle, so it reads as an actual
+            // trackpad rather than a generic canvas.
             var padRect = new Rectangle
             {
                 Width = w,
                 Height = h,
-                Stroke = Brushes.DarkGray,
-                StrokeThickness = 2,
-                Fill = Brushes.White,
-                RadiusX = 10,
-                RadiusY = 10,
+                Stroke = GlassPadStrokeBrush,
+                StrokeThickness = 1.5,
+                Fill = GlassPadBrush,
+                RadiusX = 14,
+                RadiusY = 14,
             };
             Canvas.SetLeft(padRect, 0);
             Canvas.SetTop(padRect, 0);
             PreviewCanvas.Children.Add(padRect);
+
+            // Faint center crosshair guides, purely decorative/orientation -
+            // helps eyeball where the middle of the pad is at a glance,
+            // the way a real calibration jig would mark it.
+            AddGuideLine(w / 2, 0, w / 2, h);
+            AddGuideLine(0, h / 2, w, h / 2);
 
             // Edge zone bands (semi-transparent red), sized from the sliders.
             double edgeTopPx = h * (cfg.EdgePermilleTop / 1000.0);
@@ -717,7 +742,7 @@ namespace AmtPtpConfigGui
             AddZoneRect(0, 0, edgeLeftPx, h, EdgeZoneBrush);                     // left
             AddZoneRect(w - edgeRightPx, 0, edgeRightPx, h, EdgeZoneBrush);      // right
 
-            AddLabel("Edge Zone", 6, 4, Brushes.Firebrick, 10);
+            AddLabel("EDGE ZONE", 8, 6, EdgeZoneLabelBrush, 10);
 
             // Test touch position (percent of pad -> canvas px, and -> sensor units).
             double testXPct = SlTestX.Value / 100.0;
@@ -754,7 +779,7 @@ namespace AmtPtpConfigGui
                 Width = majorPx,
                 Height = minorPx,
                 Fill = fingerBrush,
-                Stroke = Brushes.Black,
+                Stroke = Brushes.White,
                 StrokeThickness = 1,
             };
             Canvas.SetLeft(ellipse, px - majorPx / 2);
@@ -788,17 +813,44 @@ namespace AmtPtpConfigGui
 
         private void AddLabel(string text, double x, double y, Brush brush, double size)
         {
-            var t = new TextBlock { Text = text, Foreground = brush, FontSize = size, FontWeight = FontWeights.SemiBold };
+            var t = new TextBlock
+            {
+                Text = text,
+                Foreground = brush,
+                FontSize = size,
+                FontWeight = FontWeights.Bold,
+                // Letter-spacing-ish caption treatment (small caps feel) for
+                // the "EDGE ZONE" tag - a technical/instrument detail rather
+                // than a plain inline label competing with the readout text.
+                FontFamily = new FontFamily("Segoe UI Semibold, Segoe UI"),
+            };
             Canvas.SetLeft(t, x);
             Canvas.SetTop(t, y);
             PreviewCanvas.Children.Add(t);
         }
 
+        // Faint, thin guide line across the pad glass - purely a visual
+        // calibration aid (center crosshair), not tied to any threshold.
+        private void AddGuideLine(double x1, double y1, double x2, double y2)
+        {
+            var line = new Line
+            {
+                X1 = x1,
+                Y1 = y1,
+                X2 = x2,
+                Y2 = y2,
+                Stroke = CrosshairBrush,
+                StrokeThickness = 1,
+                Opacity = 0.06,
+            };
+            PreviewCanvas.Children.Add(line);
+        }
+
         private void AddCross(double x, double y)
         {
             const double s = 8;
-            var l1 = new Line { X1 = x - s, Y1 = y, X2 = x + s, Y2 = y, Stroke = Brushes.Black, StrokeThickness = 1.5 };
-            var l2 = new Line { X1 = x, Y1 = y - s, X2 = x, Y2 = y + s, Stroke = Brushes.Black, StrokeThickness = 1.5 };
+            var l1 = new Line { X1 = x - s, Y1 = y, X2 = x + s, Y2 = y, Stroke = Brushes.White, StrokeThickness = 1.5, Opacity = 0.85 };
+            var l2 = new Line { X1 = x, Y1 = y - s, X2 = x, Y2 = y + s, Stroke = Brushes.White, StrokeThickness = 1.5, Opacity = 0.85 };
             PreviewCanvas.Children.Add(l1);
             PreviewCanvas.Children.Add(l2);
         }
