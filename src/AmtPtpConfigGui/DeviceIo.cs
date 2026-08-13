@@ -28,10 +28,13 @@ namespace AmtPtpConfigGui.Native
 
         public static readonly uint IoctlGetPalmConfig =
             CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 0, MethodBuffered, FileAnyAccess);
+
         public static readonly uint IoctlSetPalmConfig =
             CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 1, MethodBuffered, FileAnyAccess);
+
         public static readonly uint IoctlGetPadGeometry =
             CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 2, MethodBuffered, FileAnyAccess);
+
         public static readonly uint IoctlResetPalmConfig =
             CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 3, MethodBuffered, FileAnyAccess);
 
@@ -39,10 +42,9 @@ namespace AmtPtpConfigGui.Native
 
         public bool IsConnected => _handle != null && !_handle.IsInvalid;
 
-        /// <summary>Human-readable reason the last TryConnect() call failed,
-        /// e.g. "CreateFile: Access is denied. (Win32 5)". Empty string
-        /// after a successful connect. Meant to be shown directly in the
-        /// GUI's own status bar - no debugger or Event Viewer needed.</summary>
+        /// <summary>
+        /// Human-readable reason the last TryConnect() call failed.
+        /// </summary>
         public string LastErrorMessage { get; private set; } = string.Empty;
 
         private bool Fail(string step)
@@ -53,19 +55,19 @@ namespace AmtPtpConfigGui.Native
             return false;
         }
 
-        /// <summary>Finds the first live AmtPtpDeviceUsbKm device interface
-        /// and opens a handle to it. Returns false (no throw) if the driver
-        /// isn't installed or no matching hardware is currently attached -
-        /// the GUI is expected to fall back to preview-only mode in that
-        /// case, not treat it as an error. On failure, LastErrorMessage
-        /// explains exactly which step failed and why.</summary>
+        /// <summary>
+        /// Finds the first live AmtPtpDeviceUsbKm device interface
+        /// and opens a handle to it.
+        /// </summary>
         public bool TryConnect()
         {
             Disconnect();
             LastErrorMessage = string.Empty;
 
             IntPtr deviceInfoSet = SetupDiGetClassDevs(
-                ref InterfaceGuidLocal, IntPtr.Zero, IntPtr.Zero,
+                ref InterfaceGuidLocal,
+                IntPtr.Zero,
+                IntPtr.Zero,
                 DigcfPresent | DigcfDeviceinterface);
 
             if (deviceInfoSet == IntPtr.Zero || deviceInfoSet.ToInt64() == -1)
@@ -79,41 +81,70 @@ namespace AmtPtpConfigGui.Native
                 ifData.cbSize = Marshal.SizeOf(ifData);
 
                 if (!SetupDiEnumDeviceInterfaces(
-                        deviceInfoSet, IntPtr.Zero, ref InterfaceGuidLocal, 0, ref ifData))
+                        deviceInfoSet,
+                        IntPtr.Zero,
+                        ref InterfaceGuidLocal,
+                        0,
+                        ref ifData))
                 {
-                    // ERROR_NO_MORE_ITEMS (259) here just means "no matching
-                    // device present right now" - still worth surfacing so
-                    // it's distinguishable from a real access/setup failure.
-                    return Fail("SetupDiEnumDeviceInterfaces (no device interface present)");
+                    return Fail(
+                        "SetupDiEnumDeviceInterfaces (no device interface present)");
                 }
 
                 uint requiredSize = 0;
+
                 SetupDiGetDeviceInterfaceDetail(
-                    deviceInfoSet, ref ifData, IntPtr.Zero, 0, ref requiredSize, IntPtr.Zero);
+                    deviceInfoSet,
+                    ref ifData,
+                    IntPtr.Zero,
+                    0,
+                    ref requiredSize,
+                    IntPtr.Zero);
+
                 if (requiredSize == 0)
                 {
-                    return Fail("SetupDiGetDeviceInterfaceDetail (size query)");
+                    return Fail(
+                        "SetupDiGetDeviceInterfaceDetail (size query)");
                 }
 
-                IntPtr detailBuffer = Marshal.AllocHGlobal((int)requiredSize);
+                IntPtr detailBuffer =
+                    Marshal.AllocHGlobal((int)requiredSize);
+
                 try
                 {
-                    // cbSize of SP_DEVICE_INTERFACE_DETAIL_DATA is 6 on x64
-                    // (4-byte cbSize field + the pack of the following
-                    // CHAR[1] array) regardless of the actual variable-size
-                    // buffer we allocated - this is a well-known SetupAPI
-                    // quirk, not a bug.
-                    Marshal.WriteInt32(detailBuffer, IntPtr.Size == 8 ? 8 : 6);
+                    /*
+                     * SP_DEVICE_INTERFACE_DETAIL_DATA:
+                     *
+                     * On x64 Windows, cbSize must be 8.
+                     * On x86 Windows, cbSize must be 6.
+                     */
+                    Marshal.WriteInt32(
+                        detailBuffer,
+                        IntPtr.Size == 8 ? 8 : 6);
 
                     if (!SetupDiGetDeviceInterfaceDetail(
-                            deviceInfoSet, ref ifData, detailBuffer, requiredSize,
-                            ref requiredSize, IntPtr.Zero))
+                            deviceInfoSet,
+                            ref ifData,
+                            detailBuffer,
+                            requiredSize,
+                            ref requiredSize,
+                            IntPtr.Zero))
                     {
-                        return Fail("SetupDiGetDeviceInterfaceDetail (fetch)");
+                        return Fail(
+                            "SetupDiGetDeviceInterfaceDetail (fetch)");
                     }
 
-                    int devicePathOffset = IntPtr.Size == 8 ? 8 : 6;
-                    string devicePath = Marshal.PtrToStringUni(detailBuffer + devicePathOffset)!;
+                    /*
+                     * IMPORTANT:
+                     *
+                     * The DevicePath WCHAR buffer starts immediately
+                     * after the 4-byte cbSize field for this manually
+                     * allocated SetupAPI structure.
+                     *
+                     * Do NOT use +8 here.
+                     */
+                    string devicePath =
+                        Marshal.PtrToStringUni(detailBuffer + 4)!;
 
                     var handle = CreateFile(
                         devicePath,
@@ -152,26 +183,50 @@ namespace AmtPtpConfigGui.Native
         public bool TryGetPalmConfig(out PalmConfig config)
         {
             config = PalmConfig.Default;
-            if (!IsConnected) return false;
-            return TryIoctl(IoctlGetPalmConfig, null, ref config);
+
+            if (!IsConnected)
+                return false;
+
+            return TryIoctl(
+                IoctlGetPalmConfig,
+                null,
+                ref config);
         }
 
-        public bool TrySetPalmConfig(PalmConfig request, out PalmConfig applied)
+        public bool TrySetPalmConfig(
+            PalmConfig request,
+            out PalmConfig applied)
         {
             applied = request;
-            if (!IsConnected) return false;
-            return TryIoctl(IoctlSetPalmConfig, (PalmConfig?)request, ref applied);
+
+            if (!IsConnected)
+                return false;
+
+            return TryIoctl(
+                IoctlSetPalmConfig,
+                (PalmConfig?)request,
+                ref applied);
         }
 
         public bool TryResetPalmConfig(out PalmConfig applied)
         {
             applied = PalmConfig.Default;
-            if (!IsConnected) return false;
+
+            if (!IsConnected)
+                return false;
 
             bool ok = DeviceIoControl(
-                _handle!, IoctlResetPalmConfig, IntPtr.Zero, 0, IntPtr.Zero, 0,
-                out _, IntPtr.Zero);
-            if (!ok) return false;
+                _handle!,
+                IoctlResetPalmConfig,
+                IntPtr.Zero,
+                0,
+                IntPtr.Zero,
+                0,
+                out _,
+                IntPtr.Zero);
+
+            if (!ok)
+                return false;
 
             // Driver doesn't echo a buffer back for RESET - just re-fetch.
             return TryGetPalmConfig(out applied);
@@ -180,19 +235,34 @@ namespace AmtPtpConfigGui.Native
         public bool TryGetPadGeometry(out PadGeometry geometry)
         {
             geometry = PadGeometry.Fallback;
-            if (!IsConnected) return false;
+
+            if (!IsConnected)
+                return false;
 
             int size = Marshal.SizeOf<PadGeometry>();
+
             IntPtr outBuf = Marshal.AllocHGlobal(size);
+
             try
             {
                 bool ok = DeviceIoControl(
-                    _handle!, IoctlGetPadGeometry, IntPtr.Zero, 0, outBuf, (uint)size,
-                    out uint bytesReturned, IntPtr.Zero);
-                if (!ok || bytesReturned < size) return false;
+                    _handle!,
+                    IoctlGetPadGeometry,
+                    IntPtr.Zero,
+                    0,
+                    outBuf,
+                    (uint)size,
+                    out uint bytesReturned,
+                    IntPtr.Zero);
 
-                var result = Marshal.PtrToStructure<PadGeometry>(outBuf);
-                if (!result.IsValid) return false; // hardware not enumerated yet
+                if (!ok || bytesReturned < size)
+                    return false;
+
+                var result =
+                    Marshal.PtrToStructure<PadGeometry>(outBuf);
+
+                if (!result.IsValid)
+                    return false;
 
                 geometry = result;
                 return true;
@@ -203,32 +273,55 @@ namespace AmtPtpConfigGui.Native
             }
         }
 
-        private bool TryIoctl(uint code, PalmConfig? input, ref PalmConfig output)
+        private bool TryIoctl(
+            uint code,
+            PalmConfig? input,
+            ref PalmConfig output)
         {
             int size = Marshal.SizeOf<PalmConfig>();
+
             IntPtr inBuf = IntPtr.Zero;
             IntPtr outBuf = Marshal.AllocHGlobal(size);
+
             try
             {
                 uint inSize = 0;
+
                 if (input.HasValue)
                 {
                     inBuf = Marshal.AllocHGlobal(size);
-                    Marshal.StructureToPtr(input.Value, inBuf, false);
+
+                    Marshal.StructureToPtr(
+                        input.Value,
+                        inBuf,
+                        false);
+
                     inSize = (uint)size;
                 }
 
                 bool ok = DeviceIoControl(
-                    _handle!, code, inBuf, inSize, outBuf, (uint)size,
-                    out uint bytesReturned, IntPtr.Zero);
-                if (!ok || bytesReturned < size) return false;
+                    _handle!,
+                    code,
+                    inBuf,
+                    inSize,
+                    outBuf,
+                    (uint)size,
+                    out uint bytesReturned,
+                    IntPtr.Zero);
 
-                output = Marshal.PtrToStructure<PalmConfig>(outBuf);
+                if (!ok || bytesReturned < size)
+                    return false;
+
+                output =
+                    Marshal.PtrToStructure<PalmConfig>(outBuf);
+
                 return true;
             }
             finally
             {
-                if (inBuf != IntPtr.Zero) Marshal.FreeHGlobal(inBuf);
+                if (inBuf != IntPtr.Zero)
+                    Marshal.FreeHGlobal(inBuf);
+
                 Marshal.FreeHGlobal(outBuf);
             }
         }
@@ -241,10 +334,13 @@ namespace AmtPtpConfigGui.Native
 
         private const uint DigcfPresent = 0x02;
         private const uint DigcfDeviceinterface = 0x10;
+
         private const uint GenericRead = 0x80000000;
         private const uint GenericWrite = 0x40000000;
+
         private const uint FileShareRead = 0x1;
         private const uint FileShareWrite = 0x2;
+
         private const uint OpenExisting = 3;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -256,45 +352,86 @@ namespace AmtPtpConfigGui.Native
             public IntPtr Reserved;
         }
 
-        [DllImport("setupapi.dll", SetLastError = true)]
+        [DllImport(
+            "setupapi.dll",
+            SetLastError = true)]
         private static extern IntPtr SetupDiGetClassDevs(
-            ref Guid classGuid, IntPtr enumerator, IntPtr hwndParent, uint flags);
+            ref Guid classGuid,
+            IntPtr enumerator,
+            IntPtr hwndParent,
+            uint flags);
 
-        [DllImport("setupapi.dll", SetLastError = true)]
+        [DllImport(
+            "setupapi.dll",
+            SetLastError = true)]
         private static extern bool SetupDiEnumDeviceInterfaces(
-            IntPtr deviceInfoSet, IntPtr deviceInfoData, ref Guid interfaceClassGuid,
-            uint memberIndex, ref SP_DEVICE_INTERFACE_DATA deviceInterfaceData);
+            IntPtr deviceInfoSet,
+            IntPtr deviceInfoData,
+            ref Guid interfaceClassGuid,
+            uint memberIndex,
+            ref SP_DEVICE_INTERFACE_DATA deviceInterfaceData);
 
-        [DllImport("setupapi.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        [DllImport(
+            "setupapi.dll",
+            SetLastError = true,
+            CharSet = CharSet.Auto)]
         private static extern bool SetupDiGetDeviceInterfaceDetail(
-            IntPtr deviceInfoSet, ref SP_DEVICE_INTERFACE_DATA deviceInterfaceData,
-            IntPtr deviceInterfaceDetailData, uint deviceInterfaceDetailDataSize,
-            ref uint requiredSize, IntPtr deviceInfoData);
+            IntPtr deviceInfoSet,
+            ref SP_DEVICE_INTERFACE_DATA deviceInterfaceData,
+            IntPtr deviceInterfaceDetailData,
+            uint deviceInterfaceDetailDataSize,
+            ref uint requiredSize,
+            IntPtr deviceInfoData);
 
-        [DllImport("setupapi.dll", SetLastError = true)]
-        private static extern bool SetupDiDestroyDeviceInfoList(IntPtr deviceInfoSet);
+        [DllImport(
+            "setupapi.dll",
+            SetLastError = true)]
+        private static extern bool SetupDiDestroyDeviceInfoList(
+            IntPtr deviceInfoSet);
 
-        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        [DllImport(
+            "kernel32.dll",
+            SetLastError = true,
+            CharSet = CharSet.Auto)]
         private static extern SafeFileHandle CreateFile(
-            string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes,
-            uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
+            string fileName,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile);
 
-        [DllImport("kernel32.dll", SetLastError = true)]
+        [DllImport(
+            "kernel32.dll",
+            SetLastError = true)]
         private static extern bool DeviceIoControl(
-            SafeFileHandle device, uint ioControlCode,
-            IntPtr inBuffer, uint inBufferSize,
-            IntPtr outBuffer, uint outBufferSize,
-            out uint bytesReturned, IntPtr overlapped);
+            SafeFileHandle device,
+            uint ioControlCode,
+            IntPtr inBuffer,
+            uint inBufferSize,
+            IntPtr outBuffer,
+            uint outBufferSize,
+            out uint bytesReturned,
+            IntPtr overlapped);
     }
 
-    /// <summary>Minimal SafeHandle for a Win32 file handle from CreateFile.</summary>
-    internal sealed class SafeFileHandle : Microsoft.Win32.SafeHandles.SafeHandleZeroOrMinusOneIsInvalid
+    /// <summary>
+    /// Minimal SafeHandle for a Win32 file handle from CreateFile.
+    /// </summary>
+    internal sealed class SafeFileHandle :
+        Microsoft.Win32.SafeHandles.SafeHandleZeroOrMinusOneIsInvalid
     {
-        public SafeFileHandle() : base(true) { }
+        public SafeFileHandle()
+            : base(true)
+        {
+        }
 
-        protected override bool ReleaseHandle() => CloseHandleNative(handle);
+        protected override bool ReleaseHandle() =>
+            CloseHandleNative(handle);
 
         [DllImport("kernel32.dll")]
-        private static extern bool CloseHandleNative(IntPtr handle);
+        private static extern bool CloseHandleNative(
+            IntPtr handle);
     }
 }
