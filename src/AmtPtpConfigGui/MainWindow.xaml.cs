@@ -70,7 +70,12 @@ namespace AmtPtpConfigGui
                 LoadConfigIntoSliders(PalmConfig.Default);
                 _geometry = PadGeometry.Fallback;
                 _geometryFromDevice = false;
-                SetBottomStatus("");
+
+                // Surface exactly which SetupAPI/CreateFile step failed and
+                // why, right in the GUI - no debugger or Event Viewer needed.
+                SetBottomStatus(string.IsNullOrEmpty(_device.LastErrorMessage)
+                    ? ""
+                    : $"Діагностика: {_device.LastErrorMessage}");
             }
 
             GeometrySourceText.Text = _geometryFromDevice

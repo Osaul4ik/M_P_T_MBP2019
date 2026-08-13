@@ -39,14 +39,30 @@ namespace AmtPtpConfigGui.Native
 
         public bool IsConnected => _handle != null && !_handle.IsInvalid;
 
+        /// <summary>Human-readable reason the last TryConnect() call failed,
+        /// e.g. "CreateFile: Access is denied. (Win32 5)". Empty string
+        /// after a successful connect. Meant to be shown directly in the
+        /// GUI's own status bar - no debugger or Event Viewer needed.</summary>
+        public string LastErrorMessage { get; private set; } = string.Empty;
+
+        private bool Fail(string step)
+        {
+            int err = Marshal.GetLastWin32Error();
+            string text = new Win32Exception(err).Message.Trim();
+            LastErrorMessage = $"{step}: {text} (Win32 {err})";
+            return false;
+        }
+
         /// <summary>Finds the first live AmtPtpDeviceUsbKm device interface
         /// and opens a handle to it. Returns false (no throw) if the driver
         /// isn't installed or no matching hardware is currently attached -
         /// the GUI is expected to fall back to preview-only mode in that
-        /// case, not treat it as an error.</summary>
+        /// case, not treat it as an error. On failure, LastErrorMessage
+        /// explains exactly which step failed and why.</summary>
         public bool TryConnect()
         {
             Disconnect();
+            LastErrorMessage = string.Empty;
 
             IntPtr deviceInfoSet = SetupDiGetClassDevs(
                 ref InterfaceGuidLocal, IntPtr.Zero, IntPtr.Zero,
@@ -54,7 +70,7 @@ namespace AmtPtpConfigGui.Native
 
             if (deviceInfoSet == IntPtr.Zero || deviceInfoSet.ToInt64() == -1)
             {
-                return false;
+                return Fail("SetupDiGetClassDevs");
             }
 
             try
@@ -65,7 +81,10 @@ namespace AmtPtpConfigGui.Native
                 if (!SetupDiEnumDeviceInterfaces(
                         deviceInfoSet, IntPtr.Zero, ref InterfaceGuidLocal, 0, ref ifData))
                 {
-                    return false; // No matching device present right now.
+                    // ERROR_NO_MORE_ITEMS (259) here just means "no matching
+                    // device present right now" - still worth surfacing so
+                    // it's distinguishable from a real access/setup failure.
+                    return Fail("SetupDiEnumDeviceInterfaces (no device interface present)");
                 }
 
                 uint requiredSize = 0;
@@ -73,7 +92,7 @@ namespace AmtPtpConfigGui.Native
                     deviceInfoSet, ref ifData, IntPtr.Zero, 0, ref requiredSize, IntPtr.Zero);
                 if (requiredSize == 0)
                 {
-                    return false;
+                    return Fail("SetupDiGetDeviceInterfaceDetail (size query)");
                 }
 
                 IntPtr detailBuffer = Marshal.AllocHGlobal((int)requiredSize);
@@ -90,7 +109,7 @@ namespace AmtPtpConfigGui.Native
                             deviceInfoSet, ref ifData, detailBuffer, requiredSize,
                             ref requiredSize, IntPtr.Zero))
                     {
-                        return false;
+                        return Fail("SetupDiGetDeviceInterfaceDetail (fetch)");
                     }
 
                     string devicePath = Marshal.PtrToStringUni(detailBuffer + 4)!;
@@ -106,7 +125,7 @@ namespace AmtPtpConfigGui.Native
 
                     if (handle.IsInvalid)
                     {
-                        return false;
+                        return Fail($"CreateFile('{devicePath}')");
                     }
 
                     _handle = handle;
