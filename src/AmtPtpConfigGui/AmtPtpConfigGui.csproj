@@ -10,53 +10,11 @@
     <AssemblyName>AmtPtpConfigGui</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x64;ARM64</Platforms>
-    <!-- Talks to a kernel-mode device via SetupAPI/DeviceIoControl - no
-         admin rights are required to open the device interface (same as
-         any other HID-class app), so we intentionally do NOT request
-         elevation here. -->
-
-    <!-- =====================================================================
-         Publish-size optimizations.
-         The previous CI publish (`--self-contained true` + PublishSingleFile
-         + IncludeNativeLibrariesForSelfExtract) produced a 150+ MB exe. That
-         size comes almost entirely from bundling a full private copy of the
-         .NET 8 runtime + WPF's native binaries (wpfgfx, PresentationNative,
-         D3DCompiler) + ICU globalization data + satellite resource DLLs for
-         ~30 languages - none of which this app needs by default.
-
-         - SatelliteResourceLanguages: this app's UI text is hardcoded
-           Ukrainian, not driven by .resx localization, so it never needs
-           satellite resource assemblies for other cultures. Restrict to
-           "uk;en" instead of shipping ~30 of them.
-         - InvariantGlobalization: no culture-aware sorting/formatting is
-           used anywhere (all number/date formats are explicit, culture-
-           invariant format strings), so the ICU data blob (~30 MB in a
-           self-contained publish) can be dropped safely.
-         - DebugType=none: don't emit/ship a .pdb with Release publishes.
-         - PublishReadyToRun=false: R2R pre-JIT images are ~2-3x larger per
-           assembly; this is a small utility GUI, not something where
-           cold-start JIT time matters enough to trade for that size.
-         - EnableCompressionInSingleFile: only takes effect for a
-           self-contained single-file publish (see README/CI); deflates the
-           bundled runtime/native assets inside the single exe.
-
-         None of this affects the default `dotnet build` / F5 debug output,
-         only `dotnet publish`. -->
     <SatelliteResourceLanguages>uk;en</SatelliteResourceLanguages>
     <InvariantGlobalization>true</InvariantGlobalization>
     <DebugType>none</DebugType>
     <PublishReadyToRun>false</PublishReadyToRun>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
-
-    <!-- Framework-dependent by default: the exe expects the .NET 8 Desktop
-         Runtime to already be installed (small, common redistributable -
-         https://dotnet.microsoft.com/download/dotnet/8.0). This alone is
-         the single biggest lever: it turns a ~150 MB self-contained exe
-         into a ~1-2 MB one, because it no longer embeds a private copy of
-         the CLR/WPF runtime at all. CI still also publishes a self-contained
-         build (see BuildAll.yml) for users who don't want to install the
-         runtime separately; that one stays large by nature but at least
-         benefits from every flag above. -->
     <SelfContained>false</SelfContained>
   </PropertyGroup>
 
