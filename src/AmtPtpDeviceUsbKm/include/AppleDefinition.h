@@ -389,8 +389,10 @@ static const struct BCM5974_CONFIG Bcm5974ConfigTable[] = {
 		0x83, DATAFORMAT(TYPE4),
 		{ SN_PRESSURE, 0, 300 },
 		{ SN_WIDTH, 0, 2048 },
-		{ SN_COORD, -8916, 9918 },
-		{ SN_COORD, -1934, 9835 },
+		// MacBookPro16,1 / J152F — calibrated from full-perimeter Live capture.
+		// Measured raw USB extrema: X=-7456..7976, Y=-163..9283.
+		{ SN_COORD, -7456, 7976 },
+		{ SN_COORD, -163, 9283 },
 		{ SN_ORIENT, -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION }
 	},
 	{

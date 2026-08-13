@@ -46,8 +46,8 @@
 #define AAPL_WS_PTP_PHYSX10_FALLBACK 1578
 #define AAPL_WS_PTP_PHYSY10_FALLBACK 978
 
-#define AAPL_WS_PTP_LOGX_T2_16 18834  // MacBookPro16,1 (J152F) - MEASURED
-#define AAPL_WS_PTP_LOGY_T2_16 11769
+#define AAPL_WS_PTP_LOGX_T2_16 15432  // MacBookPro16,1 (J152F) - calibrated from Live raw range -7456..7976
+#define AAPL_WS_PTP_LOGY_T2_16 9446   // calibrated from Live raw range -163..9283
 #define AAPL_WS_PTP_PHYSX10_T2_16 1578 // 157.8mm - measured
 #define AAPL_WS_PTP_PHYSY10_T2_16 978  // 97.8mm - measured
 
