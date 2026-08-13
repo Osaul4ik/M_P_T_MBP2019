@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -25,6 +27,55 @@ namespace AmtPtpConfigGui
         private readonly DispatcherTimer _liveTimer;
         private bool _liveEnabled;
         private uint _lastLiveSequence;
+
+        private sealed class CornerExtrema
+        {
+            public int Samples;
+
+            public short MinRawX = short.MaxValue;
+            public short MaxRawX = short.MinValue;
+            public short MinRawY = short.MaxValue;
+            public short MaxRawY = short.MinValue;
+
+            public ushort MinNormX = ushort.MaxValue;
+            public ushort MaxNormX = 0;
+            public ushort MinNormY = ushort.MaxValue;
+            public ushort MaxNormY = 0;
+
+            public void Update(short rawX, short rawY, ushort normX, ushort normY)
+            {
+                Samples++;
+
+                if (rawX < MinRawX) MinRawX = rawX;
+                if (rawX > MaxRawX) MaxRawX = rawX;
+                if (rawY < MinRawY) MinRawY = rawY;
+                if (rawY > MaxRawY) MaxRawY = rawY;
+
+                if (normX < MinNormX) MinNormX = normX;
+                if (normX > MaxNormX) MaxNormX = normX;
+                if (normY < MinNormY) MinNormY = normY;
+                if (normY > MaxNormY) MaxNormY = normY;
+            }
+
+            public string ToText()
+            {
+                if (Samples == 0)
+                    return "samples=0";
+
+                return
+                    $"samples={Samples}; " +
+                    $"RawX=[{MinRawX}..{MaxRawX}] " +
+                    $"RawY=[{MinRawY}..{MaxRawY}] " +
+                    $"NormX=[{MinNormX}..{MaxNormX}] " +
+                    $"NormY=[{MinNormY}..{MaxNormY}]";
+            }
+        }
+
+        private readonly CornerExtrema _topLeft = new();
+        private readonly CornerExtrema _topRight = new();
+        private readonly CornerExtrema _bottomLeft = new();
+        private readonly CornerExtrema _bottomRight = new();
+        private int _liveCornerSamples;
 
         public MainWindow()
         {
@@ -75,7 +126,19 @@ namespace AmtPtpConfigGui
 
             try
             {
-                File.WriteAllLines(dialog.FileName, _diagnosticLog);
+                var lines = new List<string>(_diagnosticLog);
+
+                lines.Add("");
+                lines.Add("===== Live Touch Calibration / Corner Extrema =====");
+                lines.Add($"Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                lines.Add($"Live samples total: {_liveCornerSamples}");
+                lines.Add("");
+                lines.Add($"TOP-LEFT     {_topLeft.ToText()}");
+                lines.Add($"TOP-RIGHT    {_topRight.ToText()}");
+                lines.Add($"BOTTOM-LEFT  {_bottomLeft.ToText()}");
+                lines.Add($"BOTTOM-RIGHT {_bottomRight.ToText()}");
+
+                File.WriteAllLines(dialog.FileName, lines);
                 SetBottomStatus($"Журнал помилок збережено: {dialog.FileName}");
             }
             catch (Exception ex)
@@ -156,6 +219,78 @@ namespace AmtPtpConfigGui
         // Live touch monitor
         // ---------------------------------------------------------------
 
+        private void ResetCornerExtrema()
+        {
+            ResetCorner(_topLeft);
+            ResetCorner(_topRight);
+            ResetCorner(_bottomLeft);
+            ResetCorner(_bottomRight);
+            _liveCornerSamples = 0;
+        }
+
+        private static void ResetCorner(CornerExtrema c)
+        {
+            c.Samples = 0;
+            c.MinRawX = short.MaxValue;
+            c.MaxRawX = short.MinValue;
+            c.MinRawY = short.MaxValue;
+            c.MaxRawY = short.MinValue;
+            c.MinNormX = ushort.MaxValue;
+            c.MaxNormX = 0;
+            c.MinNormY = ushort.MaxValue;
+            c.MaxNormY = 0;
+        }
+
+        private static CornerExtrema GetCorner(
+            CornerExtrema tl,
+            CornerExtrema tr,
+            CornerExtrema bl,
+            CornerExtrema br,
+            ushort normX,
+            ushort normY,
+            double xRange,
+            double yRange)
+        {
+            double px = xRange > 0 ? normX / xRange : 0.0;
+            double py = yRange > 0 ? normY / yRange : 0.0;
+
+            // Divide the pad into four quadrants. Each sample belongs to exactly
+            // one corner; this is intentionally simple for calibration passes.
+            if (py < 0.5)
+                return px < 0.5 ? tl : tr;
+            else
+                return px < 0.5 ? bl : br;
+        }
+
+        private void AccumulateCornerExtrema(LiveFrame frame)
+        {
+            if (frame.Contacts == null || frame.ContactCount == 0)
+                return;
+
+            double xRange = _geometry.XMax - _geometry.XMin;
+            double yRange = _geometry.YMax - _geometry.YMin;
+
+            if (xRange <= 0 || yRange <= 0)
+                return;
+
+            for (int i = 0; i < frame.ContactCount && i < frame.Contacts.Length; i++)
+            {
+                var c = frame.Contacts[i];
+                var target = GetCorner(
+                    _topLeft,
+                    _topRight,
+                    _bottomLeft,
+                    _bottomRight,
+                    c.X,
+                    c.Y,
+                    xRange,
+                    yRange);
+
+                target.Update(c.RawX, c.RawY, c.X, c.Y);
+                _liveCornerSamples++;
+            }
+        }
+
         private void Live_Changed(object sender, RoutedEventArgs e)
         {
             if (!_uiReady)
@@ -179,6 +314,7 @@ namespace AmtPtpConfigGui
                     ChkLive.IsChecked = false;
                 LiveStatusText.Text = "Live: помилка";
                 LiveCoordText.Text = "Live: координати —";
+                LiveCornerText.Text = "Кути: TL 0 | TR 0 | BL 0 | BR 0";
                 return;
             }
 
@@ -187,14 +323,17 @@ namespace AmtPtpConfigGui
 
             if (enabled)
             {
+                ResetCornerExtrema();
+            {
                 _liveTimer.Start();
-                LiveStatusText.Text = "Live: очікування…";
+                LiveStatusText.Text = "Live: очікування… | кути: збираються";
             }
             else
             {
                 _liveTimer.Stop();
                 LiveStatusText.Text = "Live: вимкнено";
                 LiveCoordText.Text = "Live: координати —";
+                LiveCornerText.Text = "Кути: TL 0 | TR 0 | BL 0 | BR 0";
                 DrawPreview();
             }
         }
@@ -211,6 +350,7 @@ namespace AmtPtpConfigGui
                 return;
 
             _lastLiveSequence = frame.Sequence;
+            AccumulateCornerExtrema(frame);
             DrawLiveOverlay(frame);
 
             if (frame.ContactCount > 0 && frame.Contacts != null)
@@ -233,6 +373,10 @@ namespace AmtPtpConfigGui
             {
                 LiveCoordText.Text = "Live: координати — немає активних контактів";
             }
+
+            LiveCornerText.Text =
+                $"Кути: TL {_topLeft.Samples} | TR {_topRight.Samples} | " +
+                $"BL {_bottomLeft.Samples} | BR {_bottomRight.Samples}";
 
             LiveStatusText.Text =
                 $"Live: {frame.ContactCount} дот. | seq {frame.Sequence}" +

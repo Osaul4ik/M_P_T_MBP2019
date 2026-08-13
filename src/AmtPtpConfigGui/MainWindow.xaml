@@ -65,6 +65,12 @@
                                Foreground="#555"
                                MaxWidth="700"
                                Margin="0,0,14,0"/>
+                    <TextBlock x:Name="LiveCornerText"
+                               Text="Кути: TL 0 | TR 0 | BL 0 | BR 0"
+                               VerticalAlignment="Center"
+                               Foreground="#777"
+                               MaxWidth="420"
+                               Margin="0,0,14,0"/>
 
                     <Button Content="Зберегти помилки в .txt" Click="SaveErrors_Click" Margin="0,0,6,0"/>
                     <Button Content="Оновити / Reconnect" Click="Reconnect_Click"/>
