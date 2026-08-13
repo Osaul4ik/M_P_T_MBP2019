@@ -319,11 +319,17 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
                     rawFrame.Contacts[bestRawIndex].RawX;
                 pCtx->LiveFrame.Contacts[i].RawY =
                     rawFrame.Contacts[bestRawIndex].RawY;
+                pCtx->LiveFrame.Contacts[i].Major =
+                    rawFrame.Contacts[bestRawIndex].Major;
+                pCtx->LiveFrame.Contacts[i].Minor =
+                    rawFrame.Contacts[bestRawIndex].Minor;
             } else {
                 //
                 // For a UP/deferred contact there may be no raw contact in
                 // the current frame. Reconstruct the best available raw
                 // coordinate from the normalized processed coordinate.
+                // Geometry (Major/Minor) is not reconstructable in this
+                // case - leave at 0 so the GUI falls back to a dot.
                 //
                 pCtx->LiveFrame.Contacts[i].RawX =
                     (SHORT)((LONG)coreFrame.Contacts[i].X +
@@ -332,6 +338,9 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
                 pCtx->LiveFrame.Contacts[i].RawY =
                     (SHORT)(pCtx->DeviceInfo->y.max -
                             (LONG)coreFrame.Contacts[i].Y);
+
+                pCtx->LiveFrame.Contacts[i].Major = 0;
+                pCtx->LiveFrame.Contacts[i].Minor = 0;
             }
         }
     }

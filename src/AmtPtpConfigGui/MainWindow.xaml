@@ -2,103 +2,332 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Wellspring PTP - Palm Rejection Settings"
-        Height="760" Width="1180" MinHeight="620" MinWidth="980"
+        Height="780" Width="1220" MinHeight="640" MinWidth="1000"
         WindowStartupLocation="CenterScreen"
-        FontFamily="Segoe UI" FontSize="13">
+        Background="#F3F3F3"
+        FontFamily="Segoe UI Variable Text, Segoe UI"
+        FontSize="13"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="ClearType">
 
     <Window.Resources>
+
+        <!-- ===================== Palette ===================== -->
+        <SolidColorBrush x:Key="AccentBrush"        Color="#0067C0"/>
+        <SolidColorBrush x:Key="AccentBrushHover"    Color="#005A9E"/>
+        <SolidColorBrush x:Key="AccentBrushPressed"  Color="#004E8C"/>
+        <SolidColorBrush x:Key="AccentSoftBrush"     Color="#E5F1FB"/>
+        <SolidColorBrush x:Key="CardBrush"           Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="CardBorderBrush"     Color="#E4E4E4"/>
+        <SolidColorBrush x:Key="PageBrush"           Color="#F3F3F3"/>
+        <SolidColorBrush x:Key="TextPrimaryBrush"    Color="#1A1A1A"/>
+        <SolidColorBrush x:Key="TextSecondaryBrush"  Color="#6B6B6B"/>
+        <SolidColorBrush x:Key="DividerBrush"        Color="#E7E7E7"/>
+        <SolidColorBrush x:Key="ControlFillBrush"    Color="#FBFBFB"/>
+        <SolidColorBrush x:Key="ControlStrokeBrush"  Color="#D9D9D9"/>
+        <SolidColorBrush x:Key="DangerBrush"         Color="#C42B1C"/>
+        <SolidColorBrush x:Key="SuccessBrush"        Color="#0F7B3F"/>
+
+        <DropShadowEffect x:Key="CardShadow"
+                           Color="#000000" Opacity="0.08"
+                           BlurRadius="16" ShadowDepth="2" Direction="270"/>
+
+        <!-- ===================== Base text ===================== -->
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+        </Style>
+
+        <!-- ===================== Card container ===================== -->
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource CardBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="16,14"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+
+        <!-- ===================== "GroupBox" re-skinned as a Fluent settings card ===================== -->
         <Style TargetType="GroupBox">
             <Setter Property="Margin" Value="0,0,0,12"/>
-            <Setter Property="Padding" Value="10,8,10,10"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="16,12,16,14"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="GroupBox">
+                        <Border Background="{StaticResource CardBrush}"
+                                BorderBrush="{StaticResource CardBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8">
+                            <StackPanel Margin="{TemplateBinding Padding}">
+                                <TextBlock Text="{TemplateBinding Header}"
+                                           FontWeight="SemiBold"
+                                           FontSize="13.5"
+                                           Margin="0,0,0,10"
+                                           Foreground="{StaticResource TextPrimaryBrush}"/>
+                                <ContentPresenter/>
+                            </StackPanel>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
-        <Style TargetType="Slider">
-            <Setter Property="Margin" Value="0,2,0,10"/>
-            <Setter Property="IsSnapToTickEnabled" Value="True"/>
-            <Setter Property="TickPlacement" Value="None"/>
-        </Style>
+
+        <!-- ===================== Slider labels ===================== -->
         <Style TargetType="TextBlock" x:Key="SliderLabel">
             <Setter Property="Margin" Value="0,0,0,0"/>
             <Setter Property="FontWeight" Value="Normal"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
         </Style>
         <Style TargetType="TextBlock" x:Key="SliderValue">
             <Setter Property="HorizontalAlignment" Value="Right"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="#2A6FDB"/>
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
         </Style>
+
+        <!-- ===================== Fluent Slider ===================== -->
+        <Style x:Key="FluentSliderThumb" TargetType="Thumb">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Grid>
+                            <Ellipse x:Name="Halo" Width="22" Height="22"
+                                     Fill="#140067C0" Opacity="0"/>
+                            <Ellipse Width="18" Height="18"
+                                     Fill="White"
+                                     Stroke="{StaticResource AccentBrush}"
+                                     StrokeThickness="2"/>
+                            <Ellipse x:Name="Core" Width="8" Height="8"
+                                     Fill="{StaticResource AccentBrush}"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Halo" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="Core" Property="Fill" Value="{StaticResource AccentBrushPressed}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="Slider">
+            <Setter Property="Margin" Value="0,4,0,12"/>
+            <Setter Property="IsSnapToTickEnabled" Value="True"/>
+            <Setter Property="TickPlacement" Value="None"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid VerticalAlignment="Center">
+                            <Border Height="4" Background="{StaticResource ControlStrokeBrush}" CornerRadius="2"/>
+                            <Track x:Name="PART_Track">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="Slider.DecreaseLarge">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Height="4" Background="{StaticResource AccentBrush}" CornerRadius="2"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="Slider.IncreaseLarge" Opacity="0"/>
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Style="{StaticResource FluentSliderThumb}" Width="18" Height="18"/>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ===================== Fluent Buttons ===================== -->
         <Style TargetType="Button">
-            <Setter Property="Padding" Value="14,6"/>
-            <Setter Property="Margin" Value="6,0,0,0"/>
+            <Setter Property="Padding" Value="16,7"/>
+            <Setter Property="Margin" Value="8,0,0,0"/>
             <Setter Property="MinWidth" Value="120"/>
+            <Setter Property="Background" Value="{StaticResource ControlFillBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource ControlStrokeBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontWeight" Value="Normal"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#F0F0F0"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#E6E6E6"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
+
+        <!-- Accent (primary) button variant — used for "Застосувати" -->
+        <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource AccentBrushHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource AccentBrushPressed}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ===================== Fluent CheckBox ===================== -->
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal">
+                            <Border x:Name="Box" Width="18" Height="18" CornerRadius="4"
+                                    Background="White"
+                                    BorderBrush="{StaticResource ControlStrokeBrush}"
+                                    BorderThickness="1.4"
+                                    VerticalAlignment="Center">
+                                <Path x:Name="Check" Data="M2,7 L6,11 L14,2" Stroke="White"
+                                      StrokeThickness="2" StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                      Visibility="Collapsed"/>
+                            </Border>
+                            <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Box" Property="Background" Value="{StaticResource AccentBrush}"/>
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                                <Setter TargetName="Check" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
     </Window.Resources>
 
-    <DockPanel LastChildFill="True">
+    <DockPanel LastChildFill="True" Margin="16">
 
-        <!-- Top status bar -->
-        <Border DockPanel.Dock="Top" Background="#F3F5F8" BorderBrush="#DDE1E6" BorderThickness="0,0,0,1">
-            <Grid Margin="14,10,14,10">
+        <!-- ===================== Top status bar ===================== -->
+        <Border DockPanel.Dock="Top" Style="{StaticResource Card}" Padding="16,12" Margin="0,0,0,14" Effect="{StaticResource CardShadow}">
+            <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#C0392B" VerticalAlignment="Center"/>
-                <TextBlock x:Name="StatusText" Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center"
-                           Text="Пристрій не знайдено — режим попереднього перегляду"/>
-                <StackPanel Grid.Column="2" Orientation="Horizontal">
-                                        <CheckBox x:Name="ChkLive"
-                              Content="Live"
-                              VerticalAlignment="Center"
-                              Margin="0,0,14,0"
-                              Checked="Live_Changed"
-                              Unchecked="Live_Changed"/>
+
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#C42B1C" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="StatusText" Margin="10,0,0,0" VerticalAlignment="Center"
+                               Text="Пристрій не знайдено — режим попереднього перегляду"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Background="{StaticResource ControlFillBrush}" BorderBrush="{StaticResource ControlStrokeBrush}"
+                            BorderThickness="1" CornerRadius="6" Padding="10,5" Margin="0,0,10,0">
+                        <StackPanel Orientation="Horizontal">
+                            <CheckBox x:Name="ChkLive"
+                                      Content="Live"
+                                      VerticalAlignment="Center"
+                                      Checked="Live_Changed"
+                                      Unchecked="Live_Changed"/>
+                        </StackPanel>
+                    </Border>
 
                     <TextBlock x:Name="LiveStatusText"
                                Text="Live: вимкнено"
                                VerticalAlignment="Center"
-                               Foreground="#666"
+                               Foreground="{StaticResource TextSecondaryBrush}"
                                Margin="0,0,14,0"/>
                     <TextBlock x:Name="LiveCoordText"
                                Text="Live: координати —"
                                VerticalAlignment="Center"
-                               Foreground="#555"
-                               MaxWidth="700"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               MaxWidth="640"
                                Margin="0,0,14,0"/>
                     <TextBlock x:Name="LiveCornerText"
                                Text="Кути: TL 0 | TR 0 | BL 0 | BR 0"
                                VerticalAlignment="Center"
-                               Foreground="#777"
-                               MaxWidth="420"
-                               Margin="0,0,14,0"/>
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               MaxWidth="380"
+                               Margin="0,0,4,0"/>
 
-                    <Button Content="Зберегти помилки в .txt" Click="SaveErrors_Click" Margin="0,0,6,0"/>
+                    <Button Content="Зберегти помилки в .txt" Click="SaveErrors_Click"/>
                     <Button Content="Оновити / Reconnect" Click="Reconnect_Click"/>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <!-- Bottom action bar -->
-        <Border DockPanel.Dock="Bottom" Background="#F3F5F8" BorderBrush="#DDE1E6" BorderThickness="0,1,0,0">
-            <Grid Margin="14,10,14,10">
+        <!-- ===================== Bottom action bar ===================== -->
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource Card}" Padding="16,12" Margin="0,14,0,0" Effect="{StaticResource CardShadow}">
+            <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock x:Name="BottomStatusText" VerticalAlignment="Center" Foreground="#555" Text=""/>
+                <TextBlock x:Name="BottomStatusText" VerticalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}" Text=""/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
                     <Button Content="Завантажити профіль…" Click="LoadProfile_Click"/>
                     <Button Content="Зберегти профіль…" Click="SaveProfile_Click"/>
                     <Button Content="Скинути за замовчуванням" Click="ResetDefaults_Click"/>
-                    <Button Content="Застосувати" Background="#2A6FDB" Foreground="White" Click="Apply_Click"/>
+                    <Button Content="Застосувати" Style="{StaticResource AccentButton}" Click="Apply_Click"/>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <!-- Main content: settings (left, scrollable) + live preview (right) -->
-        <Grid Margin="14">
+        <!-- ===================== Main content: settings (left, scrollable) + live preview (right) ===================== -->
+        <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="380"/>
+                <ColumnDefinition Width="400"/>
                 <ColumnDefinition Width="16"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
@@ -132,7 +361,7 @@
                             </Grid>
                             <Slider x:Name="SlEdgeBottom" Minimum="0" Maximum="400" ValueChanged="Slider_Changed"/>
 
-                            <TextBlock TextWrapping="Wrap" Foreground="#777" FontWeight="Normal" FontSize="11"
+                            <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" FontWeight="Normal" FontSize="11"
                                        Text="Новий дотик, що з'явився в цій зоні, миттєво відхиляється як долоня — незалежно від форми."/>
                         </StackPanel>
                     </GroupBox>
@@ -198,8 +427,8 @@
                             <Slider x:Name="SlTestY" Minimum="0" Maximum="100" Value="50" ValueChanged="Slider_Changed"/>
 
                             <CheckBox x:Name="ChkIsBirth" Content="Новий дотик (birth) — не продовження вже активного" IsChecked="True"
-                                      Margin="0,4,0,4" Checked="Slider_Changed" Unchecked="Slider_Changed"/>
-                            <TextBlock TextWrapping="Wrap" Foreground="#777" FontWeight="Normal" FontSize="11" Margin="0,4,0,0"
+                                      Margin="0,6,0,4" Checked="Slider_Changed" Unchecked="Slider_Changed"/>
+                            <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" FontWeight="Normal" FontSize="11" Margin="0,4,0,0"
                                        Text="Перетягніть точку прямо на карті праворуч, щоб перевірити позицію дотику."/>
                         </StackPanel>
                     </GroupBox>
@@ -207,29 +436,47 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- Live visualization -->
-            <Border Grid.Column="2" BorderBrush="#DDE1E6" BorderThickness="1" Background="White" CornerRadius="6">
-                <Grid Margin="14">
+            <!-- ===================== Live visualization ===================== -->
+            <Border Grid.Column="2" Style="{StaticResource Card}" Margin="0" Effect="{StaticResource CardShadow}">
+                <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="Попередній перегляд тачпада" FontWeight="SemiBold" FontSize="15" Margin="0,0,0,10"/>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
+                        <TextBlock Text="Попередній перегляд тачпада" FontWeight="SemiBold" FontSize="16"/>
+                        <Border Background="{StaticResource AccentSoftBrush}" CornerRadius="4" Padding="8,2" Margin="12,0,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse Width="8" Height="8" Fill="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center"/>
+                                <TextBlock Text=" звичайний дотик" FontSize="10.5" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Background="#FDE7E5" CornerRadius="4" Padding="8,2" Margin="8,0,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse Width="8" Height="8" Fill="{StaticResource DangerBrush}" VerticalAlignment="Center"/>
+                                <TextBlock Text=" долоня (PALM)" FontSize="10.5" Foreground="{StaticResource DangerBrush}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
 
-                    <Viewbox Grid.Row="1" Stretch="Uniform">
-                        <Canvas x:Name="PreviewCanvas" Width="700" Height="460" Background="#FAFBFC"
-                                MouseLeftButtonDown="PreviewCanvas_MouseDown"
-                                MouseMove="PreviewCanvas_MouseMove"
-                                MouseLeftButtonUp="PreviewCanvas_MouseUp"/>
-                    </Viewbox>
+                    <Border Grid.Row="1" CornerRadius="8" ClipToBounds="True">
+                        <Viewbox Stretch="Uniform">
+                            <Canvas x:Name="PreviewCanvas" Width="700" Height="460" Background="#FAFBFC"
+                                    MouseLeftButtonDown="PreviewCanvas_MouseDown"
+                                    MouseMove="PreviewCanvas_MouseMove"
+                                    MouseLeftButtonUp="PreviewCanvas_MouseUp"/>
+                        </Viewbox>
+                    </Border>
 
-                    <Border Grid.Row="2" Margin="0,10,0,0" Padding="10,8" CornerRadius="4" Background="#F3F5F8">
+                    <Border Grid.Row="2" Margin="0,12,0,0" Padding="12,10" CornerRadius="6"
+                            Background="{StaticResource ControlFillBrush}"
+                            BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="Класифікація: " FontWeight="SemiBold"/>
                             <TextBlock x:Name="ClassificationText" Text="—" FontWeight="Bold"/>
-                            <TextBlock x:Name="GeometrySourceText" Margin="20,0,0,0" Foreground="#888"/>
+                            <TextBlock x:Name="GeometrySourceText" Margin="20,0,0,0" Foreground="{StaticResource TextSecondaryBrush}"/>
                         </StackPanel>
                     </Border>
                 </Grid>

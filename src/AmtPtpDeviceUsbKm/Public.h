@@ -89,7 +89,7 @@ typedef struct _AMT_PALM_CONFIG
 // IOCTL_AMT_PTP_GET_LIVE_FRAME.
 // ============================================================================
 
-#define AMT_LIVE_FRAME_VERSION 1
+#define AMT_LIVE_FRAME_VERSION 2
 #define AMT_LIVE_MAX_CONTACTS 5
 
 typedef struct _AMT_LIVE_CONTACT
@@ -103,6 +103,8 @@ typedef struct _AMT_LIVE_CONTACT
     USHORT Reserved;
     SHORT RawX;            // exact raw USB abs_x
     SHORT RawY;            // exact raw USB abs_y
+    USHORT Major;          // touch_major, raw sensor units (nearest-raw match)
+    USHORT Minor;          // touch_minor, raw sensor units (nearest-raw match)
 } AMT_LIVE_CONTACT, *PAMT_LIVE_CONTACT;
 
 typedef struct _AMT_LIVE_FRAME

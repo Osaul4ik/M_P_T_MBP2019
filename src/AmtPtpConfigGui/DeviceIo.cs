@@ -345,7 +345,11 @@ namespace AmtPtpConfigGui.Native
                     return false;
 
                 frame = Marshal.PtrToStructure<LiveFrame>(outBuf);
-                return frame.StructVersion == 1;
+                // StructVersion 2 added Major/Minor geometry fields to
+                // LiveContact; a v1 driver will report a smaller
+                // bytesReturned and fail the size check above already,
+                // but keep an explicit version gate too.
+                return frame.StructVersion == 2;
             }
             finally
             {
@@ -397,6 +401,8 @@ namespace AmtPtpConfigGui.Native
         public ushort Reserved;
         public short RawX;     // exact raw USB abs_x
         public short RawY;     // exact raw USB abs_y
+        public ushort Major;   // touch_major, raw sensor units
+        public ushort Minor;   // touch_minor, raw sensor units
     }
 
     [StructLayout(LayoutKind.Sequential)]

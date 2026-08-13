@@ -413,46 +413,69 @@ namespace AmtPtpConfigGui
                 px = Math.Clamp(px, 0, w);
                 py = Math.Clamp(py, 0, h);
 
-                Brush brush = c.PalmSuspect != 0
-                    ? Brushes.OrangeRed
+                bool isPalm = c.PalmSuspect != 0;
+
+                // Outline/label color still reflects lifecycle phase so you
+                // can see DOWN/MOVE/UP at a glance; a palm-suspect contact
+                // always renders with a red fill regardless of phase, so it
+                // reads unambiguously even at a glance.
+                Brush outline = isPalm
+                    ? Brushes.Firebrick
                     : c.Phase == 1
                         ? Brushes.LimeGreen
                         : c.Phase == 3
                             ? Brushes.Orange
                             : Brushes.DeepSkyBlue;
 
-                var ring = new Ellipse
+                Brush fill = isPalm
+                    ? new SolidColorBrush(Color.FromArgb(150, 0xE8, 0x11, 0x23))
+                    : new SolidColorBrush(Color.FromArgb(90,
+                        ((SolidColorBrush)outline).Color.R,
+                        ((SolidColorBrush)outline).Color.G,
+                        ((SolidColorBrush)outline).Color.B));
+
+                // Contact geometry: Major/Minor are raw sensor units from the
+                // nearest matched raw frame (0 for a reconstructed UP contact
+                // with no raw match this frame). Scale them against the pad's
+                // own sensor range - same convention as the offline test
+                // preview ellipse in DrawPreview() - so real touches and the
+                // manual test touch are visually comparable.
+                double majorPx = c.Major > 0 ? Math.Max(10, (double)c.Major / xRange * w) : 26;
+                double minorPx = c.Minor > 0 ? Math.Max(10, (double)c.Minor / yRange * h) : 26;
+
+                var footprint = new Ellipse
                 {
-                    Width = 30,
-                    Height = 30,
-                    Fill = Brushes.Transparent,
-                    Stroke = brush,
-                    StrokeThickness = 3
+                    Width = majorPx,
+                    Height = minorPx,
+                    Fill = fill,
+                    Stroke = outline,
+                    StrokeThickness = isPalm ? 2.5 : 2
                 };
-                Canvas.SetLeft(ring, px - 15);
-                Canvas.SetTop(ring, py - 15);
-                PreviewCanvas.Children.Add(ring);
+                Canvas.SetLeft(footprint, px - majorPx / 2);
+                Canvas.SetTop(footprint, py - minorPx / 2);
+                PreviewCanvas.Children.Add(footprint);
 
                 var center = new Ellipse
                 {
-                    Width = 8,
-                    Height = 8,
-                    Fill = brush
+                    Width = 6,
+                    Height = 6,
+                    Fill = outline
                 };
-                Canvas.SetLeft(center, px - 4);
-                Canvas.SetTop(center, py - 4);
+                Canvas.SetLeft(center, px - 3);
+                Canvas.SetTop(center, py - 3);
                 PreviewCanvas.Children.Add(center);
 
+                string tag = isPalm ? $"ID {c.ContactID} · PALM" : $"ID {c.ContactID}";
                 var label = new TextBlock
                 {
-                    Text = $"ID {c.ContactID}",
+                    Text = tag,
                     FontSize = 11,
                     FontWeight = FontWeights.SemiBold,
-                    Foreground = brush,
-                    Background = Brushes.White,
-                    Padding = new Thickness(2, 0, 2, 0)
+                    Foreground = isPalm ? Brushes.White : outline,
+                    Background = isPalm ? Brushes.Firebrick : Brushes.White,
+                    Padding = new Thickness(4, 1, 4, 1)
                 };
-                Canvas.SetLeft(label, px + 18);
+                Canvas.SetLeft(label, px + Math.Max(18, majorPx / 2 + 4));
                 Canvas.SetTop(label, py - 9);
                 PreviewCanvas.Children.Add(label);
             }
