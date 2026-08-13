@@ -217,7 +217,7 @@ namespace AmtPtpConfigGui
                 (frame.LargePalmBlanked != 0 ? " | PALM" : "");
         }
 
-        private void DrawLiveOverlay(DeviceIo.LiveFrame frame)
+        private void DrawLiveOverlay(LiveFrame frame)
         {
             DrawPreview();
 
