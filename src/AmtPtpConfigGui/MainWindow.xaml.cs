@@ -106,10 +106,10 @@ namespace AmtPtpConfigGui
 
         private void SaveErrors_Click(object sender, RoutedEventArgs e)
         {
-            if (_diagnosticLog.Count == 0)
+            if (_diagnosticLog.Count == 0 && _liveCornerSamples == 0)
             {
                 MessageBox.Show(
-                    "Ще немає жодної зафіксованої помилки підключення — спершу натисніть \"Оновити / Reconnect\".",
+                    "Ще немає діагностичних даних або Live-калібровки.",
                     "Немає даних", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
