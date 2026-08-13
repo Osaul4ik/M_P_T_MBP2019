@@ -47,6 +47,19 @@
                 <TextBlock x:Name="StatusText" Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center"
                            Text="Пристрій не знайдено — режим попереднього перегляду"/>
                 <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                        <CheckBox x:Name="ChkLive"
+                              Content="Live"
+                              VerticalAlignment="Center"
+                              Margin="0,0,14,0"
+                              Checked="Live_Changed"
+                              Unchecked="Live_Changed"/>
+
+                    <TextBlock x:Name="LiveStatusText"
+                               Text="Live: вимкнено"
+                               VerticalAlignment="Center"
+                               Foreground="#666"
+                               Margin="0,0,14,0"/>
+
                     <Button Content="Зберегти помилки в .txt" Click="SaveErrors_Click" Margin="0,0,6,0"/>
                     <Button Content="Оновити / Reconnect" Click="Reconnect_Click"/>
                 </StackPanel>
