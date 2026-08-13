@@ -233,6 +233,13 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice);
 
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL AmtPtpConfigControlEvtIoDeviceControl;
 
+// Fires when the last handle to \\DosDevices\\AmtPtpDeviceUsbKm closes -
+// including an abnormal GUI exit (crash/kill/unplug), where the GUI never
+// gets a chance to run its own Closed handler. Used as a safety net to
+// force LiveEnabled back off so the interrupt hot path never keeps building
+// live snapshots for a monitor that no longer exists.
+EVT_WDF_FILE_CLOSE AmtPtpConfigControlEvtFileClose;
+
 NTSTATUS
 AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
 

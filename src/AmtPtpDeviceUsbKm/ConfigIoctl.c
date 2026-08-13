@@ -450,3 +450,39 @@ AmtPtpGetLiveFrame(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     WdfRequestSetInformation(Request, sizeof(AMT_LIVE_FRAME));
     return STATUS_SUCCESS;
 }
+
+// ----------------------------------------------------------------------------
+// AmtPtpConfigControlEvtFileClose
+//
+// Safety net for AmtPtpSetLiveEnabled(FALSE): fires when the handle to
+// \\DosDevices\\AmtPtpDeviceUsbKm closes for ANY reason, not just a clean
+// GUI shutdown. The GUI's own Closed handler already disables Live on a
+// normal exit, but a crash, taskkill, unplug, or BSOD skips that handler
+// entirely and would otherwise leave LiveEnabled stuck TRUE - the interrupt
+// hot path would keep building and copying live snapshots forever for a
+// monitor that no longer exists, with no consumer ever calling
+// GET_LIVE_FRAME again. Forcing it off here costs nothing on the normal-exit
+// path (SetLiveEnabled(FALSE) already ran, so this is just a redundant
+// FALSE-to-FALSE write) and closes the leak on every other exit path.
+// ----------------------------------------------------------------------------
+
+VOID
+AmtPtpConfigControlEvtFileClose(_In_ WDFFILEOBJECT FileObject)
+{
+    WDFDEVICE                   controlDevice;
+    PAMT_CONFIG_CONTROL_CONTEXT controlContext;
+    PDEVICE_CONTEXT             targetContext;
+
+    controlDevice = WdfFileObjectGetDevice(FileObject);
+
+    controlContext = AmtConfigControlGetContext(controlDevice);
+    if (controlContext == NULL || controlContext->TargetDevice == NULL) {
+        return;
+    }
+
+    targetContext = DeviceGetContext(controlContext->TargetDevice);
+
+    WdfSpinLockAcquire(targetContext->StateLock);
+    targetContext->LiveEnabled = FALSE;
+    WdfSpinLockRelease(targetContext->StateLock);
+}

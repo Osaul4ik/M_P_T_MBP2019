@@ -28,6 +28,25 @@ namespace AmtPtpConfigGui
         private bool _liveEnabled;
         private uint _lastLiveSequence;
 
+        // Per-contact EMA smoothing state for the live overlay's ellipse
+        // size only (Major/Minor as *rendered*, never touches the raw
+        // values used for palm classification thresholds elsewhere).
+        //
+        // Root cause of visible height jitter on a static, fully-rested
+        // touch: Major/Minor are the sensor firmware's own touch-ellipse
+        // long/short axis fit (touch_major/touch_minor), not literally
+        // "extent along the pad's X axis" / "extent along the pad's Y
+        // axis" - there's no orientation angle in the wire format. The
+        // long axis (mapped here to width) is well-conditioned and stable
+        // frame-to-frame; the short axis (mapped to height) is a much
+        // smaller residual in the firmware's ellipse fit and is inherently
+        // noisier per-frame, even for a perfectly still finger - that's
+        // why width looked rock solid while height wobbled a little.
+        // Smoothing only the display, not the classifier input, keeps
+        // palm-rejection tuning honest while fixing the visual wobble.
+        private readonly Dictionary<uint, (double Major, double Minor)> _liveGeometrySmooth = new();
+        private const double LiveGeometrySmoothAlpha = 0.25; // lower = smoother/slower to react
+
         private sealed class CornerExtrema
         {
             public int Samples;
@@ -320,6 +339,7 @@ namespace AmtPtpConfigGui
 
             _liveEnabled = enabled;
             _lastLiveSequence = 0;
+            _liveGeometrySmooth.Clear();
 
             if (enabled)
             {
@@ -398,9 +418,16 @@ namespace AmtPtpConfigGui
             if (xRange <= 0 || yRange <= 0)
                 return;
 
+            // Track which contact IDs are still alive this frame so stale
+            // smoothing state for lifted contacts doesn't linger forever
+            // (and doesn't get reused if a ContactID happens to be recycled
+            // much later).
+            var seenIds = new HashSet<uint>();
+
             for (int i = 0; i < frame.ContactCount && i < frame.Contacts.Length; i++)
             {
                 var c = frame.Contacts[i];
+                seenIds.Add(c.ContactID);
 
                 // LiveFrame X/Y are already normalized to the device's
                 // coordinate origin by the driver:
@@ -440,8 +467,32 @@ namespace AmtPtpConfigGui
                 // own sensor range - same convention as the offline test
                 // preview ellipse in DrawPreview() - so real touches and the
                 // manual test touch are visually comparable.
-                double majorPx = c.Major > 0 ? Math.Max(10, (double)c.Major / xRange * w) : 26;
-                double minorPx = c.Minor > 0 ? Math.Max(10, (double)c.Minor / yRange * h) : 26;
+                //
+                // Light per-contact EMA smoothing on the DISPLAYED size only
+                // (see _liveGeometrySmooth comment) - the short/minor axis of
+                // the firmware's ellipse fit is noticeably noisier per-frame
+                // than the long/major axis even for a perfectly still touch,
+                // which otherwise shows up as visible jitter in the rendered
+                // height while the width looks rock solid. A fresh DOWN
+                // snaps immediately to the raw size instead of fading in.
+                double rawMajor = c.Major;
+                double rawMinor = c.Minor;
+                double dispMajor, dispMinor;
+
+                if (c.Phase == 1 /* DOWN */ || !_liveGeometrySmooth.TryGetValue(c.ContactID, out var prevGeom))
+                {
+                    dispMajor = rawMajor;
+                    dispMinor = rawMinor;
+                }
+                else
+                {
+                    dispMajor = prevGeom.Major + (rawMajor - prevGeom.Major) * LiveGeometrySmoothAlpha;
+                    dispMinor = prevGeom.Minor + (rawMinor - prevGeom.Minor) * LiveGeometrySmoothAlpha;
+                }
+                _liveGeometrySmooth[c.ContactID] = (dispMajor, dispMinor);
+
+                double majorPx = dispMajor > 0 ? Math.Max(10, dispMajor / xRange * w) : 26;
+                double minorPx = dispMinor > 0 ? Math.Max(10, dispMinor / yRange * h) : 26;
 
                 var footprint = new Ellipse
                 {
@@ -478,6 +529,22 @@ namespace AmtPtpConfigGui
                 Canvas.SetLeft(label, px + Math.Max(18, majorPx / 2 + 4));
                 Canvas.SetTop(label, py - 9);
                 PreviewCanvas.Children.Add(label);
+            }
+
+            // Drop smoothing state for any contact that isn't in this frame
+            // anymore (lifted, or dropped) so it doesn't linger indefinitely
+            // and doesn't leak into a later, unrelated contact that happens
+            // to reuse the same ContactID far in the future.
+            if (_liveGeometrySmooth.Count > 0)
+            {
+                var stale = new List<uint>();
+                foreach (var id in _liveGeometrySmooth.Keys)
+                {
+                    if (!seenIds.Contains(id))
+                        stale.Add(id);
+                }
+                foreach (var id in stale)
+                    _liveGeometrySmooth.Remove(id);
             }
         }
 

@@ -122,6 +122,23 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
 
     WdfDeviceInitSetExclusive(controlInit, FALSE);
 
+    // Wire up EvtFileClose so a handle closing for ANY reason - including
+    // the GUI process dying without running its own cleanup - is caught by
+    // the driver itself and used to force LiveEnabled back off.
+    {
+        WDF_FILEOBJECT_CONFIG fileConfig;
+        WDF_FILEOBJECT_CONFIG_INIT(
+            &fileConfig,
+            WDF_NO_EVENT_CALLBACK,             // EvtDeviceFileCreate
+            AmtPtpConfigControlEvtFileClose,   // EvtFileClose
+            WDF_NO_EVENT_CALLBACK);            // EvtFileCleanup
+
+        WdfDeviceInitSetFileObjectConfig(
+            controlInit,
+            &fileConfig,
+            WDF_NO_OBJECT_ATTRIBUTES);
+    }
+
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
         &controlAttributes,
         AMT_CONFIG_CONTROL_CONTEXT);
