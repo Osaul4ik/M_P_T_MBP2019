@@ -14,6 +14,7 @@ namespace AmtPtpConfigGui
     public partial class MainWindow : Window
     {
         private readonly DeviceIo _device = new DeviceIo();
+        private readonly System.Collections.Generic.List<string> _diagnosticLog = new();
         private PadGeometry _geometry = PadGeometry.Fallback;
         private bool _geometryFromDevice;
         private bool _suppressEvents;
@@ -32,6 +33,39 @@ namespace AmtPtpConfigGui
         // ---------------------------------------------------------------
 
         private void Reconnect_Click(object sender, RoutedEventArgs e) => Reconnect();
+
+        private void SaveErrors_Click(object sender, RoutedEventArgs e)
+        {
+            if (_diagnosticLog.Count == 0)
+            {
+                MessageBox.Show(
+                    "Ще немає жодної зафіксованої помилки підключення — спершу натисніть \"Оновити / Reconnect\".",
+                    "Немає даних", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var dialog = new SaveFileDialog
+            {
+                Title = "Зберегти журнал помилок",
+                Filter = "Текстові файли (*.txt)|*.txt|Усі файли (*.*)|*.*",
+                FileName = $"AmtPtpConfigGui_errors_{DateTime.Now:yyyyMMdd_HHmmss}.txt"
+            };
+
+            if (dialog.ShowDialog(this) != true)
+                return;
+
+            try
+            {
+                File.WriteAllLines(dialog.FileName, _diagnosticLog);
+                SetBottomStatus($"Журнал помилок збережено: {dialog.FileName}");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Не вдалося зберегти файл:\n{ex.Message}",
+                    "Помилка збереження", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
 
         private void Reconnect()
         {
@@ -76,6 +110,11 @@ namespace AmtPtpConfigGui
                 SetBottomStatus(string.IsNullOrEmpty(_device.LastErrorMessage)
                     ? ""
                     : $"Діагностика: {_device.LastErrorMessage}");
+
+                if (!string.IsNullOrEmpty(_device.LastErrorMessage))
+                {
+                    _diagnosticLog.Add($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {_device.LastErrorMessage}");
+                }
             }
 
             GeometrySourceText.Text = _geometryFromDevice

@@ -46,7 +46,10 @@
                 <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#C0392B" VerticalAlignment="Center"/>
                 <TextBlock x:Name="StatusText" Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center"
                            Text="Пристрій не знайдено — режим попереднього перегляду"/>
-                <Button Grid.Column="2" Content="Оновити / Reconnect" Click="Reconnect_Click"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button Content="Зберегти помилки в .txt" Click="SaveErrors_Click" Margin="0,0,6,0"/>
+                    <Button Content="Оновити / Reconnect" Click="Reconnect_Click"/>
+                </StackPanel>
             </Grid>
         </Border>
 
