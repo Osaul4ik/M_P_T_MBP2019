@@ -9,13 +9,13 @@
     <RootNamespace>AmtPtpConfigGui</RootNamespace>
     <AssemblyName>AmtPtpConfigGui</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Platforms>x64;ARM64</Platforms>
+    <Platforms>x64</Platforms>
     <SatelliteResourceLanguages>uk;en</SatelliteResourceLanguages>
     <InvariantGlobalization>true</InvariantGlobalization>
     <DebugType>none</DebugType>
     <PublishReadyToRun>false</PublishReadyToRun>
     <SelfContained>false</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
+    <PublishSingleFile>false</PublishSingleFile>
     <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
   </PropertyGroup>
 
