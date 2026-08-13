@@ -158,9 +158,7 @@ AmtPalmConfigSaveToRegistry(
 }
 
 // ----------------------------------------------------------------------------
-// IOCTL handlers. The GUI reaches these through the separate KMDF control
-// device created in Device.c. The dispatcher passes the real USB filter FDO
-// as Device, so the existing DEVICE_CONTEXT/state/registry logic is retained.
+// IOCTL handlers - dispatched from Queue.c's EvtIoDeviceControl.
 // ----------------------------------------------------------------------------
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
@@ -300,4 +298,62 @@ AmtPtpResetPalmConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     AmtPalmConfigSaveToRegistry(Device, &defaults);
 
     return STATUS_SUCCESS;
+}
+
+// ----------------------------------------------------------------------------
+// Control-device dispatch - called for IOCTLs arriving through
+// \\.\\AmtPtpDeviceUsbKm. The control device itself has no DEVICE_CONTEXT;
+// its small context stores the PnP filter FDO that owns the real state.
+// ----------------------------------------------------------------------------
+
+VOID
+AmtPtpConfigControlEvtIoDeviceControl(
+    _In_ WDFQUEUE Queue,
+    _In_ WDFREQUEST Request,
+    _In_ size_t OutputBufferLength,
+    _In_ size_t InputBufferLength,
+    _In_ ULONG IoControlCode
+)
+{
+    WDFDEVICE controlDevice;
+    PAMT_CONFIG_CONTROL_CONTEXT controlContext;
+    WDFDEVICE targetDevice;
+    NTSTATUS status;
+
+    UNREFERENCED_PARAMETER(OutputBufferLength);
+    UNREFERENCED_PARAMETER(InputBufferLength);
+
+    controlDevice = WdfIoQueueGetDevice(Queue);
+    controlContext = AmtConfigControlGetContext(controlDevice);
+    targetDevice = controlContext->TargetDevice;
+
+    if (targetDevice == NULL) {
+        WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
+        return;
+    }
+
+    switch (IoControlCode)
+    {
+    case IOCTL_AMT_PTP_GET_PALM_CONFIG:
+        status = AmtPtpGetPalmConfig(targetDevice, Request);
+        break;
+
+    case IOCTL_AMT_PTP_SET_PALM_CONFIG:
+        status = AmtPtpSetPalmConfig(targetDevice, Request);
+        break;
+
+    case IOCTL_AMT_PTP_GET_PAD_GEOMETRY:
+        status = AmtPtpGetPadGeometry(targetDevice, Request);
+        break;
+
+    case IOCTL_AMT_PTP_RESET_PALM_CONFIG:
+        status = AmtPtpResetPalmConfig(targetDevice, Request);
+        break;
+
+    default:
+        status = STATUS_INVALID_DEVICE_REQUEST;
+        break;
+    }
+
+    WdfRequestComplete(Request, status);
 }

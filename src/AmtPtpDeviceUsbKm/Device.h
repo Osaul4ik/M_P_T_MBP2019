@@ -43,6 +43,18 @@ typedef enum _FORCE_TOUCH_DELIVERY_STATE
     FORCE_TOUCH_DELIVERY_UP_PENDING    // DOWN delivered, UP not yet delivered
 } FORCE_TOUCH_DELIVERY_STATE;
 
+typedef struct _AMT_CONFIG_CONTROL_CONTEXT
+{
+    // The PnP filter device that owns the actual palm/geometry state.
+    // This is a WDF handle, not a raw WDM pointer.
+    WDFDEVICE TargetDevice;
+} AMT_CONFIG_CONTROL_CONTEXT, *PAMT_CONFIG_CONTROL_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(
+    AMT_CONFIG_CONTROL_CONTEXT,
+    AmtConfigControlGetContext
+)
+
 typedef struct _DEVICE_CONTEXT
 {
     // Protect shared frame-processing state across concurrent USB completions.
@@ -52,6 +64,11 @@ typedef struct _DEVICE_CONTEXT
     WDFUSBDEVICE    UsbDevice;
     WDFUSBPIPE      InterruptPipe;
     WDFQUEUE        InputQueue;
+
+    // User-mode configuration endpoint. This is a separate KMDF control
+    // device; the PnP FDO remains a lower filter and does not expose the
+    // GUI interface directly on the USB/HID stack.
+    WDFDEVICE       ConfigControlDevice;
 
     // Device config
     const struct BCM5974_CONFIG* DeviceInfo;
@@ -174,11 +191,6 @@ typedef struct _DEVICE_CONTEXT
     RECENT_LIFT_RING RecentLifts;
 
     // ---------------------------------------------------------------
-    // GUI control device. Created alongside this USB filter FDO and deleted
-    // from the FDO context cleanup so the GUI interface disappears with the
-    // physical device.
-    WDFDEVICE              ConfigControlDevice;
-
     // Cold: USB setup metadata. Written once (EvtDevicePrepareHardware /
     // device creation), never read in the per-frame hot path (grep across
     // Interrupt.c/Hid.c/Ptpcore.c/Match.c confirms zero hits) - kept at the
@@ -193,38 +205,6 @@ typedef struct _DEVICE_CONTEXT
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 
-// ---------------------------------------------------------------------------
-// GUI control device.
-//
-// The USB/HID FDO is a lower filter. A device interface registered on that
-// FDO is opened through the whole HID/USB stack, so user-mode CreateFile can
-// be handled by an upper driver instead of this filter. The GUI interface is
-// therefore exposed by a separate KMDF control device. Its IOCTL queue keeps
-// a referenced handle to the real USB filter FDO and dispatches the existing
-// ConfigIoctl handlers against that target device. The control device is
-// deleted with the physical FDO, so the stored WDFDEVICE target handle is
-// valid for the control device's lifetime and does not need a reference.
-// ---------------------------------------------------------------------------
-typedef struct _AMT_CONTROL_DEVICE_CONTEXT
-{
-    WDFDEVICE TargetDevice;
-} AMT_CONTROL_DEVICE_CONTEXT, *PAMT_CONTROL_DEVICE_CONTEXT;
-
-WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(
-    AMT_CONTROL_DEVICE_CONTEXT,
-    AmtControlDeviceGetContext
-)
-
-EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL AmtPtpControlEvtIoDeviceControl;
-EVT_WDF_OBJECT_CONTEXT_CLEANUP    AmtPtpControlDeviceCleanup;
-EVT_WDF_DEVICE_FILE_CREATE        AmtPtpControlEvtControlFileCreate;
-
-_IRQL_requires_(PASSIVE_LEVEL)
-NTSTATUS
-AmtPtpCreateConfigControlDevice(
-    _In_ WDFDEVICE TargetDevice
-);
-
 // Bound the Wellspring control transfer with a timeout.
 #define WELLSPRING_CONTROL_TRANSFER_TIMEOUT_SEC   5
 
@@ -238,10 +218,14 @@ EVT_WDF_DEVICE_D0_ENTRY         AmtPtpEvtDeviceD0Entry;
 EVT_WDF_DEVICE_D0_EXIT          AmtPtpEvtDeviceD0Exit;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP  AmtPtpEvtDeviceContextCleanup;
 
-// The GUI opens the separate KMDF control device created by
-// AmtPtpCreateConfigControlDevice(). The USB/HID filter FDO intentionally
-// does not own the GUI interface, so its IRP_MJ_CREATE path remains part of
-// the normal HID/USB filter stack.
+// The PnP device is a lower filter. User-mode configuration therefore uses
+// a separate KMDF control device with a DOS symbolic link instead of a
+// device interface attached to the USB/HID filter FDO.
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS
+AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice);
+
+EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL AmtPtpConfigControlEvtIoDeviceControl;
 
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS

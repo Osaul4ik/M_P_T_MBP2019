@@ -13,6 +13,7 @@
 // segment (PREfast C28172).
 #pragma alloc_text (PAGE, AmtPtpEvtDeviceD0Exit)
 #pragma alloc_text (PAGE, SelectInterruptInterface)
+#pragma alloc_text (PAGE, AmtPtpCreateConfigControlDevice)
 #endif
 
 #define ACTIVE_CONTACTS_ALIGNMENT 64
@@ -75,6 +76,104 @@ AmtPtpGetDeviceConfig(_In_ const PUSB_DEVICE_DESCRIPTOR DeviceDescriptor)
     }
 
     return &Bcm5974ConfigTable[0];
+}
+
+// AmtPtpCreateConfigControlDevice
+//
+// Creates a real KMDF control device for the configuration GUI. The PnP
+// device remains a lower filter; the GUI endpoint is deliberately separate
+// from the USB/HID stack so CreateFile() is handled by KMDF rather than being
+// forwarded to the lower USB driver.
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS
+AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
+{
+    PWDFDEVICE_INIT       controlInit = NULL;
+    WDF_OBJECT_ATTRIBUTES controlAttributes;
+    WDF_IO_QUEUE_CONFIG    queueConfig;
+    WDFDEVICE              controlDevice = NULL;
+    PAMT_CONFIG_CONTROL_CONTEXT controlContext;
+    NTSTATUS                status;
+
+    PAGED_CODE();
+
+    DECLARE_CONST_UNICODE_STRING(sddl,
+        L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;AU)");
+    DECLARE_CONST_UNICODE_STRING(ntName,
+        L"\\Device\\AmtPtpDeviceUsbKm");
+    DECLARE_CONST_UNICODE_STRING(dosName,
+        L"\\DosDevices\\AmtPtpDeviceUsbKm");
+
+    controlInit = WdfControlDeviceInitAllocate(
+        WdfDeviceGetDriver(TargetDevice),
+        &sddl);
+
+    if (controlInit == NULL) {
+        AMT_LOG("WdfControlDeviceInitAllocate FAILED");
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    status = WdfDeviceInitAssignName(controlInit, &ntName);
+    if (!NT_SUCCESS(status)) {
+        AMT_LOG("WdfDeviceInitAssignName(control) FAILED, status=0x%08X", status);
+        WdfDeviceInitFree(controlInit);
+        return status;
+    }
+
+    WdfDeviceInitSetExclusive(controlInit, FALSE);
+
+    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
+        &controlAttributes,
+        AMT_CONFIG_CONTROL_CONTEXT);
+
+    status = WdfDeviceCreate(
+        &controlInit,
+        &controlAttributes,
+        &controlDevice);
+
+    if (!NT_SUCCESS(status)) {
+        AMT_LOG("WdfDeviceCreate(control) FAILED, status=0x%08X", status);
+        return status;
+    }
+
+    controlContext = AmtConfigControlGetContext(controlDevice);
+    controlContext->TargetDevice = TargetDevice;
+
+    status = WdfDeviceCreateSymbolicLink(
+        controlDevice,
+        &dosName);
+
+    if (!NT_SUCCESS(status)) {
+        AMT_LOG("WdfDeviceCreateSymbolicLink(control) FAILED, status=0x%08X", status);
+        WdfObjectDelete(controlDevice);
+        return status;
+    }
+
+    WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(
+        &queueConfig,
+        WdfIoQueueDispatchSequential);
+
+    queueConfig.EvtIoDeviceControl = AmtPtpConfigControlEvtIoDeviceControl;
+
+    status = WdfIoQueueCreate(
+        controlDevice,
+        &queueConfig,
+        WDF_NO_OBJECT_ATTRIBUTES,
+        WDF_NO_HANDLE);
+
+    if (!NT_SUCCESS(status)) {
+        AMT_LOG("WdfIoQueueCreate(control) FAILED, status=0x%08X", status);
+        WdfObjectDelete(controlDevice);
+        return status;
+    }
+
+    // A control device does not receive I/O until this call has completed.
+    WdfControlFinishInitializing(controlDevice);
+
+    DeviceGetContext(TargetDevice)->ConfigControlDevice = controlDevice;
+
+    AMT_LOG("Config control device created: \\DosDevices\\AmtPtpDeviceUsbKm");
+    return STATUS_SUCCESS;
 }
 
 // AmtPtpDeviceUsbKmCreateDevice
@@ -177,21 +276,18 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
         }
     }
 
-    // The HID/filter queues remain attached to the real USB FDO.
-    // Do NOT publish the GUI interface from this FDO: an interface on a
-    // filter FDO is opened through the complete HID/USB stack, so the
-    // filter's EvtDeviceFileCreate is not guaranteed to receive IRP_MJ_CREATE.
-    // The GUI interface is published by a separate KMDF control device below.
-    status = AmtPtpDeviceUsbKmQueueInitialize(device);
-    if (!NT_SUCCESS(status)) {
-        AMT_LOG("AmtPtpDeviceUsbKmQueueInitialize FAILED, status=0x%08X", status);
-        return status;
-    }
-
+    // The GUI talks to a separate KMDF control device.
+    // This physical device remains a lower filter; no user-mode device
+    // interface is created on the filter FDO itself.
     status = AmtPtpCreateConfigControlDevice(device);
     if (!NT_SUCCESS(status)) {
         AMT_LOG("AmtPtpCreateConfigControlDevice FAILED, status=0x%08X", status);
         return status;
+    }
+
+    status = AmtPtpDeviceUsbKmQueueInitialize(device);
+    if (!NT_SUCCESS(status)) {
+        AMT_LOG("AmtPtpDeviceUsbKmQueueInitialize FAILED, status=0x%08X", status);
     }
 
     return status;
@@ -400,13 +496,12 @@ AmtPtpEvtDeviceContextCleanup(
     PDEVICE_CONTEXT pDeviceContext;
     pDeviceContext = DeviceGetContext((WDFDEVICE)Device);
 
-    // The GUI control device is not a PnP child, so explicitly remove it
-    // with the physical filter FDO. This unregisters the GUI interface and
-    // prevents a stale control endpoint after unplug/rebind.
+    // The control device is owned by this PnP device instance. Delete it
+    // before releasing the physical device context so the GUI endpoint
+    // cannot outlive the target WDFDEVICE.
     if (pDeviceContext->ConfigControlDevice != NULL) {
-        WDFDEVICE controlDevice = pDeviceContext->ConfigControlDevice;
+        WdfObjectDelete(pDeviceContext->ConfigControlDevice);
         pDeviceContext->ConfigControlDevice = NULL;
-        WdfObjectDelete(controlDevice);
     }
 
     AmtFreeAlignedContactPool(pDeviceContext->ActiveContacts);
@@ -539,198 +634,4 @@ AmtPtpSetWellspringMode(
     DeviceContext->IsWellspringModeOn = IsWellspringModeOn;
 
     return status;
-}
-
-// ---------------------------------------------------------------------------
-// GUI control device
-// ---------------------------------------------------------------------------
-
-#define AMT_PTP_CONTROL_DEVICE_NAME L"\\Device\\AmtPtpConfig"
-
-_IRQL_requires_(PASSIVE_LEVEL)
-NTSTATUS
-AmtPtpCreateConfigControlDevice(
-    _In_ WDFDEVICE TargetDevice
-    )
-{
-    PWDFDEVICE_INIT              controlInit;
-    WDFDEVICE                    controlDevice = NULL;
-    WDF_OBJECT_ATTRIBUTES        deviceAttributes;
-    WDF_IO_QUEUE_CONFIG          queueConfig;
-    WDFQUEUE                     queue = NULL;
-    NTSTATUS                     status;
-    PAMT_CONTROL_DEVICE_CONTEXT  controlContext;
-    WDF_FILEOBJECT_CONFIG        fileObjectConfig;
-
-    PAGED_CODE();
-
-    DECLARE_CONST_UNICODE_STRING(sddl,
-        L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;AU)");
-    DECLARE_CONST_UNICODE_STRING(deviceName,
-        AMT_PTP_CONTROL_DEVICE_NAME);
-
-    controlInit = WdfControlDeviceInitAllocate(
-        WdfGetDriver(),
-        &sddl);
-
-    if (controlInit == NULL) {
-        AMT_LOG("WdfControlDeviceInitAllocate FAILED");
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    status = WdfDeviceInitAssignName(controlInit, &deviceName);
-    if (!NT_SUCCESS(status)) {
-        AMT_LOG("WdfDeviceInitAssignName(control) FAILED, status=0x%08X", status);
-        WdfDeviceInitFree(controlInit);
-        return status;
-    }
-
-    WdfDeviceInitSetDeviceType(controlInit, FILE_DEVICE_UNKNOWN);
-    WdfDeviceInitSetCharacteristics(controlInit, FILE_DEVICE_SECURE_OPEN, TRUE);
-
-    WDF_FILEOBJECT_CONFIG_INIT(
-        &fileObjectConfig,
-        AmtPtpControlEvtControlFileCreate,
-        WDF_NO_EVENT_CALLBACK,
-        WDF_NO_EVENT_CALLBACK);
-
-    WdfDeviceInitSetFileObjectConfig(
-        controlInit,
-        &fileObjectConfig,
-        WDF_NO_OBJECT_ATTRIBUTES);
-
-    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
-        &deviceAttributes,
-        AMT_CONTROL_DEVICE_CONTEXT);
-    // The control device is explicitly deleted from the physical FDO's
-    // context cleanup. WDF device objects always have the driver object as
-    // their parent, so ParentObject must remain NULL here.
-    deviceAttributes.EvtCleanupCallback = AmtPtpControlDeviceCleanup;
-
-    status = WdfDeviceCreate(
-        &controlInit,
-        &deviceAttributes,
-        &controlDevice);
-
-    if (!NT_SUCCESS(status)) {
-        AMT_LOG("WdfDeviceCreate(control) FAILED, status=0x%08X", status);
-        return status;
-    }
-
-    controlContext = AmtControlDeviceGetContext(controlDevice);
-    controlContext->TargetDevice = TargetDevice;
-
-    status = WdfDeviceCreateDeviceInterface(
-        controlDevice,
-        &GUID_DEVINTERFACE_AmtPtpDeviceUsbKm,
-        NULL);
-
-    if (!NT_SUCCESS(status)) {
-        AMT_LOG("WdfDeviceCreateDeviceInterface(control) FAILED, status=0x%08X", status);
-        WdfObjectDelete(controlDevice);
-        return status;
-    }
-
-    WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(
-        &queueConfig,
-        WdfIoQueueDispatchParallel);
-
-    queueConfig.EvtIoDeviceControl = AmtPtpControlEvtIoDeviceControl;
-
-    status = WdfIoQueueCreate(
-        controlDevice,
-        &queueConfig,
-        WDF_NO_OBJECT_ATTRIBUTES,
-        &queue);
-
-    if (!NT_SUCCESS(status)) {
-        AMT_LOG("WdfIoQueueCreate(control) FAILED, status=0x%08X", status);
-        WdfObjectDelete(controlDevice);
-        return status;
-    }
-
-    WdfControlFinishInitializing(controlDevice);
-
-    DeviceGetContext(TargetDevice)->ConfigControlDevice = controlDevice;
-
-    AMT_LOG("GUI control device created; GUID_DEVINTERFACE_AmtPtpDeviceUsbKm is now owned by the control device");
-
-    return STATUS_SUCCESS;
-}
-
-VOID
-AmtPtpControlDeviceCleanup(
-    _In_ WDFOBJECT Object
-    )
-{
-    PAMT_CONTROL_DEVICE_CONTEXT context;
-
-    context = AmtControlDeviceGetContext((WDFDEVICE)Object);
-
-    context->TargetDevice = NULL;
-}
-
-VOID
-AmtPtpControlEvtControlFileCreate(
-    _In_ WDFDEVICE Device,
-    _In_ WDFREQUEST Request,
-    _In_ WDFFILEOBJECT FileObject
-    )
-{
-    UNREFERENCED_PARAMETER(Device);
-    UNREFERENCED_PARAMETER(FileObject);
-
-    AMT_LOG("GUI control-device IRP_MJ_CREATE HIT - completing with STATUS_SUCCESS");
-    WdfRequestComplete(Request, STATUS_SUCCESS);
-}
-
-VOID
-AmtPtpControlEvtIoDeviceControl(
-    _In_ WDFQUEUE Queue,
-    _In_ WDFREQUEST Request,
-    _In_ size_t OutputBufferLength,
-    _In_ size_t InputBufferLength,
-    _In_ ULONG IoControlCode
-    )
-{
-    WDFDEVICE                    controlDevice;
-    PAMT_CONTROL_DEVICE_CONTEXT  controlContext;
-    WDFDEVICE                    targetDevice;
-    NTSTATUS                     status;
-
-    UNREFERENCED_PARAMETER(OutputBufferLength);
-    UNREFERENCED_PARAMETER(InputBufferLength);
-
-    controlDevice = WdfIoQueueGetDevice(Queue);
-    controlContext = AmtControlDeviceGetContext(controlDevice);
-    targetDevice = controlContext->TargetDevice;
-
-    if (targetDevice == NULL) {
-        WdfRequestComplete(Request, STATUS_DEVICE_DOES_NOT_EXIST);
-        return;
-    }
-
-    switch (IoControlCode) {
-    case IOCTL_AMT_PTP_GET_PALM_CONFIG:
-        status = AmtPtpGetPalmConfig(targetDevice, Request);
-        break;
-
-    case IOCTL_AMT_PTP_SET_PALM_CONFIG:
-        status = AmtPtpSetPalmConfig(targetDevice, Request);
-        break;
-
-    case IOCTL_AMT_PTP_GET_PAD_GEOMETRY:
-        status = AmtPtpGetPadGeometry(targetDevice, Request);
-        break;
-
-    case IOCTL_AMT_PTP_RESET_PALM_CONFIG:
-        status = AmtPtpResetPalmConfig(targetDevice, Request);
-        break;
-
-    default:
-        status = STATUS_INVALID_DEVICE_REQUEST;
-        break;
-    }
-
-    WdfRequestComplete(Request, status);
 }

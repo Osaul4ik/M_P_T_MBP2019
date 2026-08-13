@@ -5,18 +5,12 @@ using System.Runtime.InteropServices;
 namespace AmtPtpConfigGui.Native
 {
     /// <summary>
-    /// Talks to AmtPtpDeviceUsbKm.sys over its custom device interface
-    /// (GUID_DEVINTERFACE_AmtPtpDeviceUsbKm, Public.h) using SetupAPI to
-    /// find the device path and DeviceIoControl for the IOCTL_AMT_PTP_*
-    /// calls implemented in ConfigIoctl.c.
+    /// Talks to AmtPtpDeviceUsbKm.sys through its KMDF control-device
+    /// symbolic link (\\.\AmtPtpDeviceUsbKm) using DeviceIoControl.
+    /// The USB/HID filter itself is intentionally not opened by the GUI.
     /// </summary>
     public sealed class DeviceIo : IDisposable
     {
-        // {4aa332cc-5777-4afd-aa4e-95387330612a} - must match
-        // GUID_DEVINTERFACE_AmtPtpDeviceUsbKm in Public.h exactly.
-        private static readonly Guid InterfaceGuid =
-            new Guid("4aa332cc-5777-4afd-aa4e-95387330612a");
-
         // AMT_PTP_IOCTL_INDEX (0x900) + offset, mirrored from Public.h.
         private const uint FileDeviceUnknown = 0x00000022;
         private const uint MethodBuffered = 0;
@@ -61,6 +55,14 @@ namespace AmtPtpConfigGui.Native
                 MethodBuffered,
                 FileAnyAccess);
 
+        private const string ControlDevicePath = @"\\.\AmtPtpDeviceUsbKm";
+
+        private const uint GenericRead = 0x80000000;
+        private const uint GenericWrite = 0x40000000;
+        private const uint FileShareRead = 0x1;
+        private const uint FileShareWrite = 0x2;
+        private const uint OpenExisting = 3;
+
         private SafeFileHandle? _handle;
 
         public bool IsConnected =>
@@ -86,8 +88,7 @@ namespace AmtPtpConfigGui.Native
         }
 
         /// <summary>
-        /// Finds the first live AmtPtpDeviceUsbKm device interface
-        /// and opens a handle to it.
+        /// Opens the driver's dedicated KMDF control device.
         /// </summary>
         public bool TryConnect()
         {
@@ -95,125 +96,22 @@ namespace AmtPtpConfigGui.Native
 
             LastErrorMessage = string.Empty;
 
-            IntPtr deviceInfoSet = SetupDiGetClassDevs(
-                ref InterfaceGuidLocal,
+            var handle = CreateFile(
+                ControlDevicePath,
+                GenericRead | GenericWrite,
+                FileShareRead | FileShareWrite,
                 IntPtr.Zero,
-                IntPtr.Zero,
-                DigcfPresent | DigcfDeviceinterface);
+                OpenExisting,
+                0,
+                IntPtr.Zero);
 
-            if (deviceInfoSet == IntPtr.Zero ||
-                deviceInfoSet.ToInt64() == -1)
+            if (handle.IsInvalid)
             {
-                return Fail("SetupDiGetClassDevs");
+                return Fail($"CreateFile('{ControlDevicePath}')");
             }
 
-            try
-            {
-                var ifData =
-                    new SP_DEVICE_INTERFACE_DATA();
-
-                ifData.cbSize =
-                    Marshal.SizeOf(ifData);
-
-                if (!SetupDiEnumDeviceInterfaces(
-                        deviceInfoSet,
-                        IntPtr.Zero,
-                        ref InterfaceGuidLocal,
-                        0,
-                        ref ifData))
-                {
-                    return Fail(
-                        "SetupDiEnumDeviceInterfaces (no device interface present)");
-                }
-
-                uint requiredSize = 0;
-
-                SetupDiGetDeviceInterfaceDetail(
-                    deviceInfoSet,
-                    ref ifData,
-                    IntPtr.Zero,
-                    0,
-                    ref requiredSize,
-                    IntPtr.Zero);
-
-                if (requiredSize == 0)
-                {
-                    return Fail(
-                        "SetupDiGetDeviceInterfaceDetail (size query)");
-                }
-
-                IntPtr detailBuffer =
-                    Marshal.AllocHGlobal((int)requiredSize);
-
-                try
-                {
-                    /*
-                     * SP_DEVICE_INTERFACE_DETAIL_DATA:
-                     *
-                     * x64 -> cbSize = 8
-                     * x86 -> cbSize = 6
-                     */
-                    Marshal.WriteInt32(
-                        detailBuffer,
-                        IntPtr.Size == 8 ? 8 : 6);
-
-                    if (!SetupDiGetDeviceInterfaceDetail(
-                            deviceInfoSet,
-                            ref ifData,
-                            detailBuffer,
-                            requiredSize,
-                            ref requiredSize,
-                            IntPtr.Zero))
-                    {
-                        return Fail(
-                            "SetupDiGetDeviceInterfaceDetail (fetch)");
-                    }
-
-                    /*
-                     * DevicePath starts after the 4-byte cbSize
-                     * field in the manually allocated buffer.
-                     */
-                    string devicePath =
-                        Marshal.PtrToStringUni(
-                            detailBuffer + 4)!;
-
-                    /*
-                     * IMPORTANT:
-                     *
-                     * Open the device interface without requesting
-                     * GENERIC_READ / GENERIC_WRITE access.
-                     *
-                     * This is a diagnostic/test change for Win32 31.
-                     */
-                    var handle = CreateFile(
-                        devicePath,
-                        0,
-                        FileShareRead | FileShareWrite,
-                        IntPtr.Zero,
-                        OpenExisting,
-                        0,
-                        IntPtr.Zero);
-
-                    if (handle.IsInvalid)
-                    {
-                        return Fail(
-                            $"CreateFile('{devicePath}')");
-                    }
-
-                    _handle = handle;
-
-                    return true;
-                }
-                finally
-                {
-                    Marshal.FreeHGlobal(detailBuffer);
-                }
-            }
-            finally
-            {
-                SetupDiDestroyDeviceInfoList(
-                    deviceInfoSet);
-            }
+            _handle = handle;
+            return true;
         }
 
         public void Disconnect()
@@ -385,63 +283,6 @@ namespace AmtPtpConfigGui.Native
             Disconnect();
 
         // ---- P/Invoke plumbing ---------------------------------------------
-
-        private Guid InterfaceGuidLocal =
-            InterfaceGuid;
-
-        private const uint DigcfPresent = 0x02;
-        private const uint DigcfDeviceinterface = 0x10;
-
-        private const uint FileShareRead = 0x1;
-        private const uint FileShareWrite = 0x2;
-
-        private const uint OpenExisting = 3;
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct SP_DEVICE_INTERFACE_DATA
-        {
-            public int cbSize;
-            public Guid InterfaceClassGuid;
-            public int Flags;
-            public IntPtr Reserved;
-        }
-
-        [DllImport(
-            "setupapi.dll",
-            SetLastError = true)]
-        private static extern IntPtr SetupDiGetClassDevs(
-            ref Guid classGuid,
-            IntPtr enumerator,
-            IntPtr hwndParent,
-            uint flags);
-
-        [DllImport(
-            "setupapi.dll",
-            SetLastError = true)]
-        private static extern bool SetupDiEnumDeviceInterfaces(
-            IntPtr deviceInfoSet,
-            IntPtr deviceInfoData,
-            ref Guid interfaceClassGuid,
-            uint memberIndex,
-            ref SP_DEVICE_INTERFACE_DATA deviceInterfaceData);
-
-        [DllImport(
-            "setupapi.dll",
-            SetLastError = true,
-            CharSet = CharSet.Auto)]
-        private static extern bool SetupDiGetDeviceInterfaceDetail(
-            IntPtr deviceInfoSet,
-            ref SP_DEVICE_INTERFACE_DATA deviceInterfaceData,
-            IntPtr deviceInterfaceDetailData,
-            uint deviceInterfaceDetailDataSize,
-            ref uint requiredSize,
-            IntPtr deviceInfoData);
-
-        [DllImport(
-            "setupapi.dll",
-            SetLastError = true)]
-        private static extern bool SetupDiDestroyDeviceInfoList(
-            IntPtr deviceInfoSet);
 
         [DllImport(
             "kernel32.dll",
