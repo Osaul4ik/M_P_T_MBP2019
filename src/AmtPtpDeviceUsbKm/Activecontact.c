@@ -34,8 +34,8 @@ typedef enum _CONTACT_VELOCITY_BUCKET
 // Scale scroll deltas to reduce abrupt stops. FAST gets a +35% boost on
 // top of the base scale (0.8 * 1.35 = 1.08) so a quick swipe covers more
 // distance per frame than a slow/medium one, which keep the base scale.
-#define SCROLL_SCALE_NUM       7
-#define SCROLL_SCALE_DEN       9
+#define SCROLL_SCALE_NUM       8
+#define SCROLL_SCALE_DEN       10
 #define SCROLL_SCALE_NUM_FAST  100
 #define SCROLL_SCALE_DEN_FAST  100
 
