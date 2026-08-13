@@ -23,35 +23,65 @@ namespace AmtPtpConfigGui.Native
         private const uint FileAnyAccess = 0;
         private const uint AmtPtpIoctlIndex = 0x900;
 
-        private static uint CtlCode(uint deviceType, uint function, uint method, uint access) =>
-            (deviceType << 16) | (access << 14) | (function << 2) | method;
+        private static uint CtlCode(
+            uint deviceType,
+            uint function,
+            uint method,
+            uint access) =>
+            (deviceType << 16) |
+            (access << 14) |
+            (function << 2) |
+            method;
 
         public static readonly uint IoctlGetPalmConfig =
-            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 0, MethodBuffered, FileAnyAccess);
+            CtlCode(
+                FileDeviceUnknown,
+                AmtPtpIoctlIndex + 0,
+                MethodBuffered,
+                FileAnyAccess);
 
         public static readonly uint IoctlSetPalmConfig =
-            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 1, MethodBuffered, FileAnyAccess);
+            CtlCode(
+                FileDeviceUnknown,
+                AmtPtpIoctlIndex + 1,
+                MethodBuffered,
+                FileAnyAccess);
 
         public static readonly uint IoctlGetPadGeometry =
-            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 2, MethodBuffered, FileAnyAccess);
+            CtlCode(
+                FileDeviceUnknown,
+                AmtPtpIoctlIndex + 2,
+                MethodBuffered,
+                FileAnyAccess);
 
         public static readonly uint IoctlResetPalmConfig =
-            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 3, MethodBuffered, FileAnyAccess);
+            CtlCode(
+                FileDeviceUnknown,
+                AmtPtpIoctlIndex + 3,
+                MethodBuffered,
+                FileAnyAccess);
 
         private SafeFileHandle? _handle;
 
-        public bool IsConnected => _handle != null && !_handle.IsInvalid;
+        public bool IsConnected =>
+            _handle != null && !_handle.IsInvalid;
 
         /// <summary>
         /// Human-readable reason the last TryConnect() call failed.
         /// </summary>
-        public string LastErrorMessage { get; private set; } = string.Empty;
+        public string LastErrorMessage { get; private set; } =
+            string.Empty;
 
         private bool Fail(string step)
         {
             int err = Marshal.GetLastWin32Error();
-            string text = new Win32Exception(err).Message.Trim();
-            LastErrorMessage = $"{step}: {text} (Win32 {err})";
+
+            string text =
+                new Win32Exception(err).Message.Trim();
+
+            LastErrorMessage =
+                $"{step}: {text} (Win32 {err})";
+
             return false;
         }
 
@@ -62,6 +92,7 @@ namespace AmtPtpConfigGui.Native
         public bool TryConnect()
         {
             Disconnect();
+
             LastErrorMessage = string.Empty;
 
             IntPtr deviceInfoSet = SetupDiGetClassDevs(
@@ -70,15 +101,19 @@ namespace AmtPtpConfigGui.Native
                 IntPtr.Zero,
                 DigcfPresent | DigcfDeviceinterface);
 
-            if (deviceInfoSet == IntPtr.Zero || deviceInfoSet.ToInt64() == -1)
+            if (deviceInfoSet == IntPtr.Zero ||
+                deviceInfoSet.ToInt64() == -1)
             {
                 return Fail("SetupDiGetClassDevs");
             }
 
             try
             {
-                var ifData = new SP_DEVICE_INTERFACE_DATA();
-                ifData.cbSize = Marshal.SizeOf(ifData);
+                var ifData =
+                    new SP_DEVICE_INTERFACE_DATA();
+
+                ifData.cbSize =
+                    Marshal.SizeOf(ifData);
 
                 if (!SetupDiEnumDeviceInterfaces(
                         deviceInfoSet,
@@ -115,8 +150,8 @@ namespace AmtPtpConfigGui.Native
                     /*
                      * SP_DEVICE_INTERFACE_DETAIL_DATA:
                      *
-                     * On x64 Windows, cbSize must be 8.
-                     * On x86 Windows, cbSize must be 6.
+                     * x64 -> cbSize = 8
+                     * x86 -> cbSize = 6
                      */
                     Marshal.WriteInt32(
                         detailBuffer,
@@ -135,20 +170,24 @@ namespace AmtPtpConfigGui.Native
                     }
 
                     /*
-                     * IMPORTANT:
-                     *
-                     * The DevicePath WCHAR buffer starts immediately
-                     * after the 4-byte cbSize field for this manually
-                     * allocated SetupAPI structure.
-                     *
-                     * Do NOT use +8 here.
+                     * DevicePath starts after the 4-byte cbSize
+                     * field in the manually allocated buffer.
                      */
                     string devicePath =
-                        Marshal.PtrToStringUni(detailBuffer + 4)!;
+                        Marshal.PtrToStringUni(
+                            detailBuffer + 4)!;
 
+                    /*
+                     * IMPORTANT:
+                     *
+                     * Open the device interface without requesting
+                     * GENERIC_READ / GENERIC_WRITE access.
+                     *
+                     * This is a diagnostic/test change for Win32 31.
+                     */
                     var handle = CreateFile(
                         devicePath,
-                        GenericRead | GenericWrite,
+                        0,
                         FileShareRead | FileShareWrite,
                         IntPtr.Zero,
                         OpenExisting,
@@ -157,10 +196,12 @@ namespace AmtPtpConfigGui.Native
 
                     if (handle.IsInvalid)
                     {
-                        return Fail($"CreateFile('{devicePath}')");
+                        return Fail(
+                            $"CreateFile('{devicePath}')");
                     }
 
                     _handle = handle;
+
                     return true;
                 }
                 finally
@@ -170,7 +211,8 @@ namespace AmtPtpConfigGui.Native
             }
             finally
             {
-                SetupDiDestroyDeviceInfoList(deviceInfoSet);
+                SetupDiDestroyDeviceInfoList(
+                    deviceInfoSet);
             }
         }
 
@@ -180,7 +222,8 @@ namespace AmtPtpConfigGui.Native
             _handle = null;
         }
 
-        public bool TryGetPalmConfig(out PalmConfig config)
+        public bool TryGetPalmConfig(
+            out PalmConfig config)
         {
             config = PalmConfig.Default;
 
@@ -208,7 +251,8 @@ namespace AmtPtpConfigGui.Native
                 ref applied);
         }
 
-        public bool TryResetPalmConfig(out PalmConfig applied)
+        public bool TryResetPalmConfig(
+            out PalmConfig applied)
         {
             applied = PalmConfig.Default;
 
@@ -232,16 +276,19 @@ namespace AmtPtpConfigGui.Native
             return TryGetPalmConfig(out applied);
         }
 
-        public bool TryGetPadGeometry(out PadGeometry geometry)
+        public bool TryGetPadGeometry(
+            out PadGeometry geometry)
         {
             geometry = PadGeometry.Fallback;
 
             if (!IsConnected)
                 return false;
 
-            int size = Marshal.SizeOf<PadGeometry>();
+            int size =
+                Marshal.SizeOf<PadGeometry>();
 
-            IntPtr outBuf = Marshal.AllocHGlobal(size);
+            IntPtr outBuf =
+                Marshal.AllocHGlobal(size);
 
             try
             {
@@ -259,12 +306,14 @@ namespace AmtPtpConfigGui.Native
                     return false;
 
                 var result =
-                    Marshal.PtrToStructure<PadGeometry>(outBuf);
+                    Marshal.PtrToStructure<PadGeometry>(
+                        outBuf);
 
                 if (!result.IsValid)
                     return false;
 
                 geometry = result;
+
                 return true;
             }
             finally
@@ -278,10 +327,13 @@ namespace AmtPtpConfigGui.Native
             PalmConfig? input,
             ref PalmConfig output)
         {
-            int size = Marshal.SizeOf<PalmConfig>();
+            int size =
+                Marshal.SizeOf<PalmConfig>();
 
             IntPtr inBuf = IntPtr.Zero;
-            IntPtr outBuf = Marshal.AllocHGlobal(size);
+
+            IntPtr outBuf =
+                Marshal.AllocHGlobal(size);
 
             try
             {
@@ -289,14 +341,16 @@ namespace AmtPtpConfigGui.Native
 
                 if (input.HasValue)
                 {
-                    inBuf = Marshal.AllocHGlobal(size);
+                    inBuf =
+                        Marshal.AllocHGlobal(size);
 
                     Marshal.StructureToPtr(
                         input.Value,
                         inBuf,
                         false);
 
-                    inSize = (uint)size;
+                    inSize =
+                        (uint)size;
                 }
 
                 bool ok = DeviceIoControl(
@@ -313,7 +367,8 @@ namespace AmtPtpConfigGui.Native
                     return false;
 
                 output =
-                    Marshal.PtrToStructure<PalmConfig>(outBuf);
+                    Marshal.PtrToStructure<PalmConfig>(
+                        outBuf);
 
                 return true;
             }
@@ -326,17 +381,16 @@ namespace AmtPtpConfigGui.Native
             }
         }
 
-        public void Dispose() => Disconnect();
+        public void Dispose() =>
+            Disconnect();
 
-        // ---- P/Invoke plumbing -------------------------------------------------
+        // ---- P/Invoke plumbing ---------------------------------------------
 
-        private Guid InterfaceGuidLocal = InterfaceGuid;
+        private Guid InterfaceGuidLocal =
+            InterfaceGuid;
 
         private const uint DigcfPresent = 0x02;
         private const uint DigcfDeviceinterface = 0x10;
-
-        private const uint GenericRead = 0x80000000;
-        private const uint GenericWrite = 0x40000000;
 
         private const uint FileShareRead = 0x1;
         private const uint FileShareWrite = 0x2;
