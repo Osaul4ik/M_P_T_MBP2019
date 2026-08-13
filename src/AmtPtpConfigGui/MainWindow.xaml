@@ -4,7 +4,7 @@
         Title="Wellspring PTP - Palm Rejection Settings"
         Height="820" Width="1280" MinHeight="660" MinWidth="1040"
         WindowStartupLocation="CenterScreen"
-        Background="{StaticResource PageBrush}"
+        Background="#F4F5F7"
         FontFamily="Segoe UI Variable Text, Segoe UI"
         FontSize="13"
         TextOptions.TextFormattingMode="Display"
