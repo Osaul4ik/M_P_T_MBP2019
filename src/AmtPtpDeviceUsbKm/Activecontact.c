@@ -9,8 +9,8 @@
 #define XY_DEADZONE_UNITS_FAST     0  // fast motion: no deadzone lag
 
 // Velocity buckets choose deadzone and smoothing.
-#define VELOCITY_SLOW_UNITS_PER_SEC   120
-#define VELOCITY_FAST_UNITS_PER_SEC   800
+#define VELOCITY_SLOW_UNITS_PER_SEC   110
+#define VELOCITY_FAST_UNITS_PER_SEC   700
 
 // Separate FAST threshold for two-finger scroll gestures. 
 #define VELOCITY_FAST_SCROLL_UNITS_PER_SEC   1600
