@@ -177,7 +177,7 @@ namespace AmtPtpConfigGui
                 _liveTimer.Stop();
                 if (ChkLive.IsChecked == true)
                     ChkLive.IsChecked = false;
-                LiveStatusText.Text = "Live: помилка";
+                LiveStatusText.Text = string.IsNullOrEmpty(_device.LastErrorMessage)\n                    ? "Live: помилка"\n                    : $"Live: помилка — {_device.LastErrorMessage}";
                 return;
             }
 
