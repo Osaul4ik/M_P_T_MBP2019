@@ -158,7 +158,9 @@ AmtPalmConfigSaveToRegistry(
 }
 
 // ----------------------------------------------------------------------------
-// IOCTL handlers - dispatched from Queue.c's EvtIoDeviceControl.
+// IOCTL handlers. The GUI reaches these through the separate KMDF control
+// device created in Device.c. The dispatcher passes the real USB filter FDO
+// as Device, so the existing DEVICE_CONTEXT/state/registry logic is retained.
 // ----------------------------------------------------------------------------
 
 _IRQL_requires_max_(DISPATCH_LEVEL)

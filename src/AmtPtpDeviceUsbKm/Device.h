@@ -174,6 +174,11 @@ typedef struct _DEVICE_CONTEXT
     RECENT_LIFT_RING RecentLifts;
 
     // ---------------------------------------------------------------
+    // GUI control device. Created alongside this USB filter FDO and deleted
+    // from the FDO context cleanup so the GUI interface disappears with the
+    // physical device.
+    WDFDEVICE              ConfigControlDevice;
+
     // Cold: USB setup metadata. Written once (EvtDevicePrepareHardware /
     // device creation), never read in the per-frame hot path (grep across
     // Interrupt.c/Hid.c/Ptpcore.c/Match.c confirms zero hits) - kept at the
@@ -188,6 +193,38 @@ typedef struct _DEVICE_CONTEXT
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 
+// ---------------------------------------------------------------------------
+// GUI control device.
+//
+// The USB/HID FDO is a lower filter. A device interface registered on that
+// FDO is opened through the whole HID/USB stack, so user-mode CreateFile can
+// be handled by an upper driver instead of this filter. The GUI interface is
+// therefore exposed by a separate KMDF control device. Its IOCTL queue keeps
+// a referenced handle to the real USB filter FDO and dispatches the existing
+// ConfigIoctl handlers against that target device. The control device is
+// deleted with the physical FDO, so the stored WDFDEVICE target handle is
+// valid for the control device's lifetime and does not need a reference.
+// ---------------------------------------------------------------------------
+typedef struct _AMT_CONTROL_DEVICE_CONTEXT
+{
+    WDFDEVICE TargetDevice;
+} AMT_CONTROL_DEVICE_CONTEXT, *PAMT_CONTROL_DEVICE_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(
+    AMT_CONTROL_DEVICE_CONTEXT,
+    AmtControlDeviceGetContext
+)
+
+EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL AmtPtpControlEvtIoDeviceControl;
+EVT_WDF_OBJECT_CONTEXT_CLEANUP    AmtPtpControlDeviceCleanup;
+EVT_WDF_DEVICE_FILE_CREATE        AmtPtpControlEvtControlFileCreate;
+
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS
+AmtPtpCreateConfigControlDevice(
+    _In_ WDFDEVICE TargetDevice
+);
+
 // Bound the Wellspring control transfer with a timeout.
 #define WELLSPRING_CONTROL_TRANSFER_TIMEOUT_SEC   5
 
@@ -201,17 +238,10 @@ EVT_WDF_DEVICE_D0_ENTRY         AmtPtpEvtDeviceD0Entry;
 EVT_WDF_DEVICE_D0_EXIT          AmtPtpEvtDeviceD0Exit;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP  AmtPtpEvtDeviceContextCleanup;
 
-// We're a lower filter (WdfFdoInitSetFilter, Driver.c). KMDF's default
-// behavior for a filter is to auto-forward any request type the driver
-// doesn't explicitly handle - including IRP_MJ_CREATE - down to the next
-// lower driver (the USB stack). Without an EvtDeviceFileCreate handler,
-// CreateFile() calls against GUID_DEVINTERFACE_AmtPtpDeviceUsbKm (our own
-// custom interface, opened by AmtPtpConfigGui) get forwarded to the USB
-// stack instead of being completed by us, and fail there with
-// STATUS_UNSUCCESSFUL (surfaces in user mode as GetLastError()==31,
-// ERROR_GEN_FAILURE). This handler completes Create/Close locally so opens
-// against our interface succeed without ever touching the lower stack.
-EVT_WDF_DEVICE_FILE_CREATE       AmtPtpEvtDeviceFileCreate;
+// The GUI opens the separate KMDF control device created by
+// AmtPtpCreateConfigControlDevice(). The USB/HID filter FDO intentionally
+// does not own the GUI interface, so its IRP_MJ_CREATE path remains part of
+// the normal HID/USB filter stack.
 
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS
