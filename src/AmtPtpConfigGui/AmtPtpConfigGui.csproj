@@ -11,9 +11,9 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x64;ARM64</Platforms>
     <SatelliteResourceLanguages>uk;en</SatelliteResourceLanguages>
-    <InvariantGlobalization>true</InvariantGlobalization>
     <DebugType>none</DebugType>
     <PublishReadyToRun>false</PublishReadyToRun>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <SelfContained>false</SelfContained>
   </PropertyGroup>
 
