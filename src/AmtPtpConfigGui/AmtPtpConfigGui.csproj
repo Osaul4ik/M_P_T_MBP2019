@@ -13,7 +13,6 @@
     <SatelliteResourceLanguages>uk;en</SatelliteResourceLanguages>
     <DebugType>none</DebugType>
     <PublishReadyToRun>false</PublishReadyToRun>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <SelfContained>false</SelfContained>
   </PropertyGroup>
 
