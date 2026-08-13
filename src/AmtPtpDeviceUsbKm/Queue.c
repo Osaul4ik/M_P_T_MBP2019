@@ -144,6 +144,12 @@ AmtPtpDeviceUsbKmEvtIoDeviceControlExternal(
     case IOCTL_AMT_PTP_RESET_PALM_CONFIG:
         status = AmtPtpResetPalmConfig(device, Request);
         break;
+    case IOCTL_AMT_PTP_SET_LIVE_ENABLED:
+        status = AmtPtpSetLiveEnabled(device, Request);
+        break;
+    case IOCTL_AMT_PTP_GET_LIVE_FRAME:
+        status = AmtPtpGetLiveFrame(device, Request);
+        break;
     default:
         status = STATUS_NOT_SUPPORTED;
         break;

@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using AmtPtpConfigGui.Native;
 using Microsoft.Win32;
 
@@ -21,11 +22,29 @@ namespace AmtPtpConfigGui
         private bool _draggingTestPoint;
         private bool _uiReady;
 
+        private readonly DispatcherTimer _liveTimer;
+        private bool _liveEnabled;
+        private uint _lastLiveSequence;
+
         public MainWindow()
         {
             InitializeComponent();
             _uiReady = true;
+
+            _liveTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(33)
+            };
+            _liveTimer.Tick += LiveTimer_Tick;
+
             Loaded += (_, _) => Reconnect();
+            Closed += (_, _) =>
+            {
+                if (_liveEnabled)
+                    _device.SetLiveEnabled(false);
+                _liveTimer.Stop();
+                _device.Dispose();
+            };
         }
 
         // ---------------------------------------------------------------
@@ -69,6 +88,15 @@ namespace AmtPtpConfigGui
 
         private void Reconnect()
         {
+            if (_liveEnabled)
+            {
+                _device.SetLiveEnabled(false);
+                _liveEnabled = false;
+                _liveTimer.Stop();
+                if (ChkLive != null)
+                    ChkLive.IsChecked = false;
+            }
+
             bool connected = _device.TryConnect();
 
             if (connected)
@@ -122,6 +150,141 @@ namespace AmtPtpConfigGui
                 : "геометрія: приблизна (пристрій не підключено)";
 
             DrawPreview();
+        }
+
+        // ---------------------------------------------------------------
+        // Live touch monitor
+        // ---------------------------------------------------------------
+
+        private void Live_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!_uiReady)
+                return;
+
+            bool enabled = ChkLive.IsChecked == true;
+
+            if (!_device.IsConnected)
+            {
+                _liveEnabled = false;
+                _liveTimer.Stop();
+                LiveStatusText.Text = "Live: пристрій не підключено";
+                return;
+            }
+
+            if (!_device.SetLiveEnabled(enabled))
+            {
+                _liveEnabled = false;
+                _liveTimer.Stop();
+                if (ChkLive.IsChecked == true)
+                    ChkLive.IsChecked = false;
+                LiveStatusText.Text = "Live: помилка";
+                return;
+            }
+
+            _liveEnabled = enabled;
+            _lastLiveSequence = 0;
+
+            if (enabled)
+            {
+                _liveTimer.Start();
+                LiveStatusText.Text = "Live: очікування…";
+            }
+            else
+            {
+                _liveTimer.Stop();
+                LiveStatusText.Text = "Live: вимкнено";
+                DrawPreview();
+            }
+        }
+
+        private void LiveTimer_Tick(object? sender, EventArgs e)
+        {
+            if (!_liveEnabled || !_device.IsConnected)
+                return;
+
+            if (!_device.TryGetLiveFrame(out var frame))
+                return;
+
+            if (frame.Sequence == 0 || frame.Sequence == _lastLiveSequence)
+                return;
+
+            _lastLiveSequence = frame.Sequence;
+            DrawLiveOverlay(frame);
+
+            LiveStatusText.Text =
+                $"Live: {frame.ContactCount} дот. | seq {frame.Sequence}" +
+                (frame.ButtonDown != 0 ? " | BUTTON" : "") +
+                (frame.LargePalmBlanked != 0 ? " | PALM" : "");
+        }
+
+        private void DrawLiveOverlay(DeviceIo.LiveFrame frame)
+        {
+            DrawPreview();
+
+            if (!_liveEnabled || PreviewCanvas == null || frame.Contacts == null)
+                return;
+
+            double w = PreviewCanvas.Width;
+            double h = PreviewCanvas.Height;
+            double xRange = _geometry.XMax - _geometry.XMin;
+            double yRange = _geometry.YMax - _geometry.YMin;
+
+            if (xRange <= 0 || yRange <= 0)
+                return;
+
+            for (int i = 0; i < frame.ContactCount && i < frame.Contacts.Length; i++)
+            {
+                var c = frame.Contacts[i];
+
+                double px = (c.X - _geometry.XMin) / xRange * w;
+                double py = (c.Y - _geometry.YMin) / yRange * h;
+
+                px = Math.Clamp(px, 0, w);
+                py = Math.Clamp(py, 0, h);
+
+                Brush brush = c.PalmSuspect != 0
+                    ? Brushes.OrangeRed
+                    : c.Phase == 1
+                        ? Brushes.LimeGreen
+                        : c.Phase == 3
+                            ? Brushes.Orange
+                            : Brushes.DeepSkyBlue;
+
+                var ring = new Ellipse
+                {
+                    Width = 30,
+                    Height = 30,
+                    Fill = Brushes.Transparent,
+                    Stroke = brush,
+                    StrokeThickness = 3
+                };
+                Canvas.SetLeft(ring, px - 15);
+                Canvas.SetTop(ring, py - 15);
+                PreviewCanvas.Children.Add(ring);
+
+                var center = new Ellipse
+                {
+                    Width = 8,
+                    Height = 8,
+                    Fill = brush
+                };
+                Canvas.SetLeft(center, px - 4);
+                Canvas.SetTop(center, py - 4);
+                PreviewCanvas.Children.Add(center);
+
+                var label = new TextBlock
+                {
+                    Text = $"ID {c.ContactID}",
+                    FontSize = 11,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = brush,
+                    Background = Brushes.White,
+                    Padding = new Thickness(2, 0, 2, 0)
+                };
+                Canvas.SetLeft(label, px + 18);
+                Canvas.SetTop(label, py - 9);
+                PreviewCanvas.Children.Add(label);
+            }
         }
 
         // ---------------------------------------------------------------

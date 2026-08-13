@@ -70,6 +70,12 @@ typedef struct _DEVICE_CONTEXT
     // GUI interface directly on the USB/HID stack.
     WDFDEVICE       ConfigControlDevice;
 
+    // Opt-in live monitor state. FALSE is the normal/idle state and the
+    // interrupt path does not copy any live-monitor data when it is false.
+    BOOLEAN         LiveEnabled;
+    ULONG           LiveSequence;
+    AMT_LIVE_FRAME  LiveFrame;
+
     // Device config
     const struct BCM5974_CONFIG* DeviceInfo;
     BOOLEAN IsWellspringModeOn;
@@ -226,6 +232,12 @@ NTSTATUS
 AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice);
 
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL AmtPtpConfigControlEvtIoDeviceControl;
+
+NTSTATUS
+AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+
+NTSTATUS
+AmtPtpGetLiveFrame(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
 
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS

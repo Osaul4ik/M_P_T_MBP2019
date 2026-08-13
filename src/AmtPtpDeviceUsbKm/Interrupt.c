@@ -252,6 +252,47 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     AmtReportCheckInvariants(&Report);
 
+    //
+    // Optional live monitor snapshot. This is deliberately after PTPCore
+    // classification/serialization so the GUI sees the same stable contacts
+    // that the driver is about to report to Windows. When LiveEnabled is
+    // FALSE this whole block is skipped: no snapshot copy and no additional
+    // per-contact work is performed in the normal/idle path.
+    //
+    if (pCtx->LiveEnabled) {
+        ULONG i;
+
+        pCtx->LiveSequence++;
+
+        RtlZeroMemory(&pCtx->LiveFrame, sizeof(pCtx->LiveFrame));
+        pCtx->LiveFrame.StructVersion = AMT_LIVE_FRAME_VERSION;
+        pCtx->LiveFrame.Sequence = pCtx->LiveSequence;
+        pCtx->LiveFrame.TimestampQpc = Now.QuadPart;
+        pCtx->LiveFrame.ContactCount = coreFrame.ContactCount;
+        pCtx->LiveFrame.RawContactCount = rawFrame.ContactCount;
+        pCtx->LiveFrame.LargePalmBlanked = coreFrame.LargePalmBlanked ? 1 : 0;
+        pCtx->LiveFrame.ButtonDown = buttonSnapshot ? 1 : 0;
+        pCtx->LiveFrame.ForceTouchClick = forceTouchClick ? 1 : 0;
+        pCtx->LiveFrame.ButtonClickReport = buttonClickReport ? 1 : 0;
+
+        for (i = 0;
+             i < coreFrame.ContactCount && i < AMT_LIVE_MAX_CONTACTS;
+             ++i) {
+            pCtx->LiveFrame.Contacts[i].ContactID =
+                coreFrame.Contacts[i].ContactID;
+            pCtx->LiveFrame.Contacts[i].X =
+                coreFrame.Contacts[i].X;
+            pCtx->LiveFrame.Contacts[i].Y =
+                coreFrame.Contacts[i].Y;
+            pCtx->LiveFrame.Contacts[i].Phase =
+                (ULONG)coreFrame.Contacts[i].Phase;
+            pCtx->LiveFrame.Contacts[i].Confident =
+                coreFrame.Contacts[i].Confident ? 1 : 0;
+            pCtx->LiveFrame.Contacts[i].PalmSuspect =
+                coreFrame.Contacts[i].PalmSuspect ? 1 : 0;
+        }
+    }
+
     Status = WdfMemoryCopyFromBuffer(
         RequestMemory, 0, (PVOID)&Report, sizeof(PTP_REPORT));
     if (!NT_SUCCESS(Status)) {

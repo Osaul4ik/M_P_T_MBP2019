@@ -79,6 +79,48 @@ typedef struct _AMT_PALM_CONFIG
 #define AMT_PALM_RATIO_MAX          1000
 #define AMT_PALM_SCORE_MAX           200
 
+
+// ============================================================================
+// Live touch monitor
+//
+// Live monitoring is explicitly opt-in. When LiveEnabled == FALSE the
+// interrupt hot path does not build/copy a live snapshot. The GUI enables
+// it with IOCTL_AMT_PTP_SET_LIVE_ENABLED and polls the latest snapshot with
+// IOCTL_AMT_PTP_GET_LIVE_FRAME.
+// ============================================================================
+
+#define AMT_LIVE_FRAME_VERSION 1
+#define AMT_LIVE_MAX_CONTACTS 5
+
+typedef struct _AMT_LIVE_CONTACT
+{
+    ULONG ContactID;
+    USHORT X;
+    USHORT Y;
+    ULONG Phase;       // CONTACT_PHASE_* value from PTPCore.h
+    UCHAR Confident;
+    UCHAR PalmSuspect;
+    USHORT Reserved;
+} AMT_LIVE_CONTACT, *PAMT_LIVE_CONTACT;
+
+typedef struct _AMT_LIVE_FRAME
+{
+    ULONG StructVersion;
+    ULONG Sequence;
+    LONGLONG TimestampQpc;
+
+    UCHAR ContactCount;
+    UCHAR RawContactCount;
+    UCHAR LargePalmBlanked;
+    UCHAR ButtonDown;
+
+    UCHAR ForceTouchClick;
+    UCHAR ButtonClickReport;
+    USHORT Reserved0;
+
+    AMT_LIVE_CONTACT Contacts[AMT_LIVE_MAX_CONTACTS];
+} AMT_LIVE_FRAME, *PAMT_LIVE_FRAME;
+
 // ============================================================================
 // Custom IOCTLs for AmtPtpConfigGui <-> driver communication.
 //
@@ -107,6 +149,12 @@ typedef struct _AMT_PALM_CONFIG
 // AMT_PALM_CONFIG_DEFAULT_INIT. No input/output buffer.
 #define IOCTL_AMT_PTP_RESET_PALM_CONFIG \
     CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 3, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define IOCTL_AMT_PTP_SET_LIVE_ENABLED \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 4, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define IOCTL_AMT_PTP_GET_LIVE_FRAME \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 5, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 typedef struct _AMT_PAD_GEOMETRY
 {

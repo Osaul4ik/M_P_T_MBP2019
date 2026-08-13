@@ -357,3 +357,88 @@ AmtPtpConfigControlEvtIoDeviceControl(
 
     WdfRequestComplete(Request, status);
 }
+
+
+// ----------------------------------------------------------------------------
+// Live touch monitor
+//
+// Explicitly opt-in. SET_LIVE_ENABLED toggles a cheap boolean. While false,
+// Interrupt.c does not build/copy a live snapshot at all. While true, the
+// latest processed frame is copied into DeviceContext->LiveFrame under the
+// same StateLock already protecting the frame-processing state. The GUI
+// polls GET_LIVE_FRAME only while its Live checkbox is checked.
+// ----------------------------------------------------------------------------
+
+NTSTATUS
+AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
+{
+    PAMT_CONFIG_CONTROL_CONTEXT controlContext;
+    PDEVICE_CONTEXT targetContext;
+    PULONG enabled;
+    size_t inputLength = 0;
+
+    controlContext = AmtConfigControlGetContext(Device);
+    if (controlContext == NULL || controlContext->TargetDevice == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    targetContext = DeviceGetContext(controlContext->TargetDevice);
+
+    NTSTATUS status = WdfRequestRetrieveInputBuffer(
+        Request, sizeof(ULONG), (PVOID*)&enabled, &inputLength);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    WdfSpinLockAcquire(targetContext->StateLock);
+
+    targetContext->LiveEnabled = (*enabled != 0) ? TRUE : FALSE;
+
+    if (targetContext->LiveEnabled) {
+        // Start a fresh sequence for every GUI monitoring session.
+        targetContext->LiveSequence = 0;
+        RtlZeroMemory(&targetContext->LiveFrame, sizeof(targetContext->LiveFrame));
+        targetContext->LiveFrame.StructVersion = AMT_LIVE_FRAME_VERSION;
+    }
+
+    WdfSpinLockRelease(targetContext->StateLock);
+
+    WdfRequestSetInformation(Request, 0);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+AmtPtpGetLiveFrame(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
+{
+    PAMT_CONFIG_CONTROL_CONTEXT controlContext;
+    PDEVICE_CONTEXT targetContext;
+    PAMT_LIVE_FRAME output;
+    size_t outputLength = 0;
+
+    controlContext = AmtConfigControlGetContext(Device);
+    if (controlContext == NULL || controlContext->TargetDevice == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    targetContext = DeviceGetContext(controlContext->TargetDevice);
+
+    NTSTATUS status = WdfRequestRetrieveOutputBuffer(
+        Request, sizeof(AMT_LIVE_FRAME), (PVOID*)&output, &outputLength);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    WdfSpinLockAcquire(targetContext->StateLock);
+
+    if (!targetContext->LiveEnabled) {
+        WdfSpinLockRelease(targetContext->StateLock);
+        return STATUS_DEVICE_NOT_READY;
+    }
+
+    *output = targetContext->LiveFrame;
+
+    WdfSpinLockRelease(targetContext->StateLock);
+
+    WdfRequestSetInformation(Request, sizeof(AMT_LIVE_FRAME));
+    return STATUS_SUCCESS;
+}

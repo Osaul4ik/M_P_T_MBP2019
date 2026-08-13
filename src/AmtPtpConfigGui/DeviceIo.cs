@@ -55,6 +55,20 @@ namespace AmtPtpConfigGui.Native
                 MethodBuffered,
                 FileAnyAccess);
 
+        public static readonly uint IoctlSetLiveEnabled =
+            CtlCode(
+                FileDeviceUnknown,
+                AmtPtpIoctlIndex + 4,
+                MethodBuffered,
+                FileAnyAccess);
+
+        public static readonly uint IoctlGetLiveFrame =
+            CtlCode(
+                FileDeviceUnknown,
+                AmtPtpIoctlIndex + 5,
+                MethodBuffered,
+                FileAnyAccess);
+
         private const string ControlDevicePath = @"\\.\AmtPtpDeviceUsbKm";
 
         private const uint GenericRead = 0x80000000;
@@ -279,6 +293,66 @@ namespace AmtPtpConfigGui.Native
             }
         }
 
+        public bool SetLiveEnabled(bool enabled)
+        {
+            if (!IsConnected)
+                return false;
+
+            IntPtr inBuf = Marshal.AllocHGlobal(sizeof(int));
+            try
+            {
+                Marshal.WriteInt32(inBuf, enabled ? 1 : 0);
+
+                return DeviceIoControl(
+                    _handle!,
+                    IoctlSetLiveEnabled,
+                    inBuf,
+                    sizeof(int),
+                    IntPtr.Zero,
+                    0,
+                    out _,
+                    IntPtr.Zero);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(inBuf);
+            }
+        }
+
+        public bool TryGetLiveFrame(out LiveFrame frame)
+        {
+            frame = default;
+
+            if (!IsConnected)
+                return false;
+
+            int size = Marshal.SizeOf<LiveFrame>();
+            IntPtr outBuf = Marshal.AllocHGlobal(size);
+
+            try
+            {
+                bool ok = DeviceIoControl(
+                    _handle!,
+                    IoctlGetLiveFrame,
+                    IntPtr.Zero,
+                    0,
+                    outBuf,
+                    (uint)size,
+                    out uint bytesReturned,
+                    IntPtr.Zero);
+
+                if (!ok || bytesReturned < size)
+                    return false;
+
+                frame = Marshal.PtrToStructure<LiveFrame>(outBuf);
+                return frame.StructVersion == 1;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(outBuf);
+            }
+        }
+
         public void Dispose() =>
             Disconnect();
 
@@ -309,6 +383,36 @@ namespace AmtPtpConfigGui.Native
             uint outBufferSize,
             out uint bytesReturned,
             IntPtr overlapped);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LiveContact
+    {
+        public uint ContactID;
+        public ushort X;
+        public ushort Y;
+        public uint Phase;
+        public byte Confident;
+        public byte PalmSuspect;
+        public ushort Reserved;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LiveFrame
+    {
+        public uint StructVersion;
+        public uint Sequence;
+        public long TimestampQpc;
+        public byte ContactCount;
+        public byte RawContactCount;
+        public byte LargePalmBlanked;
+        public byte ButtonDown;
+        public byte ForceTouchClick;
+        public byte ButtonClickReport;
+        public ushort Reserved0;
+
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 5)]
+        public LiveContact[] Contacts;
     }
 
     /// <summary>
