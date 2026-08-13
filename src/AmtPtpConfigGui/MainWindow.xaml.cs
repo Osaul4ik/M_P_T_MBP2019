@@ -236,8 +236,13 @@ namespace AmtPtpConfigGui
             {
                 var c = frame.Contacts[i];
 
-                double px = (c.X - _geometry.XMin) / xRange * w;
-                double py = (c.Y - _geometry.YMin) / yRange * h;
+                // LiveFrame X/Y are already normalized to the device's
+                // coordinate origin by the driver:
+                //   X = rawX - XMin
+                //   Y = YMax - rawY
+                // Therefore do NOT subtract _geometry.XMin/YMin again.
+                double px = c.X / xRange * w;
+                double py = c.Y / yRange * h;
 
                 px = Math.Clamp(px, 0, w);
                 py = Math.Clamp(py, 0, h);
