@@ -59,6 +59,12 @@
                                VerticalAlignment="Center"
                                Foreground="#666"
                                Margin="0,0,14,0"/>
+                    <TextBlock x:Name="LiveCoordText"
+                               Text="Live: координати —"
+                               VerticalAlignment="Center"
+                               Foreground="#555"
+                               MaxWidth="700"
+                               Margin="0,0,14,0"/>
 
                     <Button Content="Зберегти помилки в .txt" Click="SaveErrors_Click" Margin="0,0,6,0"/>
                     <Button Content="Оновити / Reconnect" Click="Reconnect_Click"/>
