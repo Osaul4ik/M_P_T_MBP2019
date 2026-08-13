@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -16,8 +15,46 @@ namespace AmtPtpConfigGui
 {
     public partial class MainWindow : Window
     {
+        // ---------------------------------------------------------------
+        // Cached, frozen brushes.
+        //
+        // DrawPreview() and DrawLiveOverlay() used to allocate a fresh
+        // SolidColorBrush per call for every status dot, zone band,
+        // classification color, and per-contact fill/outline. With the
+        // live monitor running, DrawLiveOverlay fires from a 33 ms
+        // DispatcherTimer (~30 fps) and draws up to 5 contacts, so that
+        // was up to a couple hundred short-lived Brush allocations per
+        // second purely for rendering, feeding the GC for no reason since
+        // the palette is fixed. Brushes are immutable once Freeze()'d, so
+        // a small static set is reused instead - same visuals, no
+        // per-frame allocation, and frozen brushes are also cheaper for
+        // WPF to render (no per-frame-update / cross-thread checks).
+        // ---------------------------------------------------------------
+        private static SolidColorBrush Frozen(byte a, byte r, byte g, byte b)
+        {
+            var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+            brush.Freeze();
+            return brush;
+        }
+
+        private static readonly SolidColorBrush ConnectedBrush = Frozen(0xFF, 0x2E, 0xA0, 0x4A);
+        private static readonly SolidColorBrush DisconnectedBrush = Frozen(0xFF, 0xC0, 0x39, 0x2B);
+        private static readonly SolidColorBrush EdgeZoneBrush = Frozen(60, 0xE0, 0x3B, 0x2E);
+
+        private static readonly SolidColorBrush PalmNoneBrush = Frozen(180, 0x2E, 0xA0, 0x4A);
+        private static readonly SolidColorBrush PalmLocalBrush = Frozen(180, 0xE6, 0x9B, 0x1A);
+        private static readonly SolidColorBrush PalmLargeBrush = Frozen(180, 0xC0, 0x39, 0x2B);
+
+        // Live-overlay outline colors reuse WPF's own static Brushes.* -
+        // those are already immutable singletons, no allocation there.
+        // Only the semi-transparent *fill* variants needed precomputing.
+        private static readonly SolidColorBrush LiveFillDown = Frozen(90, Colors.LimeGreen.R, Colors.LimeGreen.G, Colors.LimeGreen.B);
+        private static readonly SolidColorBrush LiveFillUp = Frozen(90, Colors.Orange.R, Colors.Orange.G, Colors.Orange.B);
+        private static readonly SolidColorBrush LiveFillMove = Frozen(90, Colors.DeepSkyBlue.R, Colors.DeepSkyBlue.G, Colors.DeepSkyBlue.B);
+        private static readonly SolidColorBrush LiveFillPalm = Frozen(150, 0xE8, 0x11, 0x23);
+
         private readonly DeviceIo _device = new DeviceIo();
-        private readonly System.Collections.Generic.List<string> _diagnosticLog = new();
+        private readonly List<string> _diagnosticLog = new();
         private PadGeometry _geometry = PadGeometry.Fallback;
         private bool _geometryFromDevice;
         private bool _suppressEvents;
@@ -108,13 +145,13 @@ namespace AmtPtpConfigGui
             _liveTimer.Tick += LiveTimer_Tick;
 
             Loaded += (_, _) => Reconnect();
-            Closed += (_, _) =>
-            {
-                if (_liveEnabled)
-                    _device.SetLiveEnabled(false);
-                _liveTimer.Stop();
-                _device.Dispose();
-            };
+            // Teardown lives solely in OnClosed() below - it used to be
+            // duplicated here *and* in an OnClosed override (both called
+            // _device.Dispose(), and only this handler stopped the live
+            // timer / told the driver to turn Live off). Disposing twice
+            // was harmless, but having two teardown paths for one event is
+            // the kind of duplication that quietly rots: it's easy to add
+            // new cleanup to one path and forget the other.
         }
 
         // ---------------------------------------------------------------
@@ -183,7 +220,7 @@ namespace AmtPtpConfigGui
 
             if (connected)
             {
-                StatusDot.Fill = new SolidColorBrush(Color.FromRgb(0x2E, 0xA0, 0x4A));
+                StatusDot.Fill = ConnectedBrush;
                 StatusText.Text = "Підключено: Wellspring Precision Touchpad";
 
                 if (_device.TryGetPalmConfig(out var cfg))
@@ -209,7 +246,7 @@ namespace AmtPtpConfigGui
             }
             else
             {
-                StatusDot.Fill = new SolidColorBrush(Color.FromRgb(0xC0, 0x39, 0x2B));
+                StatusDot.Fill = DisconnectedBrush;
                 StatusText.Text = "Пристрій не знайдено — режим попереднього перегляду";
                 LoadConfigIntoSliders(PalmConfig.Default);
                 _geometry = PadGeometry.Fallback;
@@ -374,7 +411,7 @@ namespace AmtPtpConfigGui
 
             if (frame.ContactCount > 0 && frame.Contacts != null)
             {
-                var coordLines = new System.Collections.Generic.List<string>();
+                var coordLines = new List<string>();
 
                 for (int i = 0; i < frame.ContactCount && i < frame.Contacts.Length; i++)
                 {
@@ -446,20 +483,29 @@ namespace AmtPtpConfigGui
                 // can see DOWN/MOVE/UP at a glance; a palm-suspect contact
                 // always renders with a red fill regardless of phase, so it
                 // reads unambiguously even at a glance.
-                Brush outline = isPalm
-                    ? Brushes.Firebrick
-                    : c.Phase == 1
-                        ? Brushes.LimeGreen
-                        : c.Phase == 3
-                            ? Brushes.Orange
-                            : Brushes.DeepSkyBlue;
+                Brush outline;
+                Brush fill;
 
-                Brush fill = isPalm
-                    ? new SolidColorBrush(Color.FromArgb(150, 0xE8, 0x11, 0x23))
-                    : new SolidColorBrush(Color.FromArgb(90,
-                        ((SolidColorBrush)outline).Color.R,
-                        ((SolidColorBrush)outline).Color.G,
-                        ((SolidColorBrush)outline).Color.B));
+                if (isPalm)
+                {
+                    outline = Brushes.Firebrick;
+                    fill = LiveFillPalm;
+                }
+                else if (c.Phase == 1)
+                {
+                    outline = Brushes.LimeGreen;
+                    fill = LiveFillDown;
+                }
+                else if (c.Phase == 3)
+                {
+                    outline = Brushes.Orange;
+                    fill = LiveFillUp;
+                }
+                else
+                {
+                    outline = Brushes.DeepSkyBlue;
+                    fill = LiveFillMove;
+                }
 
                 // Contact geometry: Major/Minor are raw sensor units from the
                 // nearest matched raw frame (0 for a reconstructed UP contact
@@ -666,11 +712,10 @@ namespace AmtPtpConfigGui
             double edgeLeftPx = w * (cfg.EdgePermilleLeft / 1000.0);
             double edgeRightPx = w * (cfg.EdgePermilleRight / 1000.0);
 
-            var zoneBrush = new SolidColorBrush(Color.FromArgb(60, 0xE0, 0x3B, 0x2E));
-            AddZoneRect(0, 0, w, edgeTopPx, zoneBrush);                       // top
-            AddZoneRect(0, h - edgeBottomPx, w, edgeBottomPx, zoneBrush);     // bottom
-            AddZoneRect(0, 0, edgeLeftPx, h, zoneBrush);                     // left
-            AddZoneRect(w - edgeRightPx, 0, edgeRightPx, h, zoneBrush);      // right
+            AddZoneRect(0, 0, w, edgeTopPx, EdgeZoneBrush);                       // top
+            AddZoneRect(0, h - edgeBottomPx, w, edgeBottomPx, EdgeZoneBrush);     // bottom
+            AddZoneRect(0, 0, edgeLeftPx, h, EdgeZoneBrush);                     // left
+            AddZoneRect(w - edgeRightPx, 0, edgeRightPx, h, EdgeZoneBrush);      // right
 
             AddLabel("Edge Zone", 6, 4, Brushes.Firebrick, 10);
 
@@ -698,9 +743,9 @@ namespace AmtPtpConfigGui
 
             Brush fingerBrush = cls switch
             {
-                PalmClass.None => new SolidColorBrush(Color.FromArgb(180, 0x2E, 0xA0, 0x4A)),
-                PalmClass.Local => new SolidColorBrush(Color.FromArgb(180, 0xE6, 0x9B, 0x1A)),
-                PalmClass.Large => new SolidColorBrush(Color.FromArgb(180, 0xC0, 0x39, 0x2B)),
+                PalmClass.None => PalmNoneBrush,
+                PalmClass.Local => PalmLocalBrush,
+                PalmClass.Large => PalmLargeBrush,
                 _ => Brushes.Gray,
             };
 
@@ -880,6 +925,15 @@ namespace AmtPtpConfigGui
 
         protected override void OnClosed(EventArgs e)
         {
+            // Single teardown path (see the note in the constructor): tell
+            // the driver to stop streaming live frames, stop the UI poll
+            // timer, then release the device handle.
+            if (_liveEnabled)
+            {
+                _device.SetLiveEnabled(false);
+                _liveEnabled = false;
+            }
+            _liveTimer.Stop();
             _device.Dispose();
             base.OnClosed(e);
         }
