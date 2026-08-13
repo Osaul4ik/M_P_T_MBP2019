@@ -324,7 +324,6 @@ namespace AmtPtpConfigGui
             if (enabled)
             {
                 ResetCornerExtrema();
-            {
                 _liveTimer.Start();
                 LiveStatusText.Text = "Live: очікування… | кути: збираються";
             }
