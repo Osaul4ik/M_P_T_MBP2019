@@ -201,6 +201,18 @@ EVT_WDF_DEVICE_D0_ENTRY         AmtPtpEvtDeviceD0Entry;
 EVT_WDF_DEVICE_D0_EXIT          AmtPtpEvtDeviceD0Exit;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP  AmtPtpEvtDeviceContextCleanup;
 
+// We're a lower filter (WdfFdoInitSetFilter, Driver.c). KMDF's default
+// behavior for a filter is to auto-forward any request type the driver
+// doesn't explicitly handle - including IRP_MJ_CREATE - down to the next
+// lower driver (the USB stack). Without an EvtDeviceFileCreate handler,
+// CreateFile() calls against GUID_DEVINTERFACE_AmtPtpDeviceUsbKm (our own
+// custom interface, opened by AmtPtpConfigGui) get forwarded to the USB
+// stack instead of being completed by us, and fail there with
+// STATUS_UNSUCCESSFUL (surfaces in user mode as GetLastError()==31,
+// ERROR_GEN_FAILURE). This handler completes Create/Close locally so opens
+// against our interface succeed without ever touching the lower stack.
+EVT_WDF_DEVICE_FILE_CREATE       AmtPtpEvtDeviceFileCreate;
+
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS
 SelectInterruptInterface(_In_ WDFDEVICE Device);

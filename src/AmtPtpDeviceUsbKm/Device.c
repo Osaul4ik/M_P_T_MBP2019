@@ -133,6 +133,24 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
             return status;
     }
 
+    // See the comment on AmtPtpEvtDeviceFileCreate's declaration (Device.h):
+    // as a filter, KMDF would otherwise auto-forward Create/Close requests
+    // for our own device interface down to the USB stack below, which
+    // fails them (observed as CreateFile() -> GetLastError()==31). This
+    // makes Create/Close/Cleanup on our device dispatch through our own
+    // callback instead of the default filter forwarding.
+    {
+        WDF_FILEOBJECT_CONFIG fileObjectConfig;
+        WDF_FILEOBJECT_CONFIG_INIT(
+            &fileObjectConfig,
+            AmtPtpEvtDeviceFileCreate,
+            WDF_NO_EVENT_CALLBACK, // EvtFileClose - nothing to clean up
+            WDF_NO_EVENT_CALLBACK  // EvtFileCleanup
+            );
+        WdfDeviceInitSetFileObjectConfig(
+            DeviceInit, &fileObjectConfig, WDF_NO_OBJECT_ATTRIBUTES);
+    }
+
     status = WdfDeviceCreate(&DeviceInit, &deviceAttributes, &device);
     if (!NT_SUCCESS(status))
         return status;
@@ -498,4 +516,25 @@ AmtPtpSetWellspringMode(
     DeviceContext->IsWellspringModeOn = IsWellspringModeOn;
 
     return status;
+}
+
+// AmtPtpEvtDeviceFileCreate
+//
+// See the declaration comment in Device.h for why this exists. Nothing to
+// validate or set up here - any handle to our custom device interface
+// (GUID_DEVINTERFACE_AmtPtpDeviceUsbKm) is equally valid for the
+// IOCTL_AMT_PTP_* surface in ConfigIoctl.c, which doesn't key anything off
+// the WDFFILEOBJECT. We just need to complete the Create locally so it
+// stops here instead of being auto-forwarded down the filter stack.
+VOID
+AmtPtpEvtDeviceFileCreate(
+    _In_ WDFDEVICE Device,
+    _In_ WDFREQUEST Request,
+    _In_ WDFFILEOBJECT FileObject
+    )
+{
+    UNREFERENCED_PARAMETER(Device);
+    UNREFERENCED_PARAMETER(FileObject);
+
+    WdfRequestComplete(Request, STATUS_SUCCESS);
 }
