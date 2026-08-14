@@ -1825,13 +1825,13 @@ namespace AmtPtpConfigGui
 
             var cls = PalmPreviewEngine.Classify(_geometry, cfg, testMajor, testMinor, sensorX, sensorY, isBirth);
 
-            // Ellipse radius: Major/Minor are raw sensor units; scale them
-            // against the pad's own sensor range so the ellipse is always a
-            // sensible fraction of the pad regardless of hardware model.
-            // This is illustrative (matches the same units the thresholds
-            // above are compared against), not a literal millimeter size.
-            double majorPx = Math.Max(6, (testMajor / xRange) * w);
-            double minorPx = Math.Max(6, (testMinor / yRange) * h);
+            // Major/Minor are both expressed in the same contact-size units.
+            // Use one uniform sensor->pixel scale for both axes so a circular
+            // contact stays circular and an elongated contact is not stretched
+            // just because the pad has different X/Y coordinate ranges.
+            double physicalScale = Math.Min(w / xRange, h / yRange);
+            double majorPx = Math.Max(12, testMajor * physicalScale);
+            double minorPx = Math.Max(12, testMinor * physicalScale);
 
             Brush fingerBrush = cls switch
             {
@@ -1884,7 +1884,7 @@ namespace AmtPtpConfigGui
             {
                 Text = text,
                 Foreground = brush,
-                FontSize = size,
+                FontSize = Math.Max(size + 1.5, 12.5),
                 FontWeight = FontWeights.Bold,
                 // Letter-spacing-ish caption treatment (small caps feel) for
                 // the "EDGE ZONE" tag - a technical/instrument detail rather

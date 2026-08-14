@@ -85,7 +85,9 @@ namespace AmtPtpConfigGui
             int count = Math.Min(_frame.ContactCount,
                 Math.Min(_frame.Contacts.Length, MaxContacts));
 
-            double sizeScale = ((w / xRange) + (h / yRange)) * 0.5;
+            // Contact Major/Minor share the same sensor-size units.
+            // A uniform scale avoids artificial stretching when X/Y ranges differ.
+            double sizeScale = Math.Min(w / xRange, h / yRange);
 
             for (int i = 0; i < count; i++)
             {
