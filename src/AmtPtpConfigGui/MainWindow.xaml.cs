@@ -1564,6 +1564,33 @@ namespace AmtPtpConfigGui
             }
         }
 
+        private void SlowScrollViewer_MouseWheel(
+            object sender,
+            System.Windows.Input.MouseWheelEventArgs e)
+        {
+            if (sender is not System.Windows.Controls.ScrollViewer scrollViewer)
+                return;
+
+            const double pixelsPerNotch = 18.0;
+
+            double delta =
+                e.Delta / 120.0 * pixelsPerNotch;
+
+            double targetOffset =
+                scrollViewer.VerticalOffset - delta;
+
+            targetOffset = Math.Max(
+                0,
+                Math.Min(
+                    targetOffset,
+                    scrollViewer.ScrollableHeight));
+
+            scrollViewer.ScrollToVerticalOffset(
+                targetOffset);
+
+            e.Handled = true;
+        }
+
         private void SetLivePerformanceMode(bool enabled)
         {
             if (_liveShadowsSuppressed == enabled)
