@@ -116,6 +116,8 @@ namespace AmtPtpConfigGui
         private bool _hasLatestLiveFrame;
         private bool _liveEnabled;
         private uint _lastLiveSequence;
+        private int _liveTelemetryTickCounter;
+        private bool _liveShadowsSuppressed;
 
         private const int LiveOverlaySlots = 5;
         private const double LiveGeometrySmoothAlpha = 0.25;
@@ -193,7 +195,7 @@ namespace AmtPtpConfigGui
 
             _liveRenderTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromMilliseconds(33)
+                Interval = TimeSpan.FromMilliseconds(42)
             };
             _liveRenderTimer.Tick += LiveRenderTimer_Tick;
 
@@ -931,6 +933,7 @@ namespace AmtPtpConfigGui
             {
                 StatusDot.Fill = ConnectedBrush;
                 StatusText.Text = "Connected: Wellspring Precision Touchpad";
+                DeviceModelText.Text = _device.GetDeviceModelDisplay();
 
                 if (_device.TryGetPalmConfig(out var cfg))
                 {
@@ -1182,16 +1185,20 @@ namespace AmtPtpConfigGui
             DrawLiveOverlay(frame);
 
             int count = frame.ContactCount;
-            LiveCoordText.Text = BuildLiveContactText(frame, count);
+            if (++_liveTelemetryTickCounter >= 3)
+            {
+                _liveTelemetryTickCounter = 0;
+                LiveCoordText.Text = BuildLiveContactText(frame, count);
 
-            LiveCornerText.Text =
-                $"Corners: TL {_topLeft.Samples} | TR {_topRight.Samples} | " +
-                $"BL {_bottomLeft.Samples} | BR {_bottomRight.Samples}";
+                LiveCornerText.Text =
+                    $"Corners: TL {_topLeft.Samples} | TR {_topRight.Samples} | " +
+                    $"BL {_bottomLeft.Samples} | BR {_bottomRight.Samples}";
 
-            LiveStatusText.Text =
-                $"Live: {count} contacts | seq {frame.Sequence}" +
-                (frame.ButtonDown != 0 ? " | BUTTON" : "") +
-                (frame.LargePalmBlanked != 0 ? " | PALM" : "");
+                LiveStatusText.Text =
+                    $"Live: {count} contacts | seq {frame.Sequence}" +
+                    (frame.ButtonDown != 0 ? " | BUTTON" : "") +
+                    (frame.LargePalmBlanked != 0 ? " | PALM" : "");
+            }
         }
 
         private static string BuildLiveContactText(in LiveFrame frame, int count)
@@ -1263,6 +1270,34 @@ namespace AmtPtpConfigGui
             {
                 _livePollTask = null;
                 cts.Dispose();
+            }
+        }
+
+        private void SetLivePerformanceMode(bool enabled)
+        {
+            if (_liveShadowsSuppressed == enabled)
+                return;
+
+            _liveShadowsSuppressed = enabled;
+
+            // DropShadowEffect is expensive during window movement and redraw.
+            // Keep the normal visual style when Live is off, but remove the
+            // expensive effects while Live is active.
+            if (enabled)
+            {
+                if (ProfileBarCard != null) ProfileBarCard.Effect = null;
+                if (LiveToolbarCard != null) LiveToolbarCard.Effect = null;
+                if (BottomActionCard != null) BottomActionCard.Effect = null;
+                if (PreviewCard != null) PreviewCard.Effect = null;
+                if (DeviceCard != null) DeviceCard.Effect = null;
+            }
+            else
+            {
+                if (ProfileBarCard != null) ProfileBarCard.Effect = (Effect)FindResource("CardShadow");
+                if (LiveToolbarCard != null) LiveToolbarCard.Effect = (Effect)FindResource("CardShadow");
+                if (BottomActionCard != null) BottomActionCard.Effect = (Effect)FindResource("CardShadow");
+                if (PreviewCard != null) PreviewCard.Effect = (Effect)FindResource("CardShadow");
+                if (DeviceCard != null) DeviceCard.Effect = (Effect)FindResource("DeviceShadow");
             }
         }
 

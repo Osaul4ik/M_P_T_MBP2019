@@ -1,16 +1,12 @@
 using System;
-using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
 using AmtPtpConfigGui.Native;
 
 using MediaBrush = System.Windows.Media.Brush;
-using MediaBrushes = System.Windows.Media.Brushes;
 using MediaColor = System.Windows.Media.Color;
-using MediaFontFamily = System.Windows.Media.FontFamily;
 using MediaPen = System.Windows.Media.Pen;
 using MediaPoint = System.Windows.Point;
-using MediaFlowDirection = System.Windows.FlowDirection;
 
 namespace AmtPtpConfigGui
 {
@@ -33,18 +29,12 @@ namespace AmtPtpConfigGui
         private double _geometrySmoothAlpha;
         private bool _hasFrame;
 
-        private static readonly Typeface LabelTypeface =
-            new Typeface(new MediaFontFamily("Segoe UI"), FontStyles.Normal,
-                         FontWeights.SemiBold, FontStretches.Normal);
-
         private static readonly MediaBrush FingerFill = Frozen(70, 0x16, 0x9B, 0xFF);
         private static readonly MediaBrush DownFill = Frozen(80, 0x1D, 0xF2, 0x75);
         private static readonly MediaBrush UpFill = Frozen(70, 0xFF, 0xA0, 0x18);
         private static readonly MediaBrush PalmFill = Frozen(120, 0xE8, 0x11, 0x23);
         private static readonly MediaBrush FingerStroke = Frozen(0xFF, 0x00, 0xB7, 0xFF);
         private static readonly MediaBrush PalmStroke = Frozen(0xFF, 0xFF, 0x3B, 0x45);
-        private static readonly MediaBrush TagBackground = Frozen(225, 0x14, 0x16, 0x1B);
-        private static readonly MediaBrush White = MediaBrushes.White;
 
         private static MediaBrush Frozen(byte a, byte r, byte g, byte b)
         {
@@ -158,39 +148,8 @@ namespace AmtPtpConfigGui
 
                 dc.DrawEllipse(stroke, null, new MediaPoint(px, py), 3, 3);
 
-                string tag = palm ? $"ID {c.ContactID} · PALM" : $"ID {c.ContactID}";
-                string text = $"{tag}  P:{c.Pressure}  M:{c.Major}/{c.Minor}";
-
-                double labelX = Math.Min(
-                    Math.Max(4, px + Math.Max(18, majorPx * 0.5 + 4)),
-                    Math.Max(4, w - 180));
-                double labelY = Math.Clamp(py - 9, 2, Math.Max(2, h - 22));
-
-                var formatted = new FormattedText(
-                    text,
-                    CultureInfo.InvariantCulture,
-                    MediaFlowDirection.LeftToRight,
-                    LabelTypeface,
-                    11,
-                    palm ? White : stroke,
-                    1.0);
-
-                double padX = 5;
-                double padY = 2;
-                Rect bg = new Rect(
-                    labelX - padX,
-                    labelY - padY,
-                    formatted.Width + padX * 2,
-                    formatted.Height + padY * 2);
-
-                dc.DrawRoundedRectangle(
-                    TagBackground,
-                    null,
-                    bg,
-                    4,
-                    4);
-
-                dc.DrawText(formatted, new MediaPoint(labelX, labelY));
+                // Contact details are rendered in the dedicated live text panel.
+                // Keep the overlay visual-only to minimize WPF text/layout work.
             }
 
             for (int i = 0; i < MaxContacts; i++)

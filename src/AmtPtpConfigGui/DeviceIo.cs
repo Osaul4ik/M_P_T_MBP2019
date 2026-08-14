@@ -9,6 +9,18 @@ namespace AmtPtpConfigGui.Native
     /// symbolic link (\\.\AmtPtpDeviceUsbKm) using DeviceIoControl.
     /// The USB/HID filter itself is intentionally not opened by the GUI.
     /// </summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct DeviceInfo
+    {
+        public uint StructVersion;
+        public ushort VendorId;
+        public ushort ProductId;
+        public byte SupportsForceTouch;
+        public byte Reserved0;
+        public byte Reserved1;
+        public byte Reserved2;
+    }
+
     public sealed class DeviceIo : IDisposable
     {
         // AMT_PTP_IOCTL_INDEX (0x900) + offset, mirrored from Public.h.
@@ -26,6 +38,9 @@ namespace AmtPtpConfigGui.Native
             (access << 14) |
             (function << 2) |
             method;
+
+        public static readonly uint IoctlGetDeviceInfo =
+            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 12, MethodBuffered, FileAnyAccess);
 
         public static readonly uint IoctlGetPalmConfig =
             CtlCode(
@@ -184,6 +199,63 @@ namespace AmtPtpConfigGui.Native
             }
 
             _liveFrameBufferSize = 0;
+        }
+
+        public bool TryGetDeviceInfo(out DeviceInfo info)
+        {
+            info = default;
+            if (!IsConnected)
+                return false;
+
+            int size = Marshal.SizeOf<DeviceInfo>();
+            IntPtr outBuf = Marshal.AllocHGlobal(size);
+            try
+            {
+                bool ok = DeviceIoControl(
+                    _handle!,
+                    IoctlGetDeviceInfo,
+                    IntPtr.Zero,
+                    0,
+                    outBuf,
+                    (uint)size,
+                    out uint bytesReturned,
+                    IntPtr.Zero);
+
+                if (!ok || bytesReturned < (uint)size)
+                    return false;
+
+                info = Marshal.PtrToStructure<DeviceInfo>(outBuf);
+                return info.StructVersion == 1;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(outBuf);
+            }
+        }
+
+        public string GetDeviceModelDisplay()
+        {
+            if (!TryGetDeviceInfo(out var info))
+                return string.Empty;
+
+            string model = info.ProductId switch
+            {
+                0x0272 or 0x0273 or 0x0274 => "MacBookPro12,1 · 2015 13-inch",
+                0x0290 or 0x0291 => "MacBookAir6/7,x · pre-Force Touch",
+                0x027A => "MacBookAir8,1 · 2018",
+                0x027B => "MacBookPro15,2 · 2018 13-inch",
+                0x027C => "MacBookPro15,1 · 2018 15-inch",
+                0x027D => "MacBookPro15,4 · 2019 13-inch",
+                0x027E => "MacBookPro16,2 · 2020 13-inch",
+                0x027F => "MacBookPro16,3 · 2020 13-inch",
+                0x0280 => "MacBookAir9,1 · 2020",
+                0x0340 => "MacBookPro16,1 · 2019 16-inch",
+                _ => $"Apple PTP · PID 0x{info.ProductId:X4}"
+            };
+
+            return info.SupportsForceTouch != 0
+                ? $"{model} · Force Touch"
+                : model;
         }
 
         public bool TryGetPalmConfig(
