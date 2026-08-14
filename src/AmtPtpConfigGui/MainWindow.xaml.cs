@@ -307,7 +307,7 @@ namespace AmtPtpConfigGui
             exportBackup.Click += (_, _) => ExportBackup();
             restoreBackup.Click += (_, _) => RestoreBackup();
 
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
             var cancel = new System.Windows.Controls.Button { Content = "Скасувати", Style = (Style)FindResource("GhostButton"), Margin = new Thickness(0,0,8,0), Width = 100 };
             var save = new System.Windows.Controls.Button { Content = "Зберегти", Style = (Style)FindResource("AccentButton"), Width = 100 };
             buttons.Children.Add(cancel);
@@ -771,7 +771,7 @@ namespace AmtPtpConfigGui
             Grid.SetRow(text, 1);
             root.Children.Add(text);
 
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 14, 0, 0) };
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 14, 0, 0) };
             var cancel = new Button { Content = "Скасувати", Padding = new Thickness(14, 7, 14, 7), Margin = new Thickness(0, 0, 8, 0), IsCancel = true };
             var ok = new Button { Content = "OK", Padding = new Thickness(18, 7, 18, 7), IsDefault = true };
             ok.Click += (_, _) => { dialog.DialogResult = true; dialog.Close(); };
