@@ -781,7 +781,7 @@
                                         <TextBlock Style="{StaticResource SliderLabel}" Text="Сила натискання"/>
                                         <TextBlock x:Name="LblForceTapThreshold" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
-                                    <Slider x:Name="SlForceTapThreshold" Minimum="40" Maximum="300" ValueChanged="PointerSlider_Changed"/>
+                                    <Slider x:Name="SlForceTapThreshold" Minimum="200" Maximum="400" ValueChanged="PointerSlider_Changed"/>
 
                                     <TextBlock Style="{StaticResource HintText}"
                                                Text="Менше значення — легше спрацьовує (достатньо легшого натискання). Більше значення — потрібен сильніший тиск."/>

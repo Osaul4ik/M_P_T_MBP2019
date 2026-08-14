@@ -131,8 +131,8 @@ typedef struct _AMT_POINTER_CONFIG
 // Sane clamp range - raw pressure realistically spans ~0-300, so keep the
 // threshold well inside that instead of letting it go degenerate (0 would
 // fire on any touch; a huge value would make Force Tap unreachable).
-#define AMT_POINTER_THRESHOLD_MIN    40
-#define AMT_POINTER_THRESHOLD_MAX   300
+#define AMT_POINTER_THRESHOLD_MIN   200
+#define AMT_POINTER_THRESHOLD_MAX   400
 #define AMT_POINTER_ACTION_MAX        2   // highest valid AMT_POINTER_ACTION_* value
 
 

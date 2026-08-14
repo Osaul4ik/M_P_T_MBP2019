@@ -32,8 +32,8 @@ namespace AmtPtpConfigGui.Native
         public const uint ActionDoubleClick = 2; // синтетичний подвійний клік (відкриття)
 
         // Sane clamp bounds - must match AMT_POINTER_THRESHOLD_*/ACTION_MAX in Public.h.
-        public const uint ThresholdMin = 40;
-        public const uint ThresholdMax = 300;
+        public const uint ThresholdMin = 200;
+        public const uint ThresholdMax = 400;
         public const uint ActionMax = 2;
 
         /// <summary>
