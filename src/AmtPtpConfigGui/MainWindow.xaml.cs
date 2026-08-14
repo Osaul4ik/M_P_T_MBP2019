@@ -1142,13 +1142,21 @@ namespace AmtPtpConfigGui
 
         private void ResetDefaults_Click(object sender, RoutedEventArgs e)
         {
-            bool palmOk = _device.IsConnected && _device.TryResetPalmConfig(out var appliedPalm);
+            // NOTE: can't use "_device.IsConnected && _device.TryReset...(out var x)"
+            // directly - with && short-circuiting, the compiler can't prove
+            // appliedPalm/appliedPointer are assigned by the time the later,
+            // separate "if (palmOk)" check reads them (CS0165), even though
+            // at runtime palmOk is only ever true when the out parameter was
+            // in fact assigned. Pre-initializing sidesteps that.
+            var appliedPalm = PalmConfig.Default;
+            bool palmOk = _device.IsConnected && _device.TryResetPalmConfig(out appliedPalm);
             if (palmOk)
                 LoadConfigIntoSliders(appliedPalm);
             else
                 LoadConfigIntoSliders(PalmConfig.Default);
 
-            bool pointerOk = _device.IsConnected && _device.TryResetPointerConfig(out var appliedPointer);
+            var appliedPointer = PointerConfig.Default;
+            bool pointerOk = _device.IsConnected && _device.TryResetPointerConfig(out appliedPointer);
             if (pointerOk)
                 LoadPointerConfigIntoControls(appliedPointer);
             else
