@@ -415,11 +415,11 @@ AmtContactCommitSample(
             INT smooth = (INT)ScrollConfig->SmoothingPercent;
             if (smooth > 0) {
                 // 0 = raw delta, 100 = strongest filtering.
-                INT alphaNum = 100 - smooth;
-                if (alphaNum < 10) alphaNum = 10;
-                INT prevNum = 100 - alphaNum;
-                scaledDx = (scaledDx * alphaNum + Contact->ScrollFilteredX * prevNum) / 100;
-                scaledDy = (scaledDy * alphaNum + Contact->ScrollFilteredY * prevNum) / 100;
+                INT scrollAlphaNum = 100 - smooth;
+                if (scrollAlphaNum < 10) scrollAlphaNum = 10;
+                INT prevNum = 100 - scrollAlphaNum;
+                scaledDx = (scaledDx * scrollAlphaNum + Contact->ScrollFilteredX * prevNum) / 100;
+                scaledDy = (scaledDy * scrollAlphaNum + Contact->ScrollFilteredY * prevNum) / 100;
             }
             Contact->ScrollFilteredX = scaledDx;
             Contact->ScrollFilteredY = scaledDy;
