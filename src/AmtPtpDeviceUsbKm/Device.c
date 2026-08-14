@@ -37,6 +37,7 @@ AmtAllocateAlignedContactPool(VOID)
     aligned = ((ULONG_PTR)raw + sizeof(PVOID) + (ACTIVE_CONTACTS_ALIGNMENT - 1))
               & ~(ULONG_PTR)(ACTIVE_CONTACTS_ALIGNMENT - 1);
 
+    NT_ASSERT((aligned & (ACTIVE_CONTACTS_ALIGNMENT - 1)) == 0);
     *((PVOID*)(aligned - sizeof(PVOID))) = raw;
 
     return (PACTIVE_CONTACT)aligned;

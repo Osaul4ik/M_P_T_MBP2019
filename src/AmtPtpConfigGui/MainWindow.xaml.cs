@@ -1167,7 +1167,7 @@ namespace AmtPtpConfigGui
                 {
                     var c = frame.Contacts[i];
                     coordLines.Add(
-                        $"C{i + 1,-3} ID {c.ContactID,4}   RawX {c.RawX,6}   RawY {c.RawY,6}   X {c.X,6}   Y {c.Y,6}");
+                        $"C{i + 1,-3}  {c.X,5},{c.Y,5}   P: {c.Pressure,3}");
                 }
 
                 LiveCoordText.Text = string.Join(Environment.NewLine, coordLines);
@@ -1390,7 +1390,7 @@ namespace AmtPtpConfigGui
 
                 string tag = isPalm ? $"ID {c.ContactID} · PALM" : $"ID {c.ContactID}";
                 var label = _liveLabels[i];
-                label.Text = tag;
+                label.Text = $"{tag}  P:{c.Pressure}  M:{c.Major}/{c.Minor}";
                 label.Foreground = isPalm ? Brushes.White : outline;
                 label.Background = isPalm ? LivePalmOutline : LiveTagBgBrush;
                 Canvas.SetLeft(label, px + Math.Max(18, majorPx / 2 + 4));

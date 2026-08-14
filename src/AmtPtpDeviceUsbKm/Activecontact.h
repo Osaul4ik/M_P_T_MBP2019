@@ -99,6 +99,9 @@ typedef struct DECLSPEC_ALIGN(64) _ACTIVE_CONTACT
     UCHAR FramesAlive;
 } ACTIVE_CONTACT, *PACTIVE_CONTACT;
 
+// Keep each pool element exactly one 64-byte cache line.
+C_ASSERT(sizeof(ACTIVE_CONTACT) == 64);
+
 #define MAX_CONTACTS PTP_MAX_CONTACT_POINTS  // pool capacity, not slot count
 
 // Zero/FREE-initialise the whole pool. Call at device creation and D0Entry.
