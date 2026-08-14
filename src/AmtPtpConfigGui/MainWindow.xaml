@@ -869,10 +869,19 @@
                         <Grid>
                             <Border CornerRadius="10" ClipToBounds="True">
                                 <Viewbox Stretch="Uniform">
-                                    <Canvas x:Name="PreviewCanvas" Width="700" Height="460" Background="Transparent"
-                                            MouseLeftButtonDown="PreviewCanvas_MouseDown"
-                                            MouseMove="PreviewCanvas_MouseMove"
-                                            MouseLeftButtonUp="PreviewCanvas_MouseUp"/>
+                                    <Grid Width="700" Height="460">
+                                        <Canvas x:Name="PreviewCanvas" Width="700" Height="460" Background="Transparent"
+                                                MouseLeftButtonDown="PreviewCanvas_MouseDown"
+                                                MouseMove="PreviewCanvas_MouseMove"
+                                                MouseLeftButtonUp="PreviewCanvas_MouseUp"/>
+                                        <!-- Separate layer for the live-touch overlay (footprints/labels).
+                                             Kept apart from PreviewCanvas so a live tick only has to move a
+                                             handful of pooled shapes here instead of clearing+rebuilding the
+                                             whole static background (pad, edge zones, test-touch point) 20-30
+                                             times a second - see DrawLiveOverlay in the code-behind. -->
+                                        <Canvas x:Name="LiveOverlayCanvas" Width="700" Height="460" Background="Transparent"
+                                                IsHitTestVisible="False"/>
+                                    </Grid>
                                 </Viewbox>
                             </Border>
                             <Border CornerRadius="10" Background="{StaticResource GlassShineBrush}" IsHitTestVisible="False"/>

@@ -81,6 +81,18 @@ namespace AmtPtpConfigGui
         private bool _liveEnabled;
         private uint _lastLiveSequence;
 
+        // Pooled live-overlay shapes (one triple per AMT_LIVE_MAX_CONTACTS
+        // slot), created once and reused every tick - see DrawLiveOverlay.
+        // Reusing these instead of allocating fresh Ellipse/TextBlock
+        // objects and clearing/rebuilding the whole canvas on every frame
+        // is what keeps Live mode from pegging the CPU: WPF layout/render
+        // cost comes from visual-tree churn, not from the IOCTL poll itself.
+        private const int LiveOverlaySlots = 5; // matches AMT_LIVE_MAX_CONTACTS in Public.h
+        private readonly Ellipse[] _liveFootprints = new Ellipse[LiveOverlaySlots];
+        private readonly Ellipse[] _liveCenters = new Ellipse[LiveOverlaySlots];
+        private readonly TextBlock[] _liveLabels = new TextBlock[LiveOverlaySlots];
+        private bool _liveOverlayInitialized;
+
         private readonly Dictionary<uint, (double Major, double Minor)> _liveGeometrySmooth = new();
         private const double LiveGeometrySmoothAlpha = 0.25; // lower = smoother/slower to react
 
@@ -140,7 +152,11 @@ namespace AmtPtpConfigGui
 
             _liveTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromMilliseconds(33)
+                // 20 Hz instead of the previous 30 Hz - still visually
+                // smooth for a debug/calibration overlay, ~35% fewer
+                // ticks (and therefore fewer IOCTL polls + overlay
+                // updates) than before.
+                Interval = TimeSpan.FromMilliseconds(50)
             };
             _liveTimer.Tick += LiveTimer_Tick;
 
@@ -207,6 +223,7 @@ namespace AmtPtpConfigGui
                 _liveTimer.Stop();
                 if (ChkLive != null)
                     ChkLive.IsChecked = false;
+                HideAllLiveOverlayElements();
             }
 
             bool connected = _device.TryConnect();
@@ -363,6 +380,7 @@ namespace AmtPtpConfigGui
                 _liveTimer.Stop();
                 LiveStatusText.Text = "Live: пристрій не підключено";
                 SetLiveDot(active: false);
+                HideAllLiveOverlayElements();
                 return;
             }
 
@@ -376,6 +394,7 @@ namespace AmtPtpConfigGui
                 LiveCoordText.Text = "Live: координати —";
                 LiveCornerText.Text = "Кути: TL 0 | TR 0 | BL 0 | BR 0";
                 SetLiveDot(active: null); // error - solid red, no pulse
+                HideAllLiveOverlayElements();
                 return;
             }
 
@@ -397,6 +416,7 @@ namespace AmtPtpConfigGui
                 LiveCoordText.Text = "Live: координати —";
                 LiveCornerText.Text = "Кути: TL 0 | TR 0 | BL 0 | BR 0";
                 SetLiveDot(active: false);
+                HideAllLiveOverlayElements();
                 DrawPreview();
             }
         }
@@ -475,20 +495,81 @@ namespace AmtPtpConfigGui
                 (frame.LargePalmBlanked != 0 ? " | PALM" : "");
         }
 
-        private void DrawLiveOverlay(LiveFrame frame)
+        // Creates the pooled overlay shapes once (lazy - PreviewCanvas/
+        // LiveOverlayCanvas aren't valid until the window is loaded) and
+        // adds them to LiveOverlayCanvas a single time. Every subsequent
+        // live tick only mutates their properties - no further
+        // Add/Remove/Clear on the canvas, which is what used to force a
+        // full WPF layout+render pass on every frame.
+        private void EnsureLiveOverlayElements()
         {
-            DrawPreview();
-
-            if (!_liveEnabled || PreviewCanvas == null || frame.Contacts == null)
+            if (_liveOverlayInitialized || LiveOverlayCanvas == null)
                 return;
 
-            double w = PreviewCanvas.Width;
-            double h = PreviewCanvas.Height;
+            for (int i = 0; i < LiveOverlaySlots; i++)
+            {
+                var footprint = new Ellipse { Visibility = Visibility.Collapsed };
+                var center = new Ellipse { Width = 6, Height = 6, Visibility = Visibility.Collapsed };
+                var label = new TextBlock
+                {
+                    FontSize = 11,
+                    FontWeight = FontWeights.SemiBold,
+                    Padding = new Thickness(5, 2, 5, 2),
+                    Visibility = Visibility.Collapsed,
+                };
+
+                LiveOverlayCanvas.Children.Add(footprint);
+                LiveOverlayCanvas.Children.Add(center);
+                LiveOverlayCanvas.Children.Add(label);
+
+                _liveFootprints[i] = footprint;
+                _liveCenters[i] = center;
+                _liveLabels[i] = label;
+            }
+
+            _liveOverlayInitialized = true;
+        }
+
+        // Hides (doesn't remove - removing/re-adding would defeat the
+        // whole point of pooling) every pooled overlay shape. Called when
+        // Live mode turns off or a frame has nothing to show, so stale
+        // footprints from the last live touch don't linger on screen.
+        private void HideAllLiveOverlayElements()
+        {
+            if (!_liveOverlayInitialized)
+                return;
+
+            for (int i = 0; i < LiveOverlaySlots; i++)
+            {
+                _liveFootprints[i].Visibility = Visibility.Collapsed;
+                _liveCenters[i].Visibility = Visibility.Collapsed;
+                _liveLabels[i].Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void DrawLiveOverlay(LiveFrame frame)
+        {
+            if (LiveOverlayCanvas == null)
+                return;
+
+            if (!_liveEnabled || frame.Contacts == null)
+            {
+                HideAllLiveOverlayElements();
+                return;
+            }
+
+            double w = LiveOverlayCanvas.Width;
+            double h = LiveOverlayCanvas.Height;
             double xRange = _geometry.XMax - _geometry.XMin;
             double yRange = _geometry.YMax - _geometry.YMin;
 
             if (xRange <= 0 || yRange <= 0)
+            {
+                HideAllLiveOverlayElements();
                 return;
+            }
+
+            EnsureLiveOverlayElements();
 
             // Track which contact IDs are still alive this frame so stale
             // smoothing state for lifted contacts doesn't linger forever
@@ -496,7 +577,9 @@ namespace AmtPtpConfigGui
             // much later).
             var seenIds = new HashSet<uint>();
 
-            for (int i = 0; i < frame.ContactCount && i < frame.Contacts.Length; i++)
+            int slots = Math.Min(frame.ContactCount, Math.Min(frame.Contacts.Length, LiveOverlaySlots));
+
+            for (int i = 0; i < slots; i++)
             {
                 var c = frame.Contacts[i];
                 seenIds.Add(c.ContactID);
@@ -575,42 +658,42 @@ namespace AmtPtpConfigGui
                 double majorPx = dispMajor > 0 ? Math.Max(10, dispMajor / xRange * w) : 26;
                 double minorPx = dispMinor > 0 ? Math.Max(10, dispMinor / yRange * h) : 26;
 
-                var footprint = new Ellipse
-                {
-                    Width = majorPx,
-                    Height = minorPx,
-                    Fill = fill,
-                    Stroke = outline,
-                    StrokeThickness = isPalm ? 2.5 : 2
-                };
+                var footprint = _liveFootprints[i];
+                footprint.Width = majorPx;
+                footprint.Height = minorPx;
+                footprint.Fill = fill;
+                footprint.Stroke = outline;
+                footprint.StrokeThickness = isPalm ? 2.5 : 2;
                 Canvas.SetLeft(footprint, px - majorPx / 2);
                 Canvas.SetTop(footprint, py - minorPx / 2);
-                PreviewCanvas.Children.Add(footprint);
+                footprint.Visibility = Visibility.Visible;
 
-                var center = new Ellipse
-                {
-                    Width = 6,
-                    Height = 6,
-                    Fill = outline
-                };
+                var center = _liveCenters[i];
+                center.Fill = outline;
                 Canvas.SetLeft(center, px - 3);
                 Canvas.SetTop(center, py - 3);
-                PreviewCanvas.Children.Add(center);
+                center.Visibility = Visibility.Visible;
 
                 string tag = isPalm ? $"ID {c.ContactID} · PALM" : $"ID {c.ContactID}";
-                var label = new TextBlock
-                {
-                    Text = tag,
-                    FontSize = 11,
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = isPalm ? Brushes.White : outline,
-                    Background = isPalm ? LivePalmOutline : LiveTagBgBrush,
-                    Padding = new Thickness(5, 2, 5, 2)
-                };
+                var label = _liveLabels[i];
+                label.Text = tag;
+                label.Foreground = isPalm ? Brushes.White : outline;
+                label.Background = isPalm ? LivePalmOutline : LiveTagBgBrush;
                 Canvas.SetLeft(label, px + Math.Max(18, majorPx / 2 + 4));
                 Canvas.SetTop(label, py - 9);
-                PreviewCanvas.Children.Add(label);
+                label.Visibility = Visibility.Visible;
             }
+
+            // Any pooled slots beyond this frame's contact count belong to
+            // contacts that just lifted (or never existed) - hide them
+            // rather than leaving the last-drawn footprint stuck on screen.
+            for (int i = slots; i < LiveOverlaySlots; i++)
+            {
+                _liveFootprints[i].Visibility = Visibility.Collapsed;
+                _liveCenters[i].Visibility = Visibility.Collapsed;
+                _liveLabels[i].Visibility = Visibility.Collapsed;
+            }
+
             if (_liveGeometrySmooth.Count > 0)
             {
                 var stale = new List<uint>();
