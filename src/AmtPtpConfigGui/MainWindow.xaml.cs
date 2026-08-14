@@ -1008,9 +1008,19 @@ namespace AmtPtpConfigGui
         // Apply / Reset / Save / Load
         // ---------------------------------------------------------------
 
+        // NOTE: this is the GLOBAL bottom-bar Apply/Reset - it is always
+        // visible regardless of which tab (Palm/Scroll/Pointer) is
+        // currently selected. It must commit BOTH PalmConfig and
+        // PointerConfig, or a user who edits the Pointer tab and hits this
+        // button (rather than the Pointer tab's own local Apply button)
+        // would see their Force Tap changes silently discarded - the
+        // sliders would keep showing the new values locally, but nothing
+        // would actually reach the driver/registry, so they'd revert to
+        // the old/default values the next time the GUI reconnects.
         private void Apply_Click(object sender, RoutedEventArgs e)
         {
-            var requested = ReadConfigFromSliders();
+            var requestedPalm = ReadConfigFromSliders();
+            var requestedPointer = ReadPointerConfigFromControls();
 
             if (!_device.IsConnected)
             {
@@ -1018,31 +1028,60 @@ namespace AmtPtpConfigGui
                 return;
             }
 
-            if (_device.TrySetPalmConfig(requested, out var applied))
+            bool palmOk = _device.TrySetPalmConfig(requestedPalm, out var appliedPalm);
+            if (palmOk)
             {
-                LoadConfigIntoSliders(applied);
+                LoadConfigIntoSliders(appliedPalm);
                 DrawPreview();
-                SetBottomStatus("Застосовано та збережено в реєстрі драйвера.");
+            }
+
+            bool pointerOk = _device.TrySetPointerConfig(requestedPointer, out var appliedPointer);
+            if (pointerOk)
+            {
+                LoadPointerConfigIntoControls(appliedPointer);
+            }
+
+            if (palmOk && pointerOk)
+            {
+                SetBottomStatus("Застосовано та збережено в реєстрі драйвера (Palm + Pointer).");
+            }
+            else if (!palmOk && !pointerOk)
+            {
+                SetBottomStatus("Не вдалося застосувати налаштування (помилка DeviceIoControl).");
             }
             else
             {
-                SetBottomStatus("Не вдалося застосувати налаштування (помилка DeviceIoControl).");
+                SetBottomStatus(palmOk
+                    ? "Palm застосовано, але Pointer — ні (помилка DeviceIoControl)."
+                    : "Pointer застосовано, але Palm — ні (помилка DeviceIoControl).");
             }
         }
 
         private void ResetDefaults_Click(object sender, RoutedEventArgs e)
         {
-            if (_device.IsConnected && _device.TryResetPalmConfig(out var applied))
+            bool palmOk = _device.IsConnected && _device.TryResetPalmConfig(out var appliedPalm);
+            if (palmOk)
+                LoadConfigIntoSliders(appliedPalm);
+            else
+                LoadConfigIntoSliders(PalmConfig.Default);
+
+            bool pointerOk = _device.IsConnected && _device.TryResetPointerConfig(out var appliedPointer);
+            if (pointerOk)
+                LoadPointerConfigIntoControls(appliedPointer);
+            else
+                LoadPointerConfigIntoControls(PointerConfig.Default);
+
+            if (palmOk && pointerOk)
             {
-                LoadConfigIntoSliders(applied);
-                SetBottomStatus("Скинуто до значень за замовчуванням на драйвері.");
+                SetBottomStatus("Скинуто до значень за замовчуванням на драйвері (Palm + Pointer).");
+            }
+            else if (_device.IsConnected)
+            {
+                SetBottomStatus("Не вдалося повністю скинути на драйвері — показано локальні значення за замовчуванням.");
             }
             else
             {
-                LoadConfigIntoSliders(PalmConfig.Default);
-                SetBottomStatus(_device.IsConnected
-                    ? "Не вдалося скинути на драйвері — показано локальні значення за замовчуванням."
-                    : "Показано значення за замовчуванням (пристрій не підключено).");
+                SetBottomStatus("Показано значення за замовчуванням (пристрій не підключено).");
             }
             DrawPreview();
         }
@@ -1051,29 +1090,63 @@ namespace AmtPtpConfigGui
         {
             var dlg = new SaveFileDialog
             {
-                Filter = "AmtPtp palm profile (*.json)|*.json",
-                FileName = "AmtPtpPalmProfile.json",
+                Filter = "AmtPtp profile (*.json)|*.json",
+                FileName = "AmtPtpProfile.json",
             };
             if (dlg.ShowDialog() != true) return;
 
-            var cfg = ReadConfigFromSliders();
-            var json = JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true });
+            var profile = AmtPtpProfile.FromCurrent(
+                ReadConfigFromSliders(),
+                ReadPointerConfigFromControls());
+
+            var json = JsonSerializer.Serialize(profile, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(dlg.FileName, json);
-            SetBottomStatus($"Профіль збережено: {dlg.FileName}");
+            SetBottomStatus($"Профіль (Palm + Pointer) збережено: {dlg.FileName}");
         }
 
         private void LoadProfile_Click(object sender, RoutedEventArgs e)
         {
-            var dlg = new OpenFileDialog { Filter = "AmtPtp palm profile (*.json)|*.json" };
+            var dlg = new OpenFileDialog { Filter = "AmtPtp profile (*.json)|*.json" };
             if (dlg.ShowDialog() != true) return;
 
             try
             {
                 var json = File.ReadAllText(dlg.FileName);
-                var cfg = JsonSerializer.Deserialize<PalmConfig>(json);
-                LoadConfigIntoSliders(cfg.Clamped());
-                DrawPreview();
-                SetBottomStatus($"Профіль завантажено: {dlg.FileName}. Натисніть «Застосувати», щоб зберегти на драйвері.");
+
+                // New-format files ({"Palm": {...}, "Pointer": {...}})
+                // round-trip both configs. Files saved by an older GUI
+                // build (before Pointer support existed) are just a bare
+                // PalmConfig object with no wrapper - detect which shape
+                // this file is and fall back so those old files still
+                // load instead of throwing.
+                bool isProfileFormat;
+                using (var doc = JsonDocument.Parse(json))
+                {
+                    isProfileFormat = doc.RootElement.TryGetProperty("Palm", out _);
+                }
+
+                if (isProfileFormat)
+                {
+                    var profile = JsonSerializer.Deserialize<AmtPtpProfile>(json);
+                    if (profile == null)
+                        throw new InvalidDataException("Порожній або некоректний файл профілю.");
+
+                    LoadConfigIntoSliders(profile.Palm.Clamped());
+                    LoadPointerConfigIntoControls(profile.Pointer.Clamped());
+                    DrawPreview();
+                    SetBottomStatus($"Профіль (Palm + Pointer) завантажено: {dlg.FileName}. Натисніть «Застосувати», щоб зберегти на драйвері.");
+                }
+                else
+                {
+                    // Legacy flat-PalmConfig file - it never had Pointer
+                    // data, so the Pointer tab's current values are left
+                    // untouched rather than being reset to something the
+                    // file never actually contained.
+                    var cfg = JsonSerializer.Deserialize<PalmConfig>(json);
+                    LoadConfigIntoSliders(cfg.Clamped());
+                    DrawPreview();
+                    SetBottomStatus($"Профіль (лише Palm, старий формат) завантажено: {dlg.FileName}. Натисніть «Застосувати», щоб зберегти на драйвері.");
+                }
             }
             catch (Exception ex)
             {
