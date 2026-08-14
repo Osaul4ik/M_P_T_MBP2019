@@ -9,7 +9,10 @@
         FontFamily="Segoe UI Variable Text, Segoe UI"
         FontSize="13"
         TextOptions.TextFormattingMode="Display"
-        TextOptions.TextRenderingMode="ClearType">
+        TextOptions.TextRenderingMode="ClearType"
+        ToolTipService.InitialShowDelay="700"
+        ToolTipService.ShowDuration="20000"
+        ToolTipService.BetweenShowDelay="250">
 
     <Window.Resources>
 
@@ -680,25 +683,25 @@
                         </GroupBox.Header>
                         <StackPanel>
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Top"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Top" ToolTip="Top edge rejection zone. New contacts appearing inside this percentage of the touchpad height are treated as palm immediately. Increase it to reject more accidental edge contacts; decrease it to preserve more edge taps."/>
                                 <TextBlock x:Name="LblEdgeTop" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlEdgeTop" Minimum="0" Maximum="400" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Left"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Left" ToolTip="Left edge rejection zone. New contacts inside this percentage of the touchpad width are treated as palm immediately. Increase it for stronger protection near the left edge; decrease it if edge touches are being rejected too often."/>
                                 <TextBlock x:Name="LblEdgeLeft" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlEdgeLeft" Minimum="0" Maximum="400" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Right"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Right" ToolTip="Right edge rejection zone. New contacts inside this percentage of the touchpad width are treated as palm immediately. Increase it for stronger protection near the right edge; decrease it if edge touches are being rejected too often."/>
                                 <TextBlock x:Name="LblEdgeRight" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlEdgeRight" Minimum="0" Maximum="400" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Bottom"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Bottom" ToolTip="Bottom edge rejection zone. New contacts appearing inside this percentage of the touchpad height are treated as palm immediately. Increase it for stronger protection near the bottom edge; decrease it to keep more bottom-edge contacts."/>
                                 <TextBlock x:Name="LblEdgeBottom" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlEdgeBottom" Minimum="0" Maximum="400" ValueChanged="Slider_Changed"/>
@@ -717,31 +720,31 @@
                         </GroupBox.Header>
                         <StackPanel>
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Large Major (hard reject)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Large Major (hard reject)" ToolTip="Hard palm rejection threshold based on the contact major axis. Contacts at or above this size receive a strong palm penalty/rejection. Increase it to reject only very large contacts; decrease it to reject large contacts earlier."/>
                                 <TextBlock x:Name="LblLargeMajor" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlLargeMajor" Minimum="50" Maximum="800" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Large Ratio, Major/Minor ×100"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Large Ratio, Major/Minor ×100" ToolTip="Shape-ratio threshold used to identify broad palm-like contacts. The value represents Major/Minor multiplied by 100. Higher values require a more elongated contact before this test activates; lower values make the test more sensitive."/>
                                 <TextBlock x:Name="LblLargeRatio" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlLargeRatio" Minimum="100" Maximum="500" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Score Threshold"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Score Threshold" ToolTip="Minimum accumulated palm score required for the contact to be classified as palm. Increase it to make palm rejection more conservative; decrease it to reject suspicious contacts more aggressively."/>
                                 <TextBlock x:Name="LblScoreThresh" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlScoreThresh" Minimum="5" Maximum="150" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Minimum Major"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Minimum Major" ToolTip="Minimum contact major axis used by palm heuristics. Smaller contacts are excluded from this test. Increase it to ignore more small finger contacts; decrease it to let smaller contacts participate in the heuristic."/>
                                 <TextBlock x:Name="LblMinMajor" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlMinMajor" Minimum="0" Maximum="300" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Minimum Minor"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Minimum Minor" ToolTip="Minimum contact minor axis used by palm heuristics. Smaller contacts are excluded from this test. Increase it to ignore very narrow contacts; decrease it to include narrower contacts."/>
                                 <TextBlock x:Name="LblMinMinor" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlMinMinor" Minimum="0" Maximum="300" ValueChanged="Slider_Changed"/>
@@ -757,25 +760,25 @@
                         </GroupBox.Header>
                         <StackPanel>
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Major (finger size)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Major (finger size)" ToolTip="Test contact major axis used only by the Palm preview tool. It does not change the driver. Increase it to simulate a larger contact."/>
                                 <TextBlock x:Name="LblTestMajor" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlTestMajor" Minimum="0" Maximum="600" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Minor (finger width)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Minor (finger width)" ToolTip="Test contact minor axis used only by the Palm preview tool. It does not change the driver. Increase it to simulate a wider contact."/>
                                 <TextBlock x:Name="LblTestMinor" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlTestMinor" Minimum="0" Maximum="600" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="X position (0=left, 100=right)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="X position (0=left, 100=right)" ToolTip="Horizontal position of the simulated contact in the Palm preview. 0 is the left edge and 100 is the right edge."/>
                                 <TextBlock x:Name="LblTestX" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlTestX" Minimum="0" Maximum="100" Value="50" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Y position (0=top, 100=bottom)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Y position (0=top, 100=bottom)" ToolTip="Vertical position of the simulated contact in the Palm preview. 0 is the top edge and 100 is the bottom edge."/>
                                 <TextBlock x:Name="LblTestY" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlTestY" Minimum="0" Maximum="100" Value="50" ValueChanged="Slider_Changed"/>
@@ -803,12 +806,12 @@
                                 </GroupBox.Header>
                                 <StackPanel>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Scroll speed"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Scroll speed" ToolTip="Base two-finger scroll scale expressed as a percentage. 100% is the neutral scale; lower values make scrolling slower and higher values make it faster."/>
                                         <TextBlock x:Name="LblScrollSpeed" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollSpeed" Minimum="20" Maximum="200" ValueChanged="ScrollSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Smoothing"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Smoothing" ToolTip="Two-finger scroll smoothing. Higher values blend more history into the current delta, reducing jitter and abrupt changes but making direction changes feel less immediate."/>
                                         <TextBlock x:Name="LblScrollSmoothing" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollSmoothing" Minimum="0" Maximum="100" ValueChanged="ScrollSlider_Changed"/>
@@ -824,37 +827,37 @@
                                 </GroupBox.Header>
                                 <StackPanel>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast movement speed"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast movement speed" ToolTip="Additional scroll scale used while two-finger movement is classified as fast. This is applied instead of the base speed for fast swipes. Higher values make quick swipes travel farther."/>
                                         <TextBlock x:Name="LblScrollFastSpeed" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollFastSpeed" Minimum="20" Maximum="250" ValueChanged="ScrollSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Dead zone"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Dead zone" ToolTip="Fallback/medium-speed scroll dead zone. Small motion below this threshold is ignored to suppress tiny sensor noise. Higher values reduce jitter but can make scrolling start later."/>
                                         <TextBlock x:Name="LblScrollDeadzone" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollDeadzone" Minimum="0" Maximum="8" ValueChanged="ScrollSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast movement threshold"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast movement threshold" ToolTip="Velocity above which pointer motion is classified as fast. Fast motion uses the fast dead zone behavior. Lower it to enter the fast bucket sooner; higher it to require a faster movement."/>
                                         <TextBlock x:Name="LblScrollFastVelocity" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollFastVelocity" Minimum="500" Maximum="4000" ValueChanged="ScrollSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Base scale numerator"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Base scale numerator" ToolTip="Numerator of the advanced base scroll multiplier. The effective base scale is Numerator / Denominator. Increase it to increase scroll distance per frame."/>
                                         <TextBlock x:Name="LblScrollScaleNum" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollScaleNum" Minimum="1" Maximum="400" ValueChanged="ScrollSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Base scale denominator"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Base scale denominator" ToolTip="Denominator of the advanced base scroll multiplier. The effective base scale is Numerator / Denominator. Increase it to reduce the resulting base scale when the numerator stays unchanged."/>
                                         <TextBlock x:Name="LblScrollScaleDen" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollScaleDen" Minimum="1" Maximum="400" ValueChanged="ScrollSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast scale numerator"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast scale numerator" ToolTip="Numerator of the advanced fast-scroll multiplier. The effective fast scale is Numerator / Denominator. Increase it to make fast swipes travel farther."/>
                                         <TextBlock x:Name="LblScrollScaleNumFast" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollScaleNumFast" Minimum="1" Maximum="400" ValueChanged="ScrollSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast scale denominator"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast scale denominator" ToolTip="Denominator of the advanced fast-scroll multiplier. The effective fast scale is Numerator / Denominator. Increase it to reduce fast-scroll gain when the numerator stays unchanged."/>
                                         <TextBlock x:Name="LblScrollScaleDenFast" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollScaleDenFast" Minimum="1" Maximum="400" ValueChanged="ScrollSlider_Changed"/>
@@ -877,12 +880,12 @@
                                 </GroupBox.Header>
                                 <StackPanel>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Cursor speed"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Cursor speed" ToolTip="Base pointer movement scale expressed as a percentage. 100% is neutral; lower values slow the cursor and higher values increase cursor travel for the same finger motion."/>
                                         <TextBlock x:Name="LblCursorSpeed" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorSpeed" Minimum="50" Maximum="200" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Smoothing"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Smoothing" ToolTip="Two-finger scroll smoothing. Higher values blend more history into the current delta, reducing jitter and abrupt changes but making direction changes feel less immediate."/>
                                         <TextBlock x:Name="LblCursorSmoothing" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorSmoothing" Minimum="0" Maximum="100" ValueChanged="PointerSlider_Changed"/>
@@ -898,42 +901,42 @@
                                 </GroupBox.Header>
                                 <StackPanel>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Dead zone"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Dead zone" ToolTip="Fallback/medium-speed scroll dead zone. Small motion below this threshold is ignored to suppress tiny sensor noise. Higher values reduce jitter but can make scrolling start later."/>
                                         <TextBlock x:Name="LblCursorDeadzone" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorDeadzone" Minimum="0" Maximum="8" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Slow movement threshold"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Slow movement threshold" ToolTip="Velocity below which pointer motion is classified as slow. Slow motion uses the slow dead zone and slow-motion smoothing rules. Increase it to classify more motion as slow."/>
                                         <TextBlock x:Name="LblCursorSlowVelocity" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorSlowVelocity" Minimum="20" Maximum="300" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast movement threshold"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast movement threshold" ToolTip="Velocity above which pointer motion is classified as fast. Fast motion uses the fast dead zone behavior. Lower it to enter the fast bucket sooner; higher it to require a faster movement."/>
                                         <TextBlock x:Name="LblCursorFastVelocity" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorFastVelocity" Minimum="200" Maximum="2000" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Slow dead zone"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Slow dead zone" ToolTip="Dead zone used for slow pointer movement. Small motion below this value is suppressed to remove stationary-hand jitter. Higher values feel steadier but can delay the start of very small movements."/>
                                         <TextBlock x:Name="LblCursorDeadzoneSlow" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorDeadzoneSlow" Minimum="0" Maximum="8" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast dead zone"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast dead zone" ToolTip="Dead zone used for fast pointer movement. It is commonly kept low or zero so fast pointer movement does not feel delayed. Increase only if fast motion shows unwanted noise."/>
                                         <TextBlock x:Name="LblCursorDeadzoneFast" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorDeadzoneFast" Minimum="0" Maximum="8" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Smoothing denominator"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Smoothing denominator" ToolTip="Denominator used by the pointer smoothing filter. It is part of the fixed-point smoothing formula. Changing it changes the weight scale of the smoothing calculation and should be treated as an advanced tuning parameter."/>
                                         <TextBlock x:Name="LblSmoothingAlphaDen" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlSmoothingAlphaDen" Minimum="1" Maximum="16" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Slow smoothing numerator"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Slow smoothing numerator" ToolTip="Numerator used by the smoothing filter for slow/near-stationary movement. Higher values increase the influence of the smoothing path and reduce jitter; lower values preserve faster response."/>
                                         <TextBlock x:Name="LblSmoothingAlphaNumSlow" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlSmoothingAlphaNumSlow" Minimum="1" Maximum="16" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Force touch threshold"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Force touch threshold" ToolTip="Pressure threshold used to recognize a Force Touch event. Increase it to require a harder press; decrease it to trigger Force Touch with less pressure."/>
                                         <TextBlock x:Name="LblForceTapThreshold" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlForceTapThreshold" Minimum="200" Maximum="400" ValueChanged="PointerSlider_Changed"/>
