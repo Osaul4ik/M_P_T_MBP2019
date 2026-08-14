@@ -93,22 +93,30 @@ typedef struct _AMT_PALM_CONFIG
 typedef struct _AMT_POINTER_CONFIG
 {
     ULONG StructVersion;   // AMT_POINTER_CONFIG_VERSION - bump on layout change
-
-    // Force Tap pressure threshold, raw ADC pressure units - same scale as
-    // RAW_CONTACT.Pressure (~0-300). A press whose peak pressure exceeds
-    // this while click arbitration is still PENDING resolves to a
-    // force-touch click on release instead of an ordinary click. Lower =
-    // easier to trigger (lighter press needed).
     ULONG ForceTapThreshold;
-
-    // What a qualifying Force Tap synthesizes on release. One of the
-    // AMT_POINTER_ACTION_* values below.
     ULONG ForceTapAction;
 
-    ULONG Reserved[5];      // future growth, keep struct size stable
+    // Cursor motion tuning. Percent values use 100 as the current/default
+    // behavior. CursorSmoothingPercent: 0 = raw, 100 = strongest smoothing.
+    ULONG CursorSmoothingPercent;
+    ULONG CursorSpeedPercent;
+    ULONG CursorDeadzone;
+    ULONG CursorSlowVelocity;
+    ULONG CursorFastVelocity;
 } AMT_POINTER_CONFIG, *PAMT_POINTER_CONFIG;
 
-#define AMT_POINTER_CONFIG_VERSION 1
+#define AMT_POINTER_CONFIG_VERSION 2
+
+#define AMT_POINTER_SMOOTH_MIN       0
+#define AMT_POINTER_SMOOTH_MAX       100
+#define AMT_POINTER_SPEED_MIN        50
+#define AMT_POINTER_SPEED_MAX        200
+#define AMT_POINTER_DEADZONE_MIN     0
+#define AMT_POINTER_DEADZONE_MAX     8
+#define AMT_POINTER_SLOW_VEL_MIN     20
+#define AMT_POINTER_SLOW_VEL_MAX     300
+#define AMT_POINTER_FAST_VEL_MIN     200
+#define AMT_POINTER_FAST_VEL_MAX     2000
 
 // ForceTapAction values.
 #define AMT_POINTER_ACTION_CONTEXT_MENU 0   // synthetic right-click (Button2)
@@ -122,10 +130,14 @@ typedef struct _AMT_POINTER_CONFIG
 // runtime-tunable.
 #define AMT_POINTER_CONFIG_DEFAULT_INIT                                    \
 {                                                                            \
-    /* StructVersion    */ AMT_POINTER_CONFIG_VERSION,                     \
-    /* ForceTapThreshold*/ 240,                                            \
-    /* ForceTapAction   */ AMT_POINTER_ACTION_CONTEXT_MENU,                \
-    /* Reserved         */ { 0, 0, 0, 0, 0 }                                \
+    AMT_POINTER_CONFIG_VERSION,                                             \
+    240,                                                                    \
+    AMT_POINTER_ACTION_CONTEXT_MENU,                                        \
+    0,                                                                      \
+    100,                                                                    \
+    1,                                                                      \
+    110,                                                                    \
+    700                                                                     \
 }
 
 // Sane clamp range - raw pressure realistically spans ~0-300, so keep the
@@ -226,6 +238,48 @@ typedef struct _AMT_LIVE_FRAME
 // AMT_POINTER_CONFIG_DEFAULT_INIT. No input/output buffer.
 #define IOCTL_AMT_PTP_RESET_POINTER_CONFIG \
     CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 8, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define IOCTL_AMT_PTP_GET_SCROLL_CONFIG \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 9, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define IOCTL_AMT_PTP_SET_SCROLL_CONFIG \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 10, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define IOCTL_AMT_PTP_RESET_SCROLL_CONFIG \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 11, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+typedef struct _AMT_SCROLL_CONFIG
+{
+    ULONG StructVersion;
+    ULONG SpeedPercent;
+    ULONG FastSpeedPercent;
+    ULONG SmoothingPercent;
+    ULONG Deadzone;
+    ULONG FastVelocity;
+    ULONG Reserved[2];
+} AMT_SCROLL_CONFIG, *PAMT_SCROLL_CONFIG;
+
+#define AMT_SCROLL_CONFIG_VERSION 1
+#define AMT_SCROLL_SPEED_MIN          20
+#define AMT_SCROLL_SPEED_MAX          200
+#define AMT_SCROLL_FAST_SPEED_MIN     20
+#define AMT_SCROLL_FAST_SPEED_MAX     250
+#define AMT_SCROLL_SMOOTH_MIN         0
+#define AMT_SCROLL_SMOOTH_MAX         100
+#define AMT_SCROLL_DEADZONE_MIN       0
+#define AMT_SCROLL_DEADZONE_MAX       8
+#define AMT_SCROLL_FAST_VEL_MIN       500
+#define AMT_SCROLL_FAST_VEL_MAX       4000
+#define AMT_SCROLL_CONFIG_DEFAULT_INIT \
+{ \
+    AMT_SCROLL_CONFIG_VERSION, \
+    60, \
+    100, \
+    0, \
+    1, \
+    1600, \
+    { 0, 0 } \
+}
 
 typedef struct _AMT_PAD_GEOMETRY
 {

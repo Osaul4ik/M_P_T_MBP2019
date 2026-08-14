@@ -90,6 +90,13 @@ namespace AmtPtpConfigGui.Native
                 MethodBuffered,
                 FileAnyAccess);
 
+        public static readonly uint IoctlGetScrollConfig =
+            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 9, MethodBuffered, FileAnyAccess);
+        public static readonly uint IoctlSetScrollConfig =
+            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 10, MethodBuffered, FileAnyAccess);
+        public static readonly uint IoctlResetScrollConfig =
+            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 11, MethodBuffered, FileAnyAccess);
+
         private const string ControlDevicePath = @"\\.\AmtPtpDeviceUsbKm";
 
         private const uint GenericRead = 0x80000000;
@@ -261,6 +268,28 @@ namespace AmtPtpConfigGui.Native
 
             // Driver doesn't echo a buffer back for RESET - just re-fetch.
             return TryGetPointerConfig(out applied);
+        }
+
+        public bool TryGetScrollConfig(out ScrollConfig config)
+        {
+            config = ScrollConfig.Default;
+            if (!IsConnected) return false;
+            return TryIoctl(IoctlGetScrollConfig, null, ref config);
+        }
+
+        public bool TrySetScrollConfig(ScrollConfig request, out ScrollConfig applied)
+        {
+            applied = request;
+            if (!IsConnected) return false;
+            return TryIoctl(IoctlSetScrollConfig, (ScrollConfig?)request, ref applied);
+        }
+
+        public bool TryResetScrollConfig(out ScrollConfig applied)
+        {
+            applied = ScrollConfig.Default;
+            if (!IsConnected) return false;
+            bool ok = DeviceIoControl(_handle!, IoctlResetScrollConfig, IntPtr.Zero, 0, IntPtr.Zero, 0, out _, IntPtr.Zero);
+            return ok && TryGetScrollConfig(out applied);
         }
 
         public bool TryGetPadGeometry(

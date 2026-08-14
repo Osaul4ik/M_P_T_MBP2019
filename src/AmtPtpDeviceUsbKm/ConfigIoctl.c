@@ -50,18 +50,27 @@ VOID
 AmtPointerConfigClamp(_Inout_ PAMT_POINTER_CONFIG Config)
 {
     Config->StructVersion = AMT_POINTER_CONFIG_VERSION;
-
-    Config->ForceTapThreshold = AmtClampULong(
-        Config->ForceTapThreshold, AMT_POINTER_THRESHOLD_MIN, AMT_POINTER_THRESHOLD_MAX);
-
-    // An out-of-range/corrupt action (e.g. a stale registry value from a
-    // newer GUI build) falls back to the original always-right-click
-    // behavior rather than being left as an unrecognized number that every
-    // switch statement downstream would have to guard against separately.
-    if (Config->ForceTapAction > AMT_POINTER_ACTION_MAX) {
+    Config->ForceTapThreshold = AmtClampULong(Config->ForceTapThreshold, AMT_POINTER_THRESHOLD_MIN, AMT_POINTER_THRESHOLD_MAX);
+    if (Config->ForceTapAction > AMT_POINTER_ACTION_MAX)
         Config->ForceTapAction = AMT_POINTER_ACTION_CONTEXT_MENU;
-    }
+    Config->CursorSmoothingPercent = AmtClampULong(Config->CursorSmoothingPercent, AMT_POINTER_SMOOTH_MIN, AMT_POINTER_SMOOTH_MAX);
+    Config->CursorSpeedPercent = AmtClampULong(Config->CursorSpeedPercent, AMT_POINTER_SPEED_MIN, AMT_POINTER_SPEED_MAX);
+    Config->CursorDeadzone = AmtClampULong(Config->CursorDeadzone, AMT_POINTER_DEADZONE_MIN, AMT_POINTER_DEADZONE_MAX);
+    Config->CursorSlowVelocity = AmtClampULong(Config->CursorSlowVelocity, AMT_POINTER_SLOW_VEL_MIN, AMT_POINTER_SLOW_VEL_MAX);
+    Config->CursorFastVelocity = AmtClampULong(Config->CursorFastVelocity, AMT_POINTER_FAST_VEL_MIN, AMT_POINTER_FAST_VEL_MAX);
+    if (Config->CursorFastVelocity <= Config->CursorSlowVelocity)
+        Config->CursorFastVelocity = Config->CursorSlowVelocity + 1;
+}
 
+VOID
+AmtScrollConfigClamp(_Inout_ PAMT_SCROLL_CONFIG Config)
+{
+    Config->StructVersion = AMT_SCROLL_CONFIG_VERSION;
+    Config->SpeedPercent = AmtClampULong(Config->SpeedPercent, AMT_SCROLL_SPEED_MIN, AMT_SCROLL_SPEED_MAX);
+    Config->FastSpeedPercent = AmtClampULong(Config->FastSpeedPercent, AMT_SCROLL_FAST_SPEED_MIN, AMT_SCROLL_FAST_SPEED_MAX);
+    Config->SmoothingPercent = AmtClampULong(Config->SmoothingPercent, AMT_SCROLL_SMOOTH_MIN, AMT_SCROLL_SMOOTH_MAX);
+    Config->Deadzone = AmtClampULong(Config->Deadzone, AMT_SCROLL_DEADZONE_MIN, AMT_SCROLL_DEADZONE_MAX);
+    Config->FastVelocity = AmtClampULong(Config->FastVelocity, AMT_SCROLL_FAST_VEL_MIN, AMT_SCROLL_FAST_VEL_MAX);
     RtlZeroMemory(Config->Reserved, sizeof(Config->Reserved));
 }
 
@@ -196,6 +205,11 @@ AmtPointerConfigLoadFromRegistry(
 
     AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETAP_THRESHOLD, &Config->ForceTapThreshold);
     AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETAP_ACTION,    &Config->ForceTapAction);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_SMOOTH,      &Config->CursorSmoothingPercent);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_SPEED,       &Config->CursorSpeedPercent);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_DEADZONE,    &Config->CursorDeadzone);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_SLOW_VEL,    &Config->CursorSlowVelocity);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_FAST_VEL,    &Config->CursorFastVelocity);
 
     WdfRegistryClose(key);
 
@@ -224,7 +238,44 @@ AmtPointerConfigSaveToRegistry(
 
     AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETAP_THRESHOLD, Config->ForceTapThreshold);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETAP_ACTION,    Config->ForceTapAction);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_SMOOTH,      Config->CursorSmoothingPercent);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_SPEED,       Config->CursorSpeedPercent);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_DEADZONE,    Config->CursorDeadzone);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_SLOW_VEL,    Config->CursorSlowVelocity);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_FAST_VEL,    Config->CursorFastVelocity);
 
+    WdfRegistryClose(key);
+}
+
+_IRQL_requires_(PASSIVE_LEVEL)
+VOID
+AmtScrollConfigLoadFromRegistry(_In_ WDFDEVICE Device, _Inout_ PAMT_SCROLL_CONFIG Config)
+{
+    WDFKEY key;
+    NTSTATUS status;
+    PAGED_CODE();
+    status = WdfDeviceOpenRegistryKey(Device, PLUGPLAY_REGKEY_DEVICE, KEY_READ, WDF_NO_OBJECT_ATTRIBUTES, &key);
+    if (!NT_SUCCESS(status)) return;
+    AmtRegistryReadDword(key, AMT_REG_VALUE_SCROLL_SPEED,      &Config->SpeedPercent);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_SCROLL_FAST_SPEED, &Config->FastSpeedPercent);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_SCROLL_SMOOTH,     &Config->SmoothingPercent);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_SCROLL_DEADZONE,   &Config->Deadzone);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_SCROLL_FAST_VEL,   &Config->FastVelocity);
+    WdfRegistryClose(key);
+    AmtScrollConfigClamp(Config);
+}
+
+VOID
+AmtScrollConfigSaveToRegistry(_In_ WDFDEVICE Device, _In_ const AMT_SCROLL_CONFIG* Config)
+{
+    WDFKEY key;
+    NTSTATUS status = WdfDeviceOpenRegistryKey(Device, PLUGPLAY_REGKEY_DEVICE, KEY_WRITE, WDF_NO_OBJECT_ATTRIBUTES, &key);
+    if (!NT_SUCCESS(status)) return;
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_SCROLL_SPEED,      Config->SpeedPercent);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_SCROLL_FAST_SPEED, Config->FastSpeedPercent);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_SCROLL_SMOOTH,     Config->SmoothingPercent);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_SCROLL_DEADZONE,   Config->Deadzone);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_SCROLL_FAST_VEL,   Config->FastVelocity);
     WdfRegistryClose(key);
 }
 
@@ -462,6 +513,65 @@ AmtPtpResetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     return STATUS_SUCCESS;
 }
 
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+AmtPtpGetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
+{
+    NTSTATUS status;
+    PDEVICE_CONTEXT ctx = DeviceGetContext(Device);
+    PAMT_SCROLL_CONFIG outConfig;
+    size_t outLen = 0;
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(AMT_SCROLL_CONFIG), (PVOID*)&outConfig, &outLen);
+    if (!NT_SUCCESS(status)) return status;
+    WdfSpinLockAcquire(ctx->StateLock);
+    *outConfig = ctx->ScrollConfig;
+    WdfSpinLockRelease(ctx->StateLock);
+    WdfRequestSetInformation(Request, sizeof(AMT_SCROLL_CONFIG));
+    return STATUS_SUCCESS;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+AmtPtpSetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
+{
+    NTSTATUS status;
+    PDEVICE_CONTEXT ctx = DeviceGetContext(Device);
+    PAMT_SCROLL_CONFIG inConfig;
+    size_t inLen = 0;
+    AMT_SCROLL_CONFIG clamped;
+    status = WdfRequestRetrieveInputBuffer(Request, sizeof(AMT_SCROLL_CONFIG), (PVOID*)&inConfig, &inLen);
+    if (!NT_SUCCESS(status)) return status;
+    clamped = *inConfig;
+    AmtScrollConfigClamp(&clamped);
+    WdfSpinLockAcquire(ctx->StateLock);
+    ctx->ScrollConfig = clamped;
+    WdfSpinLockRelease(ctx->StateLock);
+    AmtScrollConfigSaveToRegistry(Device, &clamped);
+    {
+        PAMT_SCROLL_CONFIG outConfig;
+        size_t outLen = 0;
+        if (NT_SUCCESS(WdfRequestRetrieveOutputBuffer(Request, sizeof(AMT_SCROLL_CONFIG), (PVOID*)&outConfig, &outLen))) {
+            *outConfig = clamped;
+            WdfRequestSetInformation(Request, sizeof(AMT_SCROLL_CONFIG));
+        }
+    }
+    return STATUS_SUCCESS;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+AmtPtpResetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
+{
+    PDEVICE_CONTEXT ctx = DeviceGetContext(Device);
+    AMT_SCROLL_CONFIG defaults = AMT_SCROLL_CONFIG_DEFAULT_INIT;
+    UNREFERENCED_PARAMETER(Request);
+    WdfSpinLockAcquire(ctx->StateLock);
+    ctx->ScrollConfig = defaults;
+    WdfSpinLockRelease(ctx->StateLock);
+    AmtScrollConfigSaveToRegistry(Device, &defaults);
+    return STATUS_SUCCESS;
+}
+
 // ----------------------------------------------------------------------------
 // Control-device dispatch - called for IOCTLs arriving through
 // \\.\\AmtPtpDeviceUsbKm. The control device itself has no DEVICE_CONTEXT;
@@ -522,6 +632,18 @@ AmtPtpConfigControlEvtIoDeviceControl(
 
     case IOCTL_AMT_PTP_RESET_POINTER_CONFIG:
         status = AmtPtpResetPointerConfig(targetDevice, Request);
+        break;
+
+    case IOCTL_AMT_PTP_GET_SCROLL_CONFIG:
+        status = AmtPtpGetScrollConfig(targetDevice, Request);
+        break;
+
+    case IOCTL_AMT_PTP_SET_SCROLL_CONFIG:
+        status = AmtPtpSetScrollConfig(targetDevice, Request);
+        break;
+
+    case IOCTL_AMT_PTP_RESET_SCROLL_CONFIG:
+        status = AmtPtpResetScrollConfig(targetDevice, Request);
         break;
 
     case IOCTL_AMT_PTP_SET_LIVE_ENABLED:

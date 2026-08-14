@@ -59,6 +59,8 @@ typedef struct DECLSPEC_ALIGN(64) _ACTIVE_CONTACT
     // Carries fractional scroll error across frames within one gesture.
     LONG ScrollRemX;
     LONG ScrollRemY;
+    LONG ScrollFilteredX;
+    LONG ScrollFilteredY;
 
     // ---- Matching-hint fields. NOT identity. ----
     USHORT   LastSlotHint;    // hw slot matched to last frame; speeds up matching
@@ -179,6 +181,8 @@ AmtContactUpdate(
     _In_    LONGLONG        PerfFrequencyHz,
     _In_    BOOLEAN         aliveCountIsOne,
     _In_    BOOLEAN         gestureActive,
+    _In_    const AMT_POINTER_CONFIG* PointerConfig,
+    _In_    const AMT_SCROLL_CONFIG* ScrollConfig,
     _Out_   USHORT*         OutX,
     _Out_   USHORT*         OutY
 );

@@ -244,13 +244,14 @@ namespace AmtPtpConfigGui
                 }
 
                 if (_device.TryGetPointerConfig(out var pointerCfg))
-                {
                     LoadPointerConfigIntoControls(pointerCfg);
-                }
                 else
-                {
                     LoadPointerConfigIntoControls(PointerConfig.Default);
-                }
+
+                if (_device.TryGetScrollConfig(out var scrollCfg))
+                    LoadScrollConfigIntoControls(scrollCfg);
+                else
+                    LoadScrollConfigIntoControls(ScrollConfig.Default);
 
                 if (_device.TryGetPadGeometry(out var geo))
                 {
@@ -269,6 +270,7 @@ namespace AmtPtpConfigGui
                 StatusText.Text = "Пристрій не знайдено — режим попереднього перегляду";
                 LoadConfigIntoSliders(PalmConfig.Default);
                 LoadPointerConfigIntoControls(PointerConfig.Default);
+                LoadScrollConfigIntoControls(ScrollConfig.Default);
                 _geometry = PadGeometry.Fallback;
                 _geometryFromDevice = false;
 
@@ -771,9 +773,7 @@ namespace AmtPtpConfigGui
         private static string FormatPermille(double permille) => $"{permille / 10.0:0.0}%";
 
         // ---------------------------------------------------------------
-        // Pointer tab <-> PointerConfig plumbing (Force Tap threshold + action)
-        // ---------------------------------------------------------------
-
+        // Pointer tab <-> PointerConfig plumbing
         private bool _suppressPointerEvents;
 
         private void LoadPointerConfigIntoControls(PointerConfig cfg)
@@ -781,7 +781,13 @@ namespace AmtPtpConfigGui
             _suppressPointerEvents = true;
             try
             {
+                cfg = cfg.Clamped();
                 SlForceTapThreshold.Value = cfg.ForceTapThreshold;
+                SlCursorSmoothing.Value = cfg.CursorSmoothingPercent;
+                SlCursorSpeed.Value = cfg.CursorSpeedPercent;
+                SlCursorDeadzone.Value = cfg.CursorDeadzone;
+                SlCursorSlowVelocity.Value = cfg.CursorSlowVelocity;
+                SlCursorFastVelocity.Value = cfg.CursorFastVelocity;
 
                 RadioButton selected = cfg.ForceTapAction switch
                 {
@@ -793,17 +799,19 @@ namespace AmtPtpConfigGui
                 RbActionMiddleClick.IsChecked = ReferenceEquals(selected, RbActionMiddleClick);
                 RbActionDoubleClick.IsChecked = ReferenceEquals(selected, RbActionDoubleClick);
             }
-            finally
-            {
-                _suppressPointerEvents = false;
-            }
-            UpdatePointerLabel();
+            finally { _suppressPointerEvents = false; }
+            UpdatePointerLabels();
         }
 
         private PointerConfig ReadPointerConfigFromControls()
         {
             var c = PointerConfig.Default;
             c.ForceTapThreshold = (uint)SlForceTapThreshold.Value;
+            c.CursorSmoothingPercent = (uint)SlCursorSmoothing.Value;
+            c.CursorSpeedPercent = (uint)SlCursorSpeed.Value;
+            c.CursorDeadzone = (uint)SlCursorDeadzone.Value;
+            c.CursorSlowVelocity = (uint)SlCursorSlowVelocity.Value;
+            c.CursorFastVelocity = (uint)SlCursorFastVelocity.Value;
             c.ForceTapAction =
                 RbActionMiddleClick.IsChecked == true ? PointerConfig.ActionMiddleClick :
                 RbActionDoubleClick.IsChecked == true ? PointerConfig.ActionDoubleClick :
@@ -811,59 +819,72 @@ namespace AmtPtpConfigGui
             return c.Clamped();
         }
 
-        private void UpdatePointerLabel()
+        private void UpdatePointerLabels()
         {
-            if (LblForceTapThreshold != null)
-                LblForceTapThreshold.Text = $"{SlForceTapThreshold.Value:0}";
+            if (LblForceTapThreshold == null) return;
+            LblForceTapThreshold.Text = $"{SlForceTapThreshold.Value:0}";
+            LblCursorSmoothing.Text = $"{SlCursorSmoothing.Value:0}%";
+            LblCursorSpeed.Text = $"{SlCursorSpeed.Value:0}%";
+            LblCursorDeadzone.Text = $"{SlCursorDeadzone.Value:0}";
+            LblCursorSlowVelocity.Text = $"{SlCursorSlowVelocity.Value:0}";
+            LblCursorFastVelocity.Text = $"{SlCursorFastVelocity.Value:0}";
         }
 
         private void PointerSlider_Changed(object sender, RoutedEventArgs e)
         {
             if (!_uiReady || _suppressPointerEvents) return;
-            UpdatePointerLabel();
+            UpdatePointerLabels();
         }
 
         private void PointerAction_Changed(object sender, RoutedEventArgs e)
         {
             if (!_uiReady || _suppressPointerEvents) return;
-            // No live preview for the action choice — nothing else to refresh here.
         }
 
-        private void PointerApply_Click(object sender, RoutedEventArgs e)
+        // Scroll tab <-> ScrollConfig plumbing
+        private bool _suppressScrollEvents;
+
+        private void LoadScrollConfigIntoControls(ScrollConfig cfg)
         {
-            var requested = ReadPointerConfigFromControls();
-
-            if (!_device.IsConnected)
+            _suppressScrollEvents = true;
+            try
             {
-                SetBottomStatus("Пристрій не підключено — налаштування вказівника не збережено на драйвері (лише попередній перегляд).");
-                return;
+                cfg = cfg.Clamped();
+                SlScrollSpeed.Value = cfg.SpeedPercent;
+                SlScrollFastSpeed.Value = cfg.FastSpeedPercent;
+                SlScrollSmoothing.Value = cfg.SmoothingPercent;
+                SlScrollDeadzone.Value = cfg.Deadzone;
+                SlScrollFastVelocity.Value = cfg.FastVelocity;
             }
-
-            if (_device.TrySetPointerConfig(requested, out var applied))
-            {
-                LoadPointerConfigIntoControls(applied);
-                SetBottomStatus("Налаштування вказівника застосовано та збережено в реєстрі драйвера.");
-            }
-            else
-            {
-                SetBottomStatus("Не вдалося застосувати налаштування вказівника (помилка DeviceIoControl).");
-            }
+            finally { _suppressScrollEvents = false; }
+            UpdateScrollLabels();
         }
 
-        private void PointerResetDefaults_Click(object sender, RoutedEventArgs e)
+        private ScrollConfig ReadScrollConfigFromControls()
         {
-            if (_device.IsConnected && _device.TryResetPointerConfig(out var applied))
-            {
-                LoadPointerConfigIntoControls(applied);
-                SetBottomStatus("Налаштування вказівника скинуто до значень за замовчуванням на драйвері.");
-            }
-            else
-            {
-                LoadPointerConfigIntoControls(PointerConfig.Default);
-                SetBottomStatus(_device.IsConnected
-                    ? "Не вдалося скинути налаштування вказівника на драйвері — показано локальні значення за замовчуванням."
-                    : "Показано значення за замовчуванням (пристрій не підключено).");
-            }
+            var c = ScrollConfig.Default;
+            c.SpeedPercent = (uint)SlScrollSpeed.Value;
+            c.FastSpeedPercent = (uint)SlScrollFastSpeed.Value;
+            c.SmoothingPercent = (uint)SlScrollSmoothing.Value;
+            c.Deadzone = (uint)SlScrollDeadzone.Value;
+            c.FastVelocity = (uint)SlScrollFastVelocity.Value;
+            return c.Clamped();
+        }
+
+        private void UpdateScrollLabels()
+        {
+            if (LblScrollSpeed == null) return;
+            LblScrollSpeed.Text = $"{SlScrollSpeed.Value:0}%";
+            LblScrollFastSpeed.Text = $"{SlScrollFastSpeed.Value:0}%";
+            LblScrollSmoothing.Text = $"{SlScrollSmoothing.Value:0}%";
+            LblScrollDeadzone.Text = $"{SlScrollDeadzone.Value:0}";
+            LblScrollFastVelocity.Text = $"{SlScrollFastVelocity.Value:0}";
+        }
+
+        private void ScrollSlider_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!_uiReady || _suppressScrollEvents) return;
+            UpdateScrollLabels();
         }
 
         private void Slider_Changed(object sender, RoutedEventArgs e)
@@ -1100,10 +1121,11 @@ namespace AmtPtpConfigGui
         // sliders would keep showing the new values locally, but nothing
         // would actually reach the driver/registry, so they'd revert to
         // the old/default values the next time the GUI reconnects.
-        private void Apply_Click(object sender, RoutedEventArgs e)
+        private void Save_Click(object sender, RoutedEventArgs e)
         {
             var requestedPalm = ReadConfigFromSliders();
             var requestedPointer = ReadPointerConfigFromControls();
+            var requestedScroll = ReadScrollConfigFromControls();
 
             if (!_device.IsConnected)
             {
@@ -1119,61 +1141,40 @@ namespace AmtPtpConfigGui
             }
 
             bool pointerOk = _device.TrySetPointerConfig(requestedPointer, out var appliedPointer);
-            if (pointerOk)
-            {
-                LoadPointerConfigIntoControls(appliedPointer);
-            }
+            if (pointerOk) LoadPointerConfigIntoControls(appliedPointer);
 
-            if (palmOk && pointerOk)
-            {
-                SetBottomStatus("Застосовано та збережено в реєстрі драйвера (Palm + Pointer).");
-            }
-            else if (!palmOk && !pointerOk)
-            {
-                SetBottomStatus("Не вдалося застосувати налаштування (помилка DeviceIoControl).");
-            }
+            bool scrollOk = _device.TrySetScrollConfig(requestedScroll, out var appliedScroll);
+            if (scrollOk) LoadScrollConfigIntoControls(appliedScroll);
+
+            if (palmOk && pointerOk && scrollOk)
+                SetBottomStatus("Збережено в реєстрі драйвера (Palm + Scroll + Pointer).");
+            else if (!palmOk && !pointerOk && !scrollOk)
+                SetBottomStatus("Не вдалося зберегти налаштування (помилка DeviceIoControl).");
             else
-            {
-                SetBottomStatus(palmOk
-                    ? "Palm застосовано, але Pointer — ні (помилка DeviceIoControl)."
-                    : "Pointer застосовано, але Palm — ні (помилка DeviceIoControl).");
-            }
+                SetBottomStatus("Частину налаштувань не вдалося зберегти (помилка DeviceIoControl).");
         }
 
         private void ResetDefaults_Click(object sender, RoutedEventArgs e)
         {
-            // NOTE: can't use "_device.IsConnected && _device.TryReset...(out var x)"
-            // directly - with && short-circuiting, the compiler can't prove
-            // appliedPalm/appliedPointer are assigned by the time the later,
-            // separate "if (palmOk)" check reads them (CS0165), even though
-            // at runtime palmOk is only ever true when the out parameter was
-            // in fact assigned. Pre-initializing sidesteps that.
             var appliedPalm = PalmConfig.Default;
             bool palmOk = _device.IsConnected && _device.TryResetPalmConfig(out appliedPalm);
-            if (palmOk)
-                LoadConfigIntoSliders(appliedPalm);
-            else
-                LoadConfigIntoSliders(PalmConfig.Default);
+            LoadConfigIntoSliders(palmOk ? appliedPalm : PalmConfig.Default);
 
             var appliedPointer = PointerConfig.Default;
             bool pointerOk = _device.IsConnected && _device.TryResetPointerConfig(out appliedPointer);
-            if (pointerOk)
-                LoadPointerConfigIntoControls(appliedPointer);
-            else
-                LoadPointerConfigIntoControls(PointerConfig.Default);
+            LoadPointerConfigIntoControls(pointerOk ? appliedPointer : PointerConfig.Default);
 
-            if (palmOk && pointerOk)
-            {
-                SetBottomStatus("Скинуто до значень за замовчуванням на драйвері (Palm + Pointer).");
-            }
+            var appliedScroll = ScrollConfig.Default;
+            bool scrollOk = _device.IsConnected && _device.TryResetScrollConfig(out appliedScroll);
+            LoadScrollConfigIntoControls(scrollOk ? appliedScroll : ScrollConfig.Default);
+
+            if (palmOk && pointerOk && scrollOk)
+                SetBottomStatus("Скинуто до значень за замовчуванням (Palm + Scroll + Pointer).");
             else if (_device.IsConnected)
-            {
-                SetBottomStatus("Не вдалося повністю скинути на драйвері — показано локальні значення за замовчуванням.");
-            }
+                SetBottomStatus("Не вдалося повністю скинути налаштування на драйвері — показано значення за замовчуванням.");
             else
-            {
                 SetBottomStatus("Показано значення за замовчуванням (пристрій не підключено).");
-            }
+
             DrawPreview();
         }
 
@@ -1188,11 +1189,12 @@ namespace AmtPtpConfigGui
 
             var profile = AmtPtpProfile.FromCurrent(
                 ReadConfigFromSliders(),
-                ReadPointerConfigFromControls());
+                ReadPointerConfigFromControls(),
+                ReadScrollConfigFromControls());
 
             var json = JsonSerializer.Serialize(profile, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(dlg.FileName, json);
-            SetBottomStatus($"Профіль (Palm + Pointer) збережено: {dlg.FileName}");
+            SetBottomStatus($"Профіль (Palm + Scroll + Pointer) збережено: {dlg.FileName}");
         }
 
         private void LoadProfile_Click(object sender, RoutedEventArgs e)
@@ -1224,8 +1226,9 @@ namespace AmtPtpConfigGui
 
                     LoadConfigIntoSliders(profile.Palm.Clamped());
                     LoadPointerConfigIntoControls(profile.Pointer.Clamped());
+                    LoadScrollConfigIntoControls(profile.Scroll == null ? ScrollConfig.Default : profile.Scroll.Clamped());
                     DrawPreview();
-                    SetBottomStatus($"Профіль (Palm + Pointer) завантажено: {dlg.FileName}. Натисніть «Застосувати», щоб зберегти на драйвері.");
+                    SetBottomStatus($"Профіль (Palm + Scroll + Pointer) завантажено: {dlg.FileName}. Натисніть «Зберегти», щоб записати на драйвер.");
                 }
                 else
                 {
@@ -1236,7 +1239,7 @@ namespace AmtPtpConfigGui
                     var cfg = JsonSerializer.Deserialize<PalmConfig>(json);
                     LoadConfigIntoSliders(cfg.Clamped());
                     DrawPreview();
-                    SetBottomStatus($"Профіль (лише Palm, старий формат) завантажено: {dlg.FileName}. Натисніть «Застосувати», щоб зберегти на драйвері.");
+                    SetBottomStatus($"Профіль (лише Palm, старий формат) завантажено: {dlg.FileName}. Натисніть «Зберегти», щоб записати на драйвер.");
                 }
             }
             catch (Exception ex)

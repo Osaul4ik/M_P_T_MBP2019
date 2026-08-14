@@ -534,6 +534,7 @@ PTPCore_ProcessFrame(
                          cand->Major, cand->Minor, cand->Pressure,
                          cand->SlotIndex, NowQpc, pCtx->PerfFrequency.QuadPart,
                          (BOOLEAN)(aliveCount == 1), gestureThisFrame,
+                         &pCtx->PointerConfig, &pCtx->ScrollConfig,
                          &repX, &repY);
 
         // ARCHITECTURE FIX (PTP spec alignment): per the Windows Precision

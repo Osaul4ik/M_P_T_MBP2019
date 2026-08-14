@@ -100,6 +100,9 @@ typedef struct _DEVICE_CONTEXT
     // the GUI thread can't race a frame in flight.
     AMT_POINTER_CONFIG PointerConfig;
 
+    // Runtime-tunable two-finger scroll behavior.
+    AMT_SCROLL_CONFIG ScrollConfig;
+
     // TRUE only for trackpads whose packet format actually carries a
     // pressure reading (TYPE4/TYPE5 - see AppleDefinition.h). Derived once
     // from DeviceInfo->tp_type in EvtDevicePrepareHardware. TYPE1-3
@@ -315,6 +318,9 @@ NTSTATUS AmtPtpSetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
 NTSTATUS AmtPtpResetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+NTSTATUS AmtPtpGetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+NTSTATUS AmtPtpSetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+NTSTATUS AmtPtpResetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
 
 // Best-effort registry persistence under the device's driver-software key
 // (HKLM\SYSTEM\...\Enum\...\Device Parameters, via WdfDeviceOpenRegistryKey).
@@ -342,5 +348,8 @@ _IRQL_requires_max_(DISPATCH_LEVEL)
 VOID AmtPointerConfigSaveToRegistry(_In_ WDFDEVICE Device, _In_ const AMT_POINTER_CONFIG* Config);
 
 VOID AmtPointerConfigClamp(_Inout_ PAMT_POINTER_CONFIG Config);
+VOID AmtScrollConfigLoadFromRegistry(_In_ WDFDEVICE Device, _Inout_ PAMT_SCROLL_CONFIG Config);
+VOID AmtScrollConfigSaveToRegistry(_In_ WDFDEVICE Device, _In_ const AMT_SCROLL_CONFIG* Config);
+VOID AmtScrollConfigClamp(_Inout_ PAMT_SCROLL_CONFIG Config);
 
 EXTERN_C_END

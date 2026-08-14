@@ -2,8 +2,8 @@
 //
 // Implements the IOCTL_AMT_PTP_* control codes declared in Public.h:
 // GET/SET palm-rejection config, GET pad geometry, RESET palm config to
-// defaults, and the equivalent GET/SET/RESET trio for AMT_POINTER_CONFIG
-// (Force Tap threshold + action).
+// defaults, and the equivalent GET/SET/RESET trio for AMT_POINTER_CONFIG (Force Tap + cursor tuning), and
+// the equivalent GET/SET/RESET trio for AMT_SCROLL_CONFIG.
 // Declarations for the handler functions live in Device.h (next to the
 // other AmtPtpGet*/AmtPtpSet* HID handlers they sit beside in Queue.c).
 //
@@ -42,5 +42,16 @@ EXTERN_C_START
 // convention as the palm values above.
 #define AMT_REG_VALUE_FORCETAP_THRESHOLD L"PointerForceTapThreshold"
 #define AMT_REG_VALUE_FORCETAP_ACTION    L"PointerForceTapAction"
+#define AMT_REG_VALUE_CURSOR_SMOOTH      L"PointerCursorSmoothing"
+#define AMT_REG_VALUE_CURSOR_SPEED       L"PointerCursorSpeed"
+#define AMT_REG_VALUE_CURSOR_DEADZONE    L"PointerCursorDeadzone"
+#define AMT_REG_VALUE_CURSOR_SLOW_VEL    L"PointerCursorSlowVelocity"
+#define AMT_REG_VALUE_CURSOR_FAST_VEL    L"PointerCursorFastVelocity"
+
+#define AMT_REG_VALUE_SCROLL_SPEED       L"ScrollSpeed"
+#define AMT_REG_VALUE_SCROLL_FAST_SPEED  L"ScrollFastSpeed"
+#define AMT_REG_VALUE_SCROLL_SMOOTH      L"ScrollSmoothing"
+#define AMT_REG_VALUE_SCROLL_DEADZONE    L"ScrollDeadzone"
+#define AMT_REG_VALUE_SCROLL_FAST_VEL    L"ScrollFastVelocity"
 
 EXTERN_C_END

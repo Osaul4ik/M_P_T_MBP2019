@@ -2,51 +2,36 @@ using System.Runtime.InteropServices;
 
 namespace AmtPtpConfigGui.Native
 {
-    /// <summary>
-    /// Mirrors AMT_POINTER_CONFIG from src/AmtPtpDeviceUsbKm/Public.h byte-for-byte.
-    /// Every field is a plain uint (matches the kernel's ULONG), so there is
-    /// no padding on either x86 or x64 - Marshal.SizeOf(typeof(PointerConfig))
-    /// must equal sizeof(AMT_POINTER_CONFIG) in the driver (28 bytes: 7 * 4).
-    /// If you add a field on one side, add it on the other and keep them in
-    /// the same order.
-    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct PointerConfig
     {
         public uint StructVersion;
-
-        // Force Tap pressure threshold, raw ADC pressure units (~0-300).
         public uint ForceTapThreshold;
-
-        // One of the Action* constants below.
         public uint ForceTapAction;
+        public uint CursorSmoothingPercent;
+        public uint CursorSpeedPercent;
+        public uint CursorDeadzone;
+        public uint CursorSlowVelocity;
+        public uint CursorFastVelocity;
 
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 5)]
-        public uint[] Reserved;
-
-        public const uint CurrentVersion = 1;
-
-        // ForceTapAction values - must match AMT_POINTER_ACTION_* in Public.h.
-        public const uint ActionContextMenu = 0; // синтетичний правий клік
-        public const uint ActionMiddleClick = 1; // синтетична середня кнопка миші
-        public const uint ActionDoubleClick = 2; // синтетичний подвійний клік (відкриття)
-
-        // Sane clamp bounds - must match AMT_POINTER_THRESHOLD_*/ACTION_MAX in Public.h.
+        public const uint CurrentVersion = 2;
+        public const uint ActionContextMenu = 0;
+        public const uint ActionMiddleClick = 1;
+        public const uint ActionDoubleClick = 2;
         public const uint ThresholdMin = 200;
         public const uint ThresholdMax = 400;
         public const uint ActionMax = 2;
 
-        /// <summary>
-        /// Byte-for-byte the same values as AMT_POINTER_CONFIG_DEFAULT_INIT in
-        /// Public.h. Used when no device is connected (preview-only mode)
-        /// and as the fallback if a GET IOCTL ever fails after connecting.
-        /// </summary>
         public static PointerConfig Default => new PointerConfig
         {
             StructVersion = CurrentVersion,
             ForceTapThreshold = 240,
             ForceTapAction = ActionContextMenu,
-            Reserved = new uint[5],
+            CursorSmoothingPercent = 0,
+            CursorSpeedPercent = 100,
+            CursorDeadzone = 1,
+            CursorSlowVelocity = 110,
+            CursorFastVelocity = 700,
         };
 
         public PointerConfig Clamped()
@@ -54,9 +39,13 @@ namespace AmtPtpConfigGui.Native
             PointerConfig c = this;
             c.StructVersion = CurrentVersion;
             c.ForceTapThreshold = Clamp(c.ForceTapThreshold, ThresholdMin, ThresholdMax);
-            if (c.ForceTapAction > ActionMax)
-                c.ForceTapAction = ActionContextMenu;
-            c.Reserved ??= new uint[5];
+            if (c.ForceTapAction > ActionMax) c.ForceTapAction = ActionContextMenu;
+            c.CursorSmoothingPercent = Clamp(c.CursorSmoothingPercent, 0, 100);
+            c.CursorSpeedPercent = Clamp(c.CursorSpeedPercent, 50, 200);
+            c.CursorDeadzone = Clamp(c.CursorDeadzone, 0, 8);
+            c.CursorSlowVelocity = Clamp(c.CursorSlowVelocity, 20, 300);
+            c.CursorFastVelocity = Clamp(c.CursorFastVelocity, 200, 2000);
+            if (c.CursorFastVelocity <= c.CursorSlowVelocity) c.CursorFastVelocity = c.CursorSlowVelocity + 1;
             return c;
         }
 

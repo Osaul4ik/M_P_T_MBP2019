@@ -68,6 +68,8 @@ AmtContactEvaluateVelocity(
     _In_  LONGLONG DtQpcTicks,
     _In_  LONGLONG PerfFrequencyHz,
     _In_  LONGLONG FastThresholdUnitsPerSec,
+    _In_  LONGLONG        SlowThresholdUnitsPerSec,
+    _In_  LONGLONG        AlphaFastThresholdUnitsPerSec,
     _Out_ INT*     OutAlphaNum
 )
 {
@@ -84,7 +86,7 @@ AmtContactEvaluateVelocity(
     LONGLONG unitsPerSec = ((LONGLONG)distance * PerfFrequencyHz) / DtQpcTicks;
 
     CONTACT_VELOCITY_BUCKET bucket;
-    if (unitsPerSec <= VELOCITY_SLOW_UNITS_PER_SEC) {
+    if (unitsPerSec <= SlowThresholdUnitsPerSec) {
         bucket = VELOCITY_SLOW;
     } else if (unitsPerSec >= FastThresholdUnitsPerSec) {
         bucket = VELOCITY_FAST;
@@ -102,13 +104,13 @@ AmtContactEvaluateVelocity(
     // every path - the extra work here is a couple of compares plus a
     // division, and callers on the gesture-frame path simply don't read
     // the result afterward.
-    if (unitsPerSec <= VELOCITY_SLOW_UNITS_PER_SEC) {
+    if (unitsPerSec <= SlowThresholdUnitsPerSec) {
         *OutAlphaNum = ALPHA_NUM_MIN;
-    } else if (unitsPerSec >= VELOCITY_FAST_UNITS_PER_SEC) {
+    } else if (unitsPerSec >= AlphaFastThresholdUnitsPerSec) {
         *OutAlphaNum = ALPHA_NUM_MAX;
     } else {
-        LONGLONG span   = VELOCITY_FAST_UNITS_PER_SEC - VELOCITY_SLOW_UNITS_PER_SEC;
-        LONGLONG offset = unitsPerSec - VELOCITY_SLOW_UNITS_PER_SEC;
+        LONGLONG span   = AlphaFastThresholdUnitsPerSec - SlowThresholdUnitsPerSec;
+        LONGLONG offset = unitsPerSec - SlowThresholdUnitsPerSec;
         *OutAlphaNum = ALPHA_NUM_MIN +
                        (INT)(((ALPHA_NUM_MAX - ALPHA_NUM_MIN) * offset) / span);
     }
@@ -117,24 +119,20 @@ AmtContactEvaluateVelocity(
 }
 
 static inline INT
-AmtContactDeadzoneForVelocity(_In_ CONTACT_VELOCITY_BUCKET Velocity, _In_ BOOLEAN GestureActive)
+AmtContactDeadzoneForVelocity(
+    _In_ CONTACT_VELOCITY_BUCKET Velocity,
+    _In_ BOOLEAN GestureActive,
+    _In_ const AMT_POINTER_CONFIG* PointerConfig,
+    _In_ const AMT_SCROLL_CONFIG* ScrollConfig)
 {
-    if (GestureActive) {
-        // Scroll frames keep the original, small deadzone regardless of
-        // velocity bucket - a slow deliberate two-finger scroll must not
-        // go steppy. Only single-finger cursor movement (below) gets the
-        // larger tilt/small-lift deadzone.
-        return (Velocity == VELOCITY_FAST) ? XY_DEADZONE_UNITS_FAST
-                                            : XY_DEADZONE_UNITS;
-    }
+    if (GestureActive)
+        return (INT)ScrollConfig->Deadzone;
 
-    switch (Velocity) {
-    case VELOCITY_SLOW: return XY_DEADZONE_UNITS_SLOW;
-    case VELOCITY_FAST: return XY_DEADZONE_UNITS_FAST;
-    case VELOCITY_MEDIUM:
-    case VELOCITY_UNKNOWN:
-    default:             return XY_DEADZONE_UNITS;
-    }
+    if (Velocity == VELOCITY_SLOW)
+        return (INT)PointerConfig->CursorDeadzone + 1;
+    if (Velocity == VELOCITY_FAST)
+        return (INT)PointerConfig->CursorDeadzone;
+    return (INT)PointerConfig->CursorDeadzone;
 }
 
 // Scale scroll deltas with remainder so slow motion still advances.
@@ -198,6 +196,8 @@ AmtContactBirthCommon(
     c->RetapSeeded        = retapSeeded;
     c->ScrollRemX          = 0;
     c->ScrollRemY          = 0;
+    c->ScrollFilteredX     = 0;
+    c->ScrollFilteredY     = 0;
     c->LastSlotHint        = slotHint;
     c->LastSeenQpc         = 0; // set by first AmtContactUpdate
     c->LastMajor           = 0;
@@ -382,6 +382,8 @@ AmtContactCommitSample(
     _In_    CONTACT_VELOCITY_BUCKET Velocity,
     _In_    INT             alphaNum,
     _In_    BOOLEAN         commitIsRetapSeededFirstSample,
+    _In_    const AMT_POINTER_CONFIG* PointerConfig,
+    _In_    const AMT_SCROLL_CONFIG* ScrollConfig,
     _Out_   USHORT*         OutX,
     _Out_   USHORT*         OutY
 )
@@ -406,11 +408,24 @@ AmtContactCommitSample(
             INT dx = (INT)candX - (INT)Contact->ReportX;
             INT dy = (INT)candY - (INT)Contact->ReportY;
 
-            INT scaleNum = (Velocity == VELOCITY_FAST) ? SCROLL_SCALE_NUM_FAST : SCROLL_SCALE_NUM;
-            INT scaleDen = (Velocity == VELOCITY_FAST) ? SCROLL_SCALE_DEN_FAST : SCROLL_SCALE_DEN;
+            INT rawScale = (Velocity == VELOCITY_FAST) ? (INT)ScrollConfig->FastSpeedPercent : (INT)ScrollConfig->SpeedPercent;
+            INT scaledDx = (dx * rawScale) / 100;
+            INT scaledDy = (dy * rawScale) / 100;
 
-            LONG newX = (LONG)Contact->ReportX + AmtScaleScrollDelta(dx, &Contact->ScrollRemX, scaleNum, scaleDen);
-            LONG newY = (LONG)Contact->ReportY + AmtScaleScrollDelta(dy, &Contact->ScrollRemY, scaleNum, scaleDen);
+            INT smooth = (INT)ScrollConfig->SmoothingPercent;
+            if (smooth > 0) {
+                // 0 = raw delta, 100 = strongest filtering.
+                INT alphaNum = 100 - smooth;
+                if (alphaNum < 10) alphaNum = 10;
+                INT prevNum = 100 - alphaNum;
+                scaledDx = (scaledDx * alphaNum + Contact->ScrollFilteredX * prevNum) / 100;
+                scaledDy = (scaledDy * alphaNum + Contact->ScrollFilteredY * prevNum) / 100;
+            }
+            Contact->ScrollFilteredX = scaledDx;
+            Contact->ScrollFilteredY = scaledDy;
+
+            LONG newX = (LONG)Contact->ReportX + AmtScaleScrollDelta(scaledDx, &Contact->ScrollRemX, 100, 100);
+            LONG newY = (LONG)Contact->ReportY + AmtScaleScrollDelta(scaledDy, &Contact->ScrollRemY, 100, 100);
 
             // Clamp both ends before truncating to USHORT.
             repX = (USHORT)(newX < 0 ? 0 : (newX > 0xFFFF ? 0xFFFF : newX));
@@ -426,13 +441,28 @@ AmtContactCommitSample(
             // ever reported a fixed 3/8 blend or exactly raw with nothing
             // between - a deliberate slow move sitting right at the
             // threshold speed could flip frame-to-frame between the two.
-            INT effAlpha = commitIsRetapSeededFirstSample ? ALPHA_NUM_MIN : alphaNum;
+            INT userAlpha = PointerConfig->CursorSmoothingPercent == 0 ? 8 :
+                            1 + (INT)((PointerConfig->CursorSmoothingPercent * 7 + 99) / 100);
+            INT effAlpha = commitIsRetapSeededFirstSample ? ALPHA_NUM_MIN :
+                           ((alphaNum < userAlpha) ? alphaNum : userAlpha);
 
             repX = AmtContactSmoothCoord(candX, Contact->ReportX, effAlpha);
             repY = AmtContactSmoothCoord(candY, Contact->ReportY, effAlpha);
 
+            INT speed = (INT)PointerConfig->CursorSpeedPercent;
+            if (speed != 100) {
+                INT moveX = (INT)repX - (INT)Contact->ReportX;
+                INT moveY = (INT)repY - (INT)Contact->ReportY;
+                LONG nextX = (LONG)Contact->ReportX + (moveX * speed) / 100;
+                LONG nextY = (LONG)Contact->ReportY + (moveY * speed) / 100;
+                repX = (USHORT)(nextX < 0 ? 0 : (nextX > 0xFFFF ? 0xFFFF : nextX));
+                repY = (USHORT)(nextY < 0 ? 0 : (nextY > 0xFFFF ? 0xFFFF : nextY));
+            }
+
             Contact->ScrollRemX = 0;
             Contact->ScrollRemY = 0;
+            Contact->ScrollFilteredX = 0;
+            Contact->ScrollFilteredY = 0;
         }
 
         // Taint-clear rule unchanged from the old scheme: a contact that
@@ -469,6 +499,8 @@ AmtContactUpdate(
     _In_    LONGLONG        PerfFrequencyHz,
     _In_    BOOLEAN         aliveCountIsOne,
     _In_    BOOLEAN         gestureActive,
+    _In_    const AMT_POINTER_CONFIG* PointerConfig,
+    _In_    const AMT_SCROLL_CONFIG* ScrollConfig,
     _Out_   USHORT*         OutX,
     _Out_   USHORT*         OutY
 )
@@ -491,14 +523,16 @@ AmtContactUpdate(
     // on the non-gesture path (see AmtContactCommitSample) - it's still
     // computed unconditionally by AmtContactEvaluateVelocity, but simply
     // goes unread here when gestureActive.
-    LONGLONG fastThreshold = gestureActive ? VELOCITY_FAST_SCROLL_UNITS_PER_SEC
-                                            : VELOCITY_FAST_UNITS_PER_SEC;
+    LONGLONG fastThreshold = gestureActive ? ScrollConfig->FastVelocity
+                                            : PointerConfig->CursorFastVelocity;
+    LONGLONG slowThreshold = PointerConfig->CursorSlowVelocity;
+    LONGLONG alphaFastThreshold = PointerConfig->CursorFastVelocity;
     INT alphaNum;
     CONTACT_VELOCITY_BUCKET velocity = AmtContactEvaluateVelocity(
         rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz,
-        fastThreshold, &alphaNum);
+        fastThreshold, slowThreshold, alphaFastThreshold, &alphaNum);
 
-    INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity, gestureActive);
+    INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity, gestureActive, PointerConfig, ScrollConfig);
 
     // Only the true first sample of a *non*-retap-seeded contact skips the
     // deadzone check (baseline is seeded here, nothing to compare against
@@ -519,6 +553,7 @@ AmtContactUpdate(
     AmtContactCommitSample(Contact, rawX, rawY, passed, aliveCountIsOne,
                            gestureActive, velocity,
                            alphaNum, retapSeededFirstSample,
+                           PointerConfig, ScrollConfig,
                            OutX, OutY);
 
     Contact->LastSlotHint = slotHint;

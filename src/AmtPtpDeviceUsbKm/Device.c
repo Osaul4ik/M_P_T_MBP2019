@@ -288,6 +288,12 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     }
     AmtPointerConfigLoadFromRegistry(device, &deviceContext->PointerConfig);
 
+    {
+        AMT_SCROLL_CONFIG defaultScrollCfg = AMT_SCROLL_CONFIG_DEFAULT_INIT;
+        deviceContext->ScrollConfig = defaultScrollCfg;
+    }
+    AmtScrollConfigLoadFromRegistry(device, &deviceContext->ScrollConfig);
+
     // Create the shared state lock for frame processing.
     {
         WDF_OBJECT_ATTRIBUTES lockAttributes;
