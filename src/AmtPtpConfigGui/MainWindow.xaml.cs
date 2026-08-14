@@ -1350,8 +1350,12 @@ namespace AmtPtpConfigGui
                 }
                 _liveGeometrySmooth[c.ContactID] = (dispMajor, dispMinor);
 
-                double majorPx = dispMajor > 0 ? Math.Max(10, dispMajor / xRange * w) : 26;
-                double minorPx = dispMinor > 0 ? Math.Max(10, dispMinor / yRange * h) : 26;
+                // Major/minor are contact-size units, not X/Y coordinate units.
+                // Use one common scale so both axes grow physically consistently.
+                const double touchSizeRange = 2048.0; // BCM5974 SN_WIDTH max
+                double sizeScale = Math.Min(w, h) / touchSizeRange;
+                double majorPx = dispMajor > 0 ? Math.Max(10, dispMajor * sizeScale) : 26;
+                double minorPx = dispMinor > 0 ? Math.Max(10, dispMinor * sizeScale) : 26;
 
                 var footprint = _liveFootprints[i];
                 footprint.Width = majorPx;

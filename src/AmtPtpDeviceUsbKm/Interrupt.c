@@ -329,6 +329,8 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
                     rawFrame.Contacts[bestRawIndex].Major;
                 pCtx->LiveFrame.Contacts[i].Minor =
                     rawFrame.Contacts[bestRawIndex].Minor;
+                pCtx->LiveFrame.Contacts[i].Pressure =
+                    rawFrame.Contacts[bestRawIndex].Pressure;
                 pCtx->LiveFrame.Contacts[i].Orientation =
                     rawFrame.Contacts[bestRawIndex].Orientation;
             } else {
