@@ -266,8 +266,8 @@
 
         <!-- ===================== Buttons =====================
              Three tiers: default (secondary, outlined), AccentButton
-             (primary - "Зберегти"), GhostButton (tertiary, text-only -
-             "Скинути за замовчуванням", a destructive-ish but infrequent
+             (primary - "Save"), GhostButton (tertiary, text-only -
+             "Reset to defaults", a destructive-ish but infrequent
              action that shouldn't visually compete with Apply). -->
         <Style TargetType="Button">
             <Setter Property="Padding" Value="16,8"/>
@@ -307,7 +307,7 @@
             </Setter>
         </Style>
 
-        <!-- Primary action - "Зберегти". Slightly larger, filled accent,
+        <!-- Primary action - "Save". Slightly larger, filled accent,
              soft colored elevation shadow so it visibly outranks every
              other button on screen instead of matching them 1:1. -->
         <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
@@ -346,7 +346,7 @@
             </Setter>
         </Style>
 
-        <!-- Tertiary action - "Скинути за замовчуванням". No fill, no
+        <!-- Tertiary action - "Reset to defaults". No fill, no
              border, muted text - present but doesn't compete with Apply. -->
         <Style x:Key="GhostButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Background" Value="Transparent"/>
@@ -534,7 +534,7 @@
                     </Border>
                     <StackPanel VerticalAlignment="Center" Margin="12,0,0,0">
                         <TextBlock Text="Wellspring PTP" Style="{StaticResource TitleText}"/>
-                        <TextBlock Text="Калібрування відхилення долоні (Palm Rejection)" Style="{StaticResource SubtitleText}"/>
+                        <TextBlock Text="Palm rejection calibration" Style="{StaticResource SubtitleText}"/>
                     </StackPanel>
                 </StackPanel>
 
@@ -550,12 +550,12 @@
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="#E5484D" VerticalAlignment="Center"/>
                             <TextBlock x:Name="StatusText" Margin="9,0,0,0" VerticalAlignment="Center"
-                                       Text="Пристрій не знайдено — режим попереднього перегляду"
+                                       Text="Device not found — preview mode"
                                        TextTrimming="CharacterEllipsis"/>
                         </StackPanel>
                     </Border>
                     <Button x:Name="BtnAppSettings" Grid.Column="1" Content="⚙" Width="40" Height="34" Margin="10,0,0,0"
-                            Padding="0" Style="{StaticResource GhostButton}" Click="AppSettings_Click" ToolTip="Налаштування програми"/>
+                            Padding="0" Style="{StaticResource GhostButton}" Click="AppSettings_Click" ToolTip="Application settings"/>
                 </Grid>
             </Grid>
         </Border>
@@ -569,16 +569,16 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,14,0">
-                    <TextBlock Text="Профіль" FontWeight="SemiBold" FontSize="12.5"/>
-                    <TextBlock Text="Налаштування Pointer / Scroll / Palm" Style="{StaticResource SectionCaption}"/>
+                    <TextBlock Text="Profile" FontWeight="SemiBold" FontSize="12.5"/>
+                    <TextBlock Text="Pointer / Scroll / Palm settings" Style="{StaticResource SectionCaption}"/>
                 </StackPanel>
                 <ComboBox x:Name="ProfileCombo" Grid.Column="1" Height="34" VerticalContentAlignment="Center"
                           SelectionChanged="ProfileCombo_SelectionChanged"/>
                 <WrapPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <Button Content="＋" Width="38" Height="34" Padding="0" Margin="0,0,6,0"
-                            Click="NewProfile_Click" ToolTip="Новий профіль"/>
-                    <Button Content="Перейменувати" MinWidth="128" Height="34" Margin="0,0,6,0" Click="RenameProfile_Click"/>
-                    <Button Content="Видалити" MinWidth="90" Height="34" Style="{StaticResource GhostButton}" Click="DeleteProfile_Click"/>
+                            Click="NewProfile_Click" ToolTip="New profile"/>
+                    <Button Content="Rename" MinWidth="128" Height="34" Margin="0,0,6,0" Click="RenameProfile_Click"/>
+                    <Button Content="Delete" MinWidth="90" Height="34" Style="{StaticResource GhostButton}" Click="DeleteProfile_Click"/>
                     <CheckBox x:Name="ChkProMode" Content="Pro Mode" Style="{StaticResource ChipCheckBox}"
                               Margin="14,0,0,0" VerticalAlignment="Center" Checked="ProMode_Changed" Unchecked="ProMode_Changed"/>
                 </WrapPanel>
@@ -588,53 +588,52 @@
         <!-- ===================== Toolbar: Live monitor + diagnostics ===================== -->
         <Border DockPanel.Dock="Top" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,14" Effect="{StaticResource CardShadow}">
             <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
 
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <CheckBox x:Name="ChkLive" Style="{StaticResource ToggleChip}" Content="Live"
-                              VerticalAlignment="Center"
-                              Checked="Live_Changed" Unchecked="Live_Changed"/>
-
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
-                        <Ellipse x:Name="LiveDot" Width="7" Height="7" Fill="#9AA1AC" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="LiveStatusText" Text="Live: вимкнено"
-                                   Style="{StaticResource TelemetryText}" Margin="7,0,0,0"/>
-                    </StackPanel>
-                </StackPanel>
-
-                <Grid Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center">
+                <Grid Grid.Row="0">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" MinWidth="0"/>
+                        <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <Border Grid.Column="0" Margin="0,0,16,0" Padding="10,7"
-                            Background="{StaticResource ControlFillBrush}"
-                            BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1"
-                            CornerRadius="8" MinHeight="48" MaxHeight="92">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                            <TextBlock x:Name="LiveCoordText" Text="Live: координати — немає активних контактів"
-                                       Style="{StaticResource TelemetryText}"
-                                       FontFamily="Consolas, Segoe UI"
-                                       TextWrapping="Wrap"/>
-                        </ScrollViewer>
-                    </Border>
-                    <TextBlock x:Name="LiveCornerText" Grid.Column="1" Text="Кути: TL 0 | TR 0 | BL 0 | BR 0"
-                               Style="{StaticResource TelemetryText}"/>
+
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <CheckBox x:Name="ChkLive" Style="{StaticResource ToggleChip}" Content="Live"
+                                  VerticalAlignment="Center"
+                                  Checked="Live_Changed" Unchecked="Live_Changed"/>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
+                            <Ellipse x:Name="LiveDot" Width="7" Height="7" Fill="#9AA1AC" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="LiveStatusText" Text="Live: disabled"
+                                       Style="{StaticResource TelemetryText}" Margin="7,0,0,0"/>
+                        </StackPanel>
+                        <TextBlock x:Name="LiveCornerText" Text="Corners: TL 0 | TR 0 | BL 0 | BR 0"
+                                   Style="{StaticResource TelemetryText}" Margin="20,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Content="Export log .txt" Click="SaveErrors_Click"/>
+                        <Button Click="Reconnect_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="↻" FontSize="14" Margin="0,0,7,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="Reconnect" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
                 </Grid>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="Експорт журналу .txt" Click="SaveErrors_Click"/>
-                    <Button Click="Reconnect_Click">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="↻" FontSize="14" Margin="0,0,7,0" VerticalAlignment="Center"/>
-                            <TextBlock Text="Оновити / Reconnect" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
+                <Border Grid.Row="1" Margin="0,10,0,0" Padding="10,7"
+                        Background="{StaticResource ControlFillBrush}"
+                        BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1"
+                        CornerRadius="8" Height="116">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                        <TextBlock x:Name="LiveCoordText" Text="Live: no active contacts"
+                                   Style="{StaticResource TelemetryText}"
+                                   FontFamily="Consolas" FontSize="12"
+                                   TextWrapping="NoWrap"/>
+                    </ScrollViewer>
+                </Border>
             </Grid>
         </Border>
 
@@ -647,12 +646,12 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock x:Name="BottomStatusText" VerticalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}" Text=""/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <Button Content="Скинути за замовчуванням" Style="{StaticResource GhostButton}" Click="ResetDefaults_Click"/>
+                    <Button Content="Reset to defaults" Style="{StaticResource GhostButton}" Click="ResetDefaults_Click"/>
                     <Border Width="1" Margin="10,4" Background="{StaticResource DividerBrush}"/>
                     <Button Style="{StaticResource AccentButton}" Click="Save_Click">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="✓" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="White"/>
-                            <TextBlock Text="Зберегти" VerticalAlignment="Center" Foreground="White"/>
+                            <TextBlock Text="Save" VerticalAlignment="Center" Foreground="White"/>
                         </StackPanel>
                     </Button>
                 </StackPanel>
@@ -675,50 +674,50 @@
                     <GroupBox>
                         <GroupBox.Header>
                             <StackPanel>
-                                <TextBlock Text="Крайова зона" Style="{StaticResource SectionTitle}"/>
-                                <TextBlock Text="EDGE ZONE · % від розміру тачпада" Style="{StaticResource SectionCaption}"/>
+                                <TextBlock Text="Edge zone" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Text="EDGE ZONE · % of touchpad size" Style="{StaticResource SectionCaption}"/>
                             </StackPanel>
                         </GroupBox.Header>
                         <StackPanel>
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Верх (Top)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Top"/>
                                 <TextBlock x:Name="LblEdgeTop" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlEdgeTop" Minimum="0" Maximum="400" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Ліво (Left)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Left"/>
                                 <TextBlock x:Name="LblEdgeLeft" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlEdgeLeft" Minimum="0" Maximum="400" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Право (Right)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Right"/>
                                 <TextBlock x:Name="LblEdgeRight" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlEdgeRight" Minimum="0" Maximum="400" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Низ (Bottom)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Bottom"/>
                                 <TextBlock x:Name="LblEdgeBottom" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlEdgeBottom" Minimum="0" Maximum="400" ValueChanged="Slider_Changed"/>
 
                             <TextBlock Style="{StaticResource HintText}"
-                                       Text="Новий дотик, що з'явився в цій зоні, миттєво відхиляється як долоня — незалежно від форми."/>
+                                       Text="A new contact appearing in this zone is immediately rejected as palm, regardless of shape."/>
                         </StackPanel>
                     </GroupBox>
 
                     <GroupBox>
                         <GroupBox.Header>
                             <StackPanel>
-                                <TextBlock Text="Поріг форми долоні" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Text="Palm shape thresholds" Style="{StaticResource SectionTitle}"/>
                                 <TextBlock Text="PALM SHAPE" Style="{StaticResource SectionCaption}"/>
                             </StackPanel>
                         </GroupBox.Header>
                         <StackPanel>
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Large Major (жорстке відхилення)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Large Major (hard reject)"/>
                                 <TextBlock x:Name="LblLargeMajor" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlLargeMajor" Minimum="50" Maximum="800" ValueChanged="Slider_Changed"/>
@@ -730,19 +729,19 @@
                             <Slider x:Name="SlLargeRatio" Minimum="100" Maximum="500" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Поріг балів (Score Threshold)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Score Threshold"/>
                                 <TextBlock x:Name="LblScoreThresh" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlScoreThresh" Minimum="5" Maximum="150" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Мінімальний Major"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Minimum Major"/>
                                 <TextBlock x:Name="LblMinMajor" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlMinMajor" Minimum="0" Maximum="300" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Мінімальний Minor"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Minimum Minor"/>
                                 <TextBlock x:Name="LblMinMinor" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlMinMinor" Minimum="0" Maximum="300" ValueChanged="Slider_Changed"/>
@@ -752,39 +751,39 @@
                     <GroupBox Margin="0,0,0,0">
                         <GroupBox.Header>
                             <StackPanel>
-                                <TextBlock Text="Тестовий дотик" Style="{StaticResource SectionTitle}"/>
-                                <TextBlock Text="PREVIEW · не впливає на драйвер" Style="{StaticResource SectionCaption}"/>
+                                <TextBlock Text="Test contact" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Text="PREVIEW · does not affect the driver" Style="{StaticResource SectionCaption}"/>
                             </StackPanel>
                         </GroupBox.Header>
                         <StackPanel>
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Major (розмір пальця)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Major (finger size)"/>
                                 <TextBlock x:Name="LblTestMajor" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlTestMajor" Minimum="0" Maximum="600" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Minor (ширина пальця)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Minor (finger width)"/>
                                 <TextBlock x:Name="LblTestMinor" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlTestMinor" Minimum="0" Maximum="600" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Позиція X (0=ліво, 100=право)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="X position (0=left, 100=right)"/>
                                 <TextBlock x:Name="LblTestX" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlTestX" Minimum="0" Maximum="100" Value="50" ValueChanged="Slider_Changed"/>
 
                             <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Позиція Y (0=верх, 100=низ)"/>
+                                <TextBlock Style="{StaticResource SliderLabel}" Text="Y position (0=top, 100=bottom)"/>
                                 <TextBlock x:Name="LblTestY" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                             </Grid>
                             <Slider x:Name="SlTestY" Minimum="0" Maximum="100" Value="50" ValueChanged="Slider_Changed"/>
 
-                            <CheckBox x:Name="ChkIsBirth" Content="Новий дотик (birth) — не продовження вже активного" IsChecked="True"
+                            <CheckBox x:Name="ChkIsBirth" Content="New contact (birth) — not a continuation of an existing contact" IsChecked="True"
                                       Margin="0,8,0,0" Checked="Slider_Changed" Unchecked="Slider_Changed"/>
                             <TextBlock Style="{StaticResource HintText}"
-                                       Text="Перетягніть точку прямо на карті праворуч, щоб перевірити позицію дотику."/>
+                                       Text="Drag the point directly on the map to verify the contact position."/>
                         </StackPanel>
                     </GroupBox>
 
@@ -798,48 +797,48 @@
                             <GroupBox>
                                 <GroupBox.Header>
                                     <StackPanel>
-                                        <TextBlock Text="Прокрутка" Style="{StaticResource SectionTitle}"/>
-                                        <TextBlock Text="SCROLL · основні налаштування" Style="{StaticResource SectionCaption}"/>
+                                        <TextBlock Text="Scroll" Style="{StaticResource SectionTitle}"/>
+                                        <TextBlock Text="SCROLL · basic settings" Style="{StaticResource SectionCaption}"/>
                                     </StackPanel>
                                 </GroupBox.Header>
                                 <StackPanel>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Швидкість прокрутки"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Scroll speed"/>
                                         <TextBlock x:Name="LblScrollSpeed" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollSpeed" Minimum="20" Maximum="200" ValueChanged="ScrollSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Плавність"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Smoothing"/>
                                         <TextBlock x:Name="LblScrollSmoothing" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollSmoothing" Minimum="0" Maximum="100" ValueChanged="ScrollSlider_Changed"/>
-                                    <TextBlock Style="{StaticResource HintText}" Text="Більша швидкість робить двопальцеву прокрутку швидшою, а більша плавність прибирає дрібні ривки."/>
+                                    <TextBlock Style="{StaticResource HintText}" Text="Higher speed makes two-finger scrolling faster; higher smoothing removes small jitter."/>
                                 </StackPanel>
                             </GroupBox>
                             <GroupBox x:Name="ScrollAdvancedPanel" Visibility="Collapsed">
                                 <GroupBox.Header>
                                     <StackPanel>
                                         <TextBlock Text="Scroll · Pro" Style="{StaticResource SectionTitle}"/>
-                                        <TextBlock Text="PRO · технічне налаштування поведінки жесту" Style="{StaticResource SectionCaption}"/>
+                                        <TextBlock Text="PRO · advanced gesture behavior" Style="{StaticResource SectionCaption}"/>
                                     </StackPanel>
                                 </GroupBox.Header>
                                 <StackPanel>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Швидкість швидкого руху"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast movement speed"/>
                                         <TextBlock x:Name="LblScrollFastSpeed" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollFastSpeed" Minimum="20" Maximum="250" ValueChanged="ScrollSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Мертва зона"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Dead zone"/>
                                         <TextBlock x:Name="LblScrollDeadzone" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollDeadzone" Minimum="0" Maximum="8" ValueChanged="ScrollSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Поріг швидкого руху"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast movement threshold"/>
                                         <TextBlock x:Name="LblScrollFastVelocity" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollFastVelocity" Minimum="500" Maximum="4000" ValueChanged="ScrollSlider_Changed"/>
-                                    <TextBlock Style="{StaticResource HintText}" Text="Fast Velocity визначає момент переходу в швидкий режим прокрутки."/>
+                                    <TextBlock Style="{StaticResource HintText}" Text="Fast Velocity defines when fast scroll mode activates."/>
                                 </StackPanel>
                             </GroupBox>
                         </StackPanel>
@@ -852,59 +851,59 @@
                             <GroupBox>
                                 <GroupBox.Header>
                                     <StackPanel>
-                                        <TextBlock Text="Курсор" Style="{StaticResource SectionTitle}"/>
-                                        <TextBlock Text="POINTER · основні налаштування" Style="{StaticResource SectionCaption}"/>
+                                        <TextBlock Text="Pointer" Style="{StaticResource SectionTitle}"/>
+                                        <TextBlock Text="POINTER · basic settings" Style="{StaticResource SectionCaption}"/>
                                     </StackPanel>
                                 </GroupBox.Header>
                                 <StackPanel>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Швидкість курсора"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Cursor speed"/>
                                         <TextBlock x:Name="LblCursorSpeed" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorSpeed" Minimum="50" Maximum="200" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Плавність"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Smoothing"/>
                                         <TextBlock x:Name="LblCursorSmoothing" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorSmoothing" Minimum="0" Maximum="100" ValueChanged="PointerSlider_Changed"/>
-                                    <TextBlock Style="{StaticResource HintText}" Text="Швидкість змінює масштаб переміщення курсора, а плавність прибирає дрібні ривки."/>
+                                    <TextBlock Style="{StaticResource HintText}" Text="Speed scales cursor movement; smoothing removes small jitter."/>
                                 </StackPanel>
                             </GroupBox>
                             <GroupBox x:Name="PointerAdvancedPanel" Visibility="Collapsed">
                                 <GroupBox.Header>
                                     <StackPanel>
                                         <TextBlock Text="Pointer · Pro" Style="{StaticResource SectionTitle}"/>
-                                        <TextBlock Text="PRO · технічні пороги, deadzone і Force Touch" Style="{StaticResource SectionCaption}"/>
+                                        <TextBlock Text="PRO · advanced thresholds, deadzone and Force Touch" Style="{StaticResource SectionCaption}"/>
                                     </StackPanel>
                                 </GroupBox.Header>
                                 <StackPanel>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Мертва зона"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Dead zone"/>
                                         <TextBlock x:Name="LblCursorDeadzone" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorDeadzone" Minimum="0" Maximum="8" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Поріг повільного руху"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Slow movement threshold"/>
                                         <TextBlock x:Name="LblCursorSlowVelocity" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorSlowVelocity" Minimum="20" Maximum="300" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Поріг швидкого руху"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast movement threshold"/>
                                         <TextBlock x:Name="LblCursorFastVelocity" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorFastVelocity" Minimum="200" Maximum="2000" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Сила натискання"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Force touch threshold"/>
                                         <TextBlock x:Name="LblForceTapThreshold" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlForceTapThreshold" Minimum="200" Maximum="400" ValueChanged="PointerSlider_Changed"/>
-                                    <TextBlock Text="Дія при Force Tap" Style="{StaticResource SliderLabel}" Margin="0,10,0,6"/>
+                                    <TextBlock Text="Force Tap action" Style="{StaticResource SliderLabel}" Margin="0,10,0,6"/>
                                     <StackPanel>
-                                        <RadioButton x:Name="RbActionContextMenu" Content="Контекстне меню" GroupName="ForceTapAction" Margin="0,4" Checked="PointerAction_Changed"/>
-                                        <RadioButton x:Name="RbActionMiddleClick" Content="Середня кнопка миші" GroupName="ForceTapAction" Margin="0,4" Checked="PointerAction_Changed"/>
-                                        <RadioButton x:Name="RbActionDoubleClick" Content="Подвійний клік" GroupName="ForceTapAction" Margin="0,4" Checked="PointerAction_Changed"/>
+                                        <RadioButton x:Name="RbActionContextMenu" Content="Context menu" GroupName="ForceTapAction" Margin="0,4" Checked="PointerAction_Changed"/>
+                                        <RadioButton x:Name="RbActionMiddleClick" Content="Middle mouse button" GroupName="ForceTapAction" Margin="0,4" Checked="PointerAction_Changed"/>
+                                        <RadioButton x:Name="RbActionDoubleClick" Content="Double click" GroupName="ForceTapAction" Margin="0,4" Checked="PointerAction_Changed"/>
                                     </StackPanel>
-                                    <TextBlock Style="{StaticResource HintText}" Margin="0,8,0,0" Text="Slow/Fast Velocity визначають режим руху, а Force Tap — поріг сильного натискання."/>
+                                    <TextBlock Style="{StaticResource HintText}" Margin="0,8,0,0" Text="Slow/Fast Velocity define movement mode; Force Tap sets the hard-press threshold."/>
                                 </StackPanel>
                             </GroupBox>
                         </StackPanel>
@@ -922,18 +921,18 @@
                     </Grid.RowDefinitions>
 
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,14">
-                        <TextBlock Text="Попередній перегляд тачпада" Style="{StaticResource SectionTitle}" FontSize="16" VerticalAlignment="Center"/>
+                        <TextBlock Text="Touchpad preview" Style="{StaticResource SectionTitle}" FontSize="16" VerticalAlignment="Center"/>
                         <Border Style="{StaticResource Pill}" Background="{StaticResource SuccessSoftBrush}" Padding="9,3" Margin="14,0,0,0">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse Width="8" Height="8" Fill="{StaticResource SuccessBrush}" VerticalAlignment="Center"/>
-                                <TextBlock Text="звичайний дотик" FontSize="10.5" Margin="6,0,0,0"
+                                <TextBlock Text="normal touch" FontSize="10.5" Margin="6,0,0,0"
                                            Foreground="{StaticResource SuccessBrush}" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Pill}" Background="{StaticResource DangerSoftBrush}" Padding="9,3" Margin="8,0,0,0">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse Width="8" Height="8" Fill="{StaticResource DangerBrush}" VerticalAlignment="Center"/>
-                                <TextBlock Text="долоня (PALM)" FontSize="10.5" Margin="6,0,0,0"
+                                <TextBlock Text="palm (PALM)" FontSize="10.5" Margin="6,0,0,0"
                                            Foreground="{StaticResource DangerBrush}" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>
@@ -975,7 +974,7 @@
                             Background="{StaticResource ControlFillBrush}"
                             BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Класифікація: " FontWeight="SemiBold"/>
+                            <TextBlock Text="Classification: " FontWeight="SemiBold"/>
                             <TextBlock x:Name="ClassificationText" Text="—" FontWeight="Bold"/>
                             <TextBlock x:Name="GeometrySourceText" Margin="20,0,0,0" Foreground="{StaticResource TextSecondaryBrush}"/>
                         </StackPanel>

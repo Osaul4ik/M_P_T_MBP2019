@@ -1,7 +1,7 @@
 namespace AmtPtpConfigGui.Native
 {
     /// <summary>
-    /// On-disk format for the GUI's "Зберегти/Завантажити профіль…" (.json)
+    /// On-disk format for the GUI profile save/load (.json)
     /// buttons. Bundles PalmConfig, ScrollConfig and PointerConfig into one file so
     /// a single Save/Load round-trips everything the global bottom-bar
     /// Save/Reset buttons touch - not just Palm.

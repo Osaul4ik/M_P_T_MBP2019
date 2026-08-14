@@ -185,7 +185,8 @@ namespace AmtPtpConfigGui
                 Text = "Wellspring Precision Touchpad"
             };
             _trayIcon.DoubleClick += (_, _) => ShowFromTray();
-            _trayIcon.MouseUp += TrayIcon_MouseUp;
+            _trayIcon.ContextMenuStrip = BuildTrayMenu();
+            _trayIcon.ContextMenuStrip.Opening += (_, _) => RefreshTrayMenu();
 
             Closing += MainWindow_Closing;
 
@@ -204,7 +205,7 @@ namespace AmtPtpConfigGui
                 if (_appSettings.StartWithWindows)
                     UpdateStartupRegistration(true);
                 Reconnect();
-                UpdateTrayMenu();
+                RefreshTrayMenu();
             };
         }
 
@@ -224,7 +225,7 @@ namespace AmtPtpConfigGui
 
             var dialog = new Window
             {
-                Title = "Налаштування Wellspring PTP",
+                Title = "Wellspring PTP Settings",
                 Width = 430,
                 Height = 430,
                 MinWidth = 470,
@@ -246,22 +247,22 @@ namespace AmtPtpConfigGui
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             var title = new TextBlock
-            { Text = "Параметри програми", FontSize = 18, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0,0,0,14) };
+            { Text = "Application settings", FontSize = 18, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0,0,0,14) };
             System.Windows.Controls.Grid.SetRow(title, 0);
             root.Children.Add(title);
 
             var stack = new StackPanel();
             var closeToTray = new System.Windows.Controls.CheckBox
-            { Content = "При закритті ховати програму в трей", IsChecked = _appSettings.CloseToTray, Margin = new Thickness(0,0,0,12) };
+            { Content = "Minimize to tray when closing", IsChecked = _appSettings.CloseToTray, Margin = new Thickness(0,0,0,12) };
             var startup = new System.Windows.Controls.CheckBox
-            { Content = "Автозапуск GUI при завантаженні Windows", IsChecked = _appSettings.StartWithWindows, Margin = new Thickness(0,0,0,12) };
+            { Content = "Start the GUI with Windows", IsChecked = _appSettings.StartWithWindows, Margin = new Thickness(0,0,0,12) };
             var palmEdges = new System.Windows.Controls.CheckBox
-            { Content = "Palm rejection по краях тачпада", IsChecked = _appSettings.PalmEdgeRejectionEnabled, Margin = new Thickness(0,0,0,12) };
+            { Content = "Palm rejection at touchpad edges", IsChecked = _appSettings.PalmEdgeRejectionEnabled, Margin = new Thickness(0,0,0,12) };
             stack.Children.Add(closeToTray);
             stack.Children.Add(startup);
             stack.Children.Add(palmEdges);
             var hint = new TextBlock
-            { Text = "Після вимкнення Palm rejection по краях зберігається, але edge-зони тимчасово не блокують дотики.", Foreground = (Brush)FindResource("TextSecondaryBrush"), TextWrapping = TextWrapping.Wrap, FontSize = 11 };
+            { Text = "When disabled, edge rejection settings are preserved but edge zones temporarily stop rejecting contacts.", Foreground = (Brush)FindResource("TextSecondaryBrush"), TextWrapping = TextWrapping.Wrap, FontSize = 11 };
             stack.Children.Add(hint);
             System.Windows.Controls.Grid.SetRow(stack, 1);
             root.Children.Add(stack);
@@ -279,14 +280,14 @@ namespace AmtPtpConfigGui
             var backupStack = new StackPanel();
             backupStack.Children.Add(new TextBlock
             {
-                Text = "Резервна копія",
+                Text = "Backup",
                 FontWeight = FontWeights.SemiBold,
                 FontSize = 13,
                 Margin = new Thickness(0, 0, 0, 4)
             });
             backupStack.Children.Add(new TextBlock
             {
-                Text = "Профілі та налаштування програми в одному файлі.",
+                Text = "Profiles and application settings in one file.",
                 Foreground = (Brush)FindResource("TextSecondaryBrush"),
                 FontSize = 11,
                 Margin = new Thickness(0, 0, 0, 9)
@@ -294,9 +295,9 @@ namespace AmtPtpConfigGui
 
             var backupButtons = new StackPanel { Orientation = Orientation.Horizontal };
             var exportBackup = new System.Windows.Controls.Button
-            { Content = "Експорт...", Style = (Style)FindResource("GhostButton"), Width = 110, Margin = new Thickness(0, 0, 8, 0) };
+            { Content = "Export...", Style = (Style)FindResource("GhostButton"), Width = 110, Margin = new Thickness(0, 0, 8, 0) };
             var restoreBackup = new System.Windows.Controls.Button
-            { Content = "Відновити...", Style = (Style)FindResource("GhostButton"), Width = 110 };
+            { Content = "Restore...", Style = (Style)FindResource("GhostButton"), Width = 110 };
             backupButtons.Children.Add(exportBackup);
             backupButtons.Children.Add(restoreBackup);
             backupStack.Children.Add(backupButtons);
@@ -308,8 +309,8 @@ namespace AmtPtpConfigGui
             restoreBackup.Click += (_, _) => RestoreBackup();
 
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
-            var cancel = new System.Windows.Controls.Button { Content = "Скасувати", Style = (Style)FindResource("GhostButton"), Margin = new Thickness(0,0,8,0), Width = 100 };
-            var save = new System.Windows.Controls.Button { Content = "Зберегти", Style = (Style)FindResource("AccentButton"), Width = 100 };
+            var cancel = new System.Windows.Controls.Button { Content = "Cancel", Style = (Style)FindResource("GhostButton"), Margin = new Thickness(0,0,8,0), Width = 100 };
+            var save = new System.Windows.Controls.Button { Content = "Save", Style = (Style)FindResource("AccentButton"), Width = 100 };
             buttons.Children.Add(cancel);
             buttons.Children.Add(save);
             System.Windows.Controls.Grid.SetRow(buttons, 4);
@@ -328,8 +329,8 @@ namespace AmtPtpConfigGui
                 if (oldPalmEdges != _appSettings.PalmEdgeRejectionEnabled)
                     ApplyPalmEdgeToggle(_appSettings.PalmEdgeRejectionEnabled);
 
-                UpdateTrayMenu();
-                SetBottomStatus("Налаштування програми збережено.");
+                RefreshTrayMenu();
+                SetBottomStatus("Application settings saved.");
                 dialog.Close();
             };
 
@@ -344,7 +345,7 @@ namespace AmtPtpConfigGui
             {
                 Filter = "Wellspring PTP backup (*.wspbackup.json)|*.wspbackup.json|JSON (*.json)|*.json",
                 FileName = $"WellspringPTP-Backup-{DateTime.Now:yyyy-MM-dd}.wspbackup.json",
-                Title = "Експорт резервної копії"
+                Title = "Export backup"
             };
             if (dlg.ShowDialog() != true)
                 return;
@@ -376,11 +377,11 @@ namespace AmtPtpConfigGui
 
                 var json = JsonSerializer.Serialize(backup, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(dlg.FileName, json);
-                SetBottomStatus($"Резервну копію збережено: {dlg.FileName}");
+                SetBottomStatus($"Backup saved: {dlg.FileName}");
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"Не вдалося створити резервну копію.\n\n{ex.Message}", "Резервна копія", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(this, $"Failed to create backup.\n\n{ex.Message}", "Backup", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -389,7 +390,7 @@ namespace AmtPtpConfigGui
             var dlg = new OpenFileDialog
             {
                 Filter = "Wellspring PTP backup (*.wspbackup.json)|*.wspbackup.json|JSON (*.json)|*.json",
-                Title = "Відновлення резервної копії"
+                Title = "Restore backup"
             };
             if (dlg.ShowDialog() != true)
                 return;
@@ -399,15 +400,15 @@ namespace AmtPtpConfigGui
                 var json = File.ReadAllText(dlg.FileName);
                 var backup = JsonSerializer.Deserialize<WellspringBackup>(json);
                 if (backup == null || backup.Profiles == null || backup.Profiles.Count == 0)
-                    throw new InvalidDataException("Файл не містить коректного списку профілів.");
+                    throw new InvalidDataException("The file does not contain a valid profile list.");
 
                 if (backup.Version < 1)
-                    throw new InvalidDataException("Непідтримувана версія резервної копії.");
+                    throw new InvalidDataException("Unsupported backup version.");
 
                 var restoredProfiles = backup.Profiles.Select(CloneProfile).ToList();
                 foreach (var profile in restoredProfiles)
                 {
-                    profile.Name = string.IsNullOrWhiteSpace(profile.Name) ? "Профіль" : profile.Name.Trim();
+                    profile.Name = string.IsNullOrWhiteSpace(profile.Name) ? "Profile" : profile.Name.Trim();
                     profile.Palm = profile.Palm.Clamped();
                     profile.Pointer = profile.Pointer.Clamped();
                     profile.Scroll = profile.Scroll.StructVersion == 0 ? ScrollConfig.Default : profile.Scroll.Clamped();
@@ -443,13 +444,13 @@ namespace AmtPtpConfigGui
                 if (oldPalmEdges != _appSettings.PalmEdgeRejectionEnabled)
                     ApplyPalmEdgeToggle(_appSettings.PalmEdgeRejectionEnabled);
 
-                UpdateTrayMenu();
-                SetBottomStatus($"Резервну копію відновлено: {dlg.FileName}. Натисніть «Зберегти», щоб застосувати профіль до драйвера.");
-                MessageBox.Show(this, "Резервну копію успішно відновлено.\n\nПрофілі та налаштування програми завантажені.", "Резервна копія", MessageBoxButton.OK, MessageBoxImage.Information);
+                RefreshTrayMenu();
+                SetBottomStatus($"Backup restored: {dlg.FileName}. Click “Save” to apply the profile to the driver.");
+                MessageBox.Show(this, "Backup restored successfully.\n\nProfiles and application settings have been loaded.", "Backup", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"Не вдалося відновити резервну копію.\n\n{ex.Message}", "Резервна копія", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(this, $"Failed to restore backup.\n\n{ex.Message}", "Backup", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -487,55 +488,77 @@ namespace AmtPtpConfigGui
             }
             catch
             {
-                SetBottomStatus("Не вдалося змінити автозапуск Windows.");
+                SetBottomStatus("Failed to update Windows startup.");
             }
         }
 
-        private void TrayIcon_MouseUp(object? sender, System.Windows.Forms.MouseEventArgs e)
+        private Forms.ContextMenuStrip BuildTrayMenu()
         {
-            if (e.Button == MouseButtons.Right)
-                UpdateTrayMenu();
-        }
-
-        private void UpdateTrayMenu()
-        {
-            var menu = new Forms.ContextMenuStrip();
-
-            var profilesItem = new Forms.ToolStripMenuItem("Профіль");
-            for (int i = 0; i < _profiles.Count; i++)
+            var menu = new Forms.ContextMenuStrip
             {
-                int index = i;
-                var item = new Forms.ToolStripMenuItem(_profiles[i].Name)
-                { Checked = i == _activeProfileIndex };
-                item.Click += (_, _) => Dispatcher.Invoke(() => ActivateProfileFromTray(index));
-                profilesItem.DropDownItems.Add(item);
+                ShowImageMargin = false,
+                AutoClose = true
+            };
+
+            RefreshTrayMenu(menu);
+            return menu;
+        }
+
+        private void RefreshTrayMenu()
+        {
+            if (_trayIcon.ContextMenuStrip != null)
+                RefreshTrayMenu(_trayIcon.ContextMenuStrip);
+        }
+
+        private void RefreshTrayMenu(Forms.ContextMenuStrip menu)
+        {
+            menu.SuspendLayout();
+            try
+            {
+                menu.Items.Clear();
+
+                var profilesItem = new Forms.ToolStripMenuItem("Profile");
+                for (int i = 0; i < _profiles.Count; i++)
+                {
+                    int index = i;
+                    var item = new Forms.ToolStripMenuItem(_profiles[i].Name)
+                    {
+                        Checked = i == _activeProfileIndex,
+                        CheckOnClick = false
+                    };
+                    item.Click += (_, _) => Dispatcher.BeginInvoke(new Action(() => ActivateProfileFromTray(index)));
+                    profilesItem.DropDownItems.Add(item);
+                }
+                if (_profiles.Count == 0)
+                    profilesItem.DropDownItems.Add(new Forms.ToolStripMenuItem("No profiles") { Enabled = false });
+
+                var palmEdges = new Forms.ToolStripMenuItem("Palm rejection at edges")
+                {
+                    Checked = _appSettings.PalmEdgeRejectionEnabled
+                };
+                palmEdges.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePalmEdgesFromTray));
+
+                var open = new Forms.ToolStripMenuItem("Open application");
+                open.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ShowFromTray));
+
+                var settings = new Forms.ToolStripMenuItem("Settings");
+                settings.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ShowAppSettingsDialog));
+
+                var exit = new Forms.ToolStripMenuItem("Exit");
+                exit.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ExitApplication));
+
+                menu.Items.Add(profilesItem);
+                menu.Items.Add(palmEdges);
+                menu.Items.Add(new Forms.ToolStripSeparator());
+                menu.Items.Add(open);
+                menu.Items.Add(settings);
+                menu.Items.Add(new Forms.ToolStripSeparator());
+                menu.Items.Add(exit);
             }
-            if (_profiles.Count == 0)
-                profilesItem.DropDownItems.Add(new Forms.ToolStripMenuItem("Немає профілів") { Enabled = false });
-
-            var palmEdges = new Forms.ToolStripMenuItem("Palm по краях")
-            { Checked = _appSettings.PalmEdgeRejectionEnabled, CheckOnClick = false };
-            palmEdges.Click += (_, _) => Dispatcher.Invoke(() => TogglePalmEdgesFromTray());
-
-            var open = new Forms.ToolStripMenuItem("Відкрити апку");
-            open.Click += (_, _) => Dispatcher.Invoke(ShowFromTray);
-
-            var settings = new Forms.ToolStripMenuItem("Налаштування");
-            settings.Click += (_, _) => Dispatcher.Invoke(ShowAppSettingsDialog);
-
-            var exit = new Forms.ToolStripMenuItem("Вийти");
-            exit.Click += (_, _) => Dispatcher.Invoke(ExitApplication);
-
-            menu.Items.Add(profilesItem);
-            menu.Items.Add(palmEdges);
-            menu.Items.Add(new Forms.ToolStripSeparator());
-            menu.Items.Add(open);
-            menu.Items.Add(settings);
-            menu.Items.Add(new Forms.ToolStripSeparator());
-            menu.Items.Add(exit);
-
-            _trayIcon.ContextMenuStrip?.Dispose();
-            _trayIcon.ContextMenuStrip = menu;
+            finally
+            {
+                menu.ResumeLayout();
+            }
         }
 
         private void ActivateProfileFromTray(int index)
@@ -551,7 +574,7 @@ namespace AmtPtpConfigGui
             _appSettings.PalmEdgeRejectionEnabled = !_appSettings.PalmEdgeRejectionEnabled;
             AppSettingsStore.Save(_appSettings);
             ApplyPalmEdgeToggle(_appSettings.PalmEdgeRejectionEnabled);
-            UpdateTrayMenu();
+            RefreshTrayMenu();
         }
 
         private void ApplyPalmEdgeToggle(bool enabled)
@@ -608,8 +631,14 @@ namespace AmtPtpConfigGui
             {
                 e.Cancel = true;
                 Hide();
-                SetBottomStatus("Wellspring PTP працює у системному треї.");
+                SetBottomStatus("Wellspring PTP is running in the system tray.");
+                return;
             }
+
+            _liveTimer.Stop();
+            _device.Disconnect();
+            _trayIcon.Visible = false;
+            _trayIcon.Dispose();
         }
 
         // ---------------------------------------------------------------
@@ -648,7 +677,7 @@ namespace AmtPtpConfigGui
             LoadPointerConfigIntoControls(profile.Pointer.Clamped());
             LoadScrollConfigIntoControls(profile.Scroll.StructVersion == 0 ? ScrollConfig.Default : profile.Scroll.Clamped());
             DrawPreview();
-            SetBottomStatus($"Завантажено профіль «{profile.Name}». Натисніть «Зберегти», щоб застосувати його до драйвера.");
+            SetBottomStatus($"Loaded profile “{profile.Name}”. Click “Save” to apply it to the driver.");
         }
 
         private void NewProfile_Click(object sender, RoutedEventArgs e)
@@ -671,7 +700,7 @@ namespace AmtPtpConfigGui
             _profilesReady = true;
 
             ProfileStore.Save(_profiles);
-            SetBottomStatus($"Створено «{name}». Натисніть «Зберегти», щоб записати його як поточний профіль і застосувати до драйвера.");
+            SetBottomStatus($"Created “{name}”. Click “Save” to save it as the current profile and apply it to the driver.");
         }
 
         private void RenameProfile_Click(object sender, RoutedEventArgs e)
@@ -680,28 +709,28 @@ namespace AmtPtpConfigGui
             if (profile == null)
                 return;
 
-            string? name = PromptText("Перейменувати профіль", "Назва профілю:", profile.Name);
+            string? name = PromptText("Rename profile", "Profile name:", profile.Name);
             if (string.IsNullOrWhiteSpace(name))
                 return;
 
             name = name.Trim();
             if (_profiles.Any(p => !ReferenceEquals(p, profile) && string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)))
             {
-                MessageBox.Show(this, "Профіль з такою назвою вже існує.", "Профілі", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(this, "A profile with this name already exists.", "Profiles", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
             profile.Name = name;
             ProfileCombo.Items.Refresh();
             ProfileStore.Save(_profiles);
-            SetBottomStatus($"Профіль перейменовано на «{name}».");
+            SetBottomStatus($"Profile renamed to “{name}”.");
         }
 
         private void DeleteProfile_Click(object sender, RoutedEventArgs e)
         {
             if (_profiles.Count <= 1)
             {
-                MessageBox.Show(this, "Має залишатися хоча б один профіль.", "Профілі", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(this, "At least one profile must remain.", "Profiles", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -711,8 +740,8 @@ namespace AmtPtpConfigGui
 
             var result = MessageBox.Show(
                 this,
-                $"Видалити профіль «{profile.Name}»?",
-                "Видалення профілю",
+                $"Delete profile “{profile.Name}”?",
+                "Delete profile",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question);
             if (result != MessageBoxResult.Yes)
@@ -736,15 +765,15 @@ namespace AmtPtpConfigGui
                 LoadScrollConfigIntoControls(current.Scroll.StructVersion == 0 ? ScrollConfig.Default : current.Scroll.Clamped());
                 DrawPreview();
             }
-            SetBottomStatus("Профіль видалено.");
+            SetBottomStatus("Profile deleted.");
         }
 
         private string GetNextProfileName()
         {
             int i = 1;
-            while (_profiles.Any(p => string.Equals(p.Name, $"Профіль {i}", StringComparison.OrdinalIgnoreCase)))
+            while (_profiles.Any(p => string.Equals(p.Name, $"Profile {i}", StringComparison.OrdinalIgnoreCase)))
                 i++;
-            return $"Профіль {i}";
+            return $"Profile {i}";
         }
 
         private static string? PromptText(string title, string caption, string initialValue)
@@ -772,7 +801,7 @@ namespace AmtPtpConfigGui
             root.Children.Add(text);
 
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 14, 0, 0) };
-            var cancel = new Button { Content = "Скасувати", Padding = new Thickness(14, 7, 14, 7), Margin = new Thickness(0, 0, 8, 0), IsCancel = true };
+            var cancel = new Button { Content = "Cancel", Padding = new Thickness(14, 7, 14, 7), Margin = new Thickness(0, 0, 8, 0), IsCancel = true };
             var ok = new Button { Content = "OK", Padding = new Thickness(18, 7, 18, 7), IsDefault = true };
             ok.Click += (_, _) => { dialog.DialogResult = true; dialog.Close(); };
             buttons.Children.Add(cancel);
@@ -814,15 +843,15 @@ namespace AmtPtpConfigGui
             if (_diagnosticLog.Count == 0 && _liveCornerSamples == 0)
             {
                 MessageBox.Show(
-                    "Ще немає діагностичних даних або Live-калібровки.",
-                    "Немає даних", MessageBoxButton.OK, MessageBoxImage.Information);
+                    "No diagnostic or live calibration data is available yet.",
+                    "No data", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
             var dialog = new SaveFileDialog
             {
-                Title = "Зберегти журнал помилок",
-                Filter = "Текстові файли (*.txt)|*.txt|Усі файли (*.*)|*.*",
+                Title = "Save diagnostic log",
+                Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
                 FileName = $"AmtPtpConfigGui_errors_{DateTime.Now:yyyyMMdd_HHmmss}.txt"
             };
 
@@ -844,13 +873,13 @@ namespace AmtPtpConfigGui
                 lines.Add($"BOTTOM-RIGHT {_bottomRight.ToText()}");
 
                 File.WriteAllLines(dialog.FileName, lines);
-                SetBottomStatus($"Журнал помилок збережено: {dialog.FileName}");
+                SetBottomStatus($"Diagnostic log saved: {dialog.FileName}");
             }
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    $"Не вдалося зберегти файл:\n{ex.Message}",
-                    "Помилка збереження", MessageBoxButton.OK, MessageBoxImage.Error);
+                    $"Failed to save file:\n{ex.Message}",
+                    "Save error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -871,7 +900,7 @@ namespace AmtPtpConfigGui
             if (connected)
             {
                 StatusDot.Fill = ConnectedBrush;
-                StatusText.Text = "Підключено: Wellspring Precision Touchpad";
+                StatusText.Text = "Connected: Wellspring Precision Touchpad";
 
                 if (_device.TryGetPalmConfig(out var cfg))
                 {
@@ -880,7 +909,7 @@ namespace AmtPtpConfigGui
                 else
                 {
                     LoadConfigIntoSliders(PalmConfig.Default);
-                    SetBottomStatus("Пристрій знайдено, але не вдалося прочитати конфігурацію — показано значення за замовчуванням.");
+                    SetBottomStatus("Device found, but its configuration could not be read — showing defaults.");
                 }
 
                 if (_device.TryGetPointerConfig(out var pointerCfg))
@@ -907,7 +936,7 @@ namespace AmtPtpConfigGui
             else
             {
                 StatusDot.Fill = DisconnectedBrush;
-                StatusText.Text = "Пристрій не знайдено — режим попереднього перегляду";
+                StatusText.Text = "Device not found — preview mode";
                 LoadConfigIntoSliders(PalmConfig.Default);
                 LoadPointerConfigIntoControls(PointerConfig.Default);
                 LoadScrollConfigIntoControls(ScrollConfig.Default);
@@ -918,7 +947,7 @@ namespace AmtPtpConfigGui
                 // why, right in the GUI - no debugger or Event Viewer needed.
                 SetBottomStatus(string.IsNullOrEmpty(_device.LastErrorMessage)
                     ? ""
-                    : $"Діагностика: {_device.LastErrorMessage}");
+                    : $"Diagnostics: {_device.LastErrorMessage}");
 
                 if (!string.IsNullOrEmpty(_device.LastErrorMessage))
                 {
@@ -927,8 +956,8 @@ namespace AmtPtpConfigGui
             }
 
             GeometrySourceText.Text = _geometryFromDevice
-                ? "геометрія: з пристрою"
-                : "геометрія: приблизна (пристрій не підключено)";
+                ? "geometry: from device"
+                : "geometry: estimated (device not connected)";
 
             DrawPreview();
         }
@@ -1020,7 +1049,7 @@ namespace AmtPtpConfigGui
             {
                 _liveEnabled = false;
                 _liveTimer.Stop();
-                LiveStatusText.Text = "Live: пристрій не підключено";
+                LiveStatusText.Text = "Live: device not connected";
                 SetLiveDot(active: false);
                 HideAllLiveOverlayElements();
                 return;
@@ -1032,9 +1061,9 @@ namespace AmtPtpConfigGui
                 _liveTimer.Stop();
                 if (ChkLive.IsChecked == true)
                     ChkLive.IsChecked = false;
-                LiveStatusText.Text = "Live: помилка";
-                LiveCoordText.Text = "Live: координати —";
-                LiveCornerText.Text = "Кути: TL 0 | TR 0 | BL 0 | BR 0";
+                LiveStatusText.Text = "Live: error";
+                LiveCoordText.Text = "Live: coordinates —";
+                LiveCornerText.Text = "Corners: TL 0 | TR 0 | BL 0 | BR 0";
                 SetLiveDot(active: null); // error - solid red, no pulse
                 HideAllLiveOverlayElements();
                 return;
@@ -1048,15 +1077,15 @@ namespace AmtPtpConfigGui
             {
                 ResetCornerExtrema();
                 _liveTimer.Start();
-                LiveStatusText.Text = "Live: очікування… | кути: збираються";
+                LiveStatusText.Text = "Live: waiting… | corners: collecting";
                 SetLiveDot(active: true);
             }
             else
             {
                 _liveTimer.Stop();
-                LiveStatusText.Text = "Live: вимкнено";
-                LiveCoordText.Text = "Live: координати —";
-                LiveCornerText.Text = "Кути: TL 0 | TR 0 | BL 0 | BR 0";
+                LiveStatusText.Text = "Live: disabled";
+                LiveCoordText.Text = "Live: coordinates —";
+                LiveCornerText.Text = "Corners: TL 0 | TR 0 | BL 0 | BR 0";
                 SetLiveDot(active: false);
                 HideAllLiveOverlayElements();
                 DrawPreview();
@@ -1113,22 +1142,23 @@ namespace AmtPtpConfigGui
                 for (int i = 0; i < frame.ContactCount && i < frame.Contacts.Length; i++)
                 {
                     var c = frame.Contacts[i];
-                    coordLines.Add($"C{i + 1}  ID {c.ContactID,-3}   Raw {c.RawX,4},{c.RawY,4}   Norm {c.X,4},{c.Y,4}");
+                    coordLines.Add(
+                        $"C{i + 1,-3} ID {c.ContactID,4}   RawX {c.RawX,6}   RawY {c.RawY,6}   X {c.X,6}   Y {c.Y,6}");
                 }
 
                 LiveCoordText.Text = string.Join(Environment.NewLine, coordLines);
             }
             else
             {
-                LiveCoordText.Text = "Live: координати — немає активних контактів";
+                LiveCoordText.Text = "Live: coordinates — no active contacts";
             }
 
             LiveCornerText.Text =
-                $"Кути: TL {_topLeft.Samples} | TR {_topRight.Samples} | " +
+                $"Corners: TL {_topLeft.Samples} | TR {_topRight.Samples} | " +
                 $"BL {_bottomLeft.Samples} | BR {_bottomRight.Samples}";
 
             LiveStatusText.Text =
-                $"Live: {frame.ContactCount} дот. | seq {frame.Sequence}" +
+                $"Live: {frame.ContactCount} contacts | seq {frame.Sequence}" +
                 (frame.ButtonDown != 0 ? " | BUTTON" : "") +
                 (frame.LargePalmBlanked != 0 ? " | PALM" : "");
         }
@@ -1642,9 +1672,9 @@ namespace AmtPtpConfigGui
             {
                 PalmClass.None => "FINGER (PALM_NONE)",
                 PalmClass.Local => isBirth && PalmPreviewEngine.InEdgeZone(_geometry, cfg, sensorX, sensorY)
-                    ? "PALM (PALM_LOCAL — у крайовій зоні)"
-                    : "PALM (PALM_LOCAL — за формою/балами)",
-                PalmClass.Large => "PALM (PALM_LARGE — весь тачпад блокується)",
+                    ? "PALM (PALM_LOCAL — at edge zone)"
+                    : "PALM (PALM_LOCAL — by shape/score)",
+                PalmClass.Large => "PALM (PALM_LARGE — entire touchpad rejected)",
                 _ => "—",
             };
             ClassificationText.Text = classLabel;
@@ -1811,19 +1841,19 @@ namespace AmtPtpConfigGui
 
             if (!_device.IsConnected)
             {
-                SetBottomStatus("Профіль збережено локально. Пристрій не підключено — на драйвер налаштування не записані.");
+                SetBottomStatus("Profile saved locally. Device is not connected, so the driver was not updated.");
             }
             else if (palmOk && pointerOk && scrollOk)
             {
-                SetBottomStatus($"«{profile?.Name ?? "Поточний профіль"}» збережено і застосовано до драйвера.");
+                SetBottomStatus($"“{profile?.Name ?? "Current profile"}” saved and applied to the driver.");
             }
             else if (!palmOk && !pointerOk && !scrollOk)
             {
-                SetBottomStatus("Профіль збережено локально, але DeviceIoControl не дозволив записати його на драйвер.");
+                SetBottomStatus("Profile saved locally, but DeviceIoControl did not allow writing it to the driver.");
             }
             else
             {
-                SetBottomStatus("Профіль збережено локально. Частину налаштувань не вдалося записати на драйвер.");
+                SetBottomStatus("Profile saved locally. Some settings could not be written to the driver.");
             }
         }
 
@@ -1860,11 +1890,11 @@ namespace AmtPtpConfigGui
             LoadScrollConfigIntoControls(scrollOk ? appliedScroll : ScrollConfig.Default);
 
             if (palmOk && pointerOk && scrollOk)
-                SetBottomStatus("Скинуто до значень за замовчуванням (Palm + Scroll + Pointer).");
+                SetBottomStatus("Reset to defaults (Palm + Scroll + Pointer).");
             else if (_device.IsConnected)
-                SetBottomStatus("Не вдалося повністю скинути налаштування на драйвері — показано значення за замовчуванням.");
+                SetBottomStatus("Could not fully reset driver settings — showing defaults.");
             else
-                SetBottomStatus("Показано значення за замовчуванням (пристрій не підключено).");
+                SetBottomStatus("Showing defaults (device not connected).");
 
             DrawPreview();
             var active = ActiveProfile;
@@ -1893,7 +1923,7 @@ namespace AmtPtpConfigGui
 
             var json = JsonSerializer.Serialize(profile, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(dlg.FileName, json);
-            SetBottomStatus($"Профіль (Palm + Scroll + Pointer) збережено: {dlg.FileName}");
+            SetBottomStatus($"Profile (Palm + Scroll + Pointer) saved: {dlg.FileName}");
         }
 
         private void LoadProfile_Click(object sender, RoutedEventArgs e)
@@ -1921,13 +1951,13 @@ namespace AmtPtpConfigGui
                 {
                     var profile = JsonSerializer.Deserialize<AmtPtpProfile>(json);
                     if (profile == null)
-                        throw new InvalidDataException("Порожній або некоректний файл профілю.");
+                        throw new InvalidDataException("Empty or invalid profile file.");
 
                     LoadConfigIntoSliders(profile.Palm.Clamped());
                     LoadPointerConfigIntoControls(profile.Pointer.Clamped());
                     LoadScrollConfigIntoControls(profile.Scroll.StructVersion == 0 ? ScrollConfig.Default : profile.Scroll.Clamped());
                     DrawPreview();
-                    SetBottomStatus($"Профіль (Palm + Scroll + Pointer) завантажено: {dlg.FileName}. Натисніть «Зберегти», щоб записати на драйвер.");
+                    SetBottomStatus($"Profile (Palm + Scroll + Pointer) loaded: {dlg.FileName}. Click “Save” to write it to the driver.");
                 }
                 else
                 {
@@ -1938,12 +1968,12 @@ namespace AmtPtpConfigGui
                     var cfg = JsonSerializer.Deserialize<PalmConfig>(json);
                     LoadConfigIntoSliders(cfg.Clamped());
                     DrawPreview();
-                    SetBottomStatus($"Профіль (лише Palm, старий формат) завантажено: {dlg.FileName}. Натисніть «Зберегти», щоб записати на драйвер.");
+                    SetBottomStatus($"Profile (legacy Palm-only format) loaded: {dlg.FileName}. Click “Save” to write it to the driver.");
                 }
             }
             catch (Exception ex)
             {
-                SetBottomStatus($"Помилка завантаження профілю: {ex.Message}");
+                SetBottomStatus($"Profile load error: {ex.Message}");
             }
         }
 

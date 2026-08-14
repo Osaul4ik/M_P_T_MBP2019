@@ -8,7 +8,7 @@ namespace AmtPtpConfigGui
 {
     internal sealed class GuiProfile
     {
-        public string Name { get; set; } = "Профіль 1";
+        public string Name { get; set; } = "Profile 1";
         public Native.PalmConfig Palm { get; set; }
         public Native.PointerConfig Pointer { get; set; }
         public Native.ScrollConfig Scroll { get; set; }
@@ -46,7 +46,7 @@ namespace AmtPtpConfigGui
             var defaults = new List<GuiProfile>();
             for (int i = 1; i <= DefaultProfileCount; i++)
             {
-                defaults.Add(CreateDefault($"Профіль {i}"));
+                defaults.Add(CreateDefault($"Profile {i}"));
             }
             Save(defaults);
             return defaults;
@@ -76,7 +76,7 @@ namespace AmtPtpConfigGui
             foreach (var p in profiles)
             {
                 if (string.IsNullOrWhiteSpace(p.Name))
-                    p.Name = "Профіль";
+                    p.Name = "Profile";
                 p.Palm = p.Palm.Clamped();
                 p.Pointer = p.Pointer.Clamped();
                 p.Scroll = p.Scroll.StructVersion == 0 ? Native.ScrollConfig.Default : p.Scroll.Clamped();
