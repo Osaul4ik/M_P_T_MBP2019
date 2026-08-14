@@ -12,6 +12,7 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Runtime.InteropServices;
 using Forms = System.Windows.Forms;
 using AmtPtpConfigGui.Native;
 using Microsoft.Win32;
@@ -179,6 +180,7 @@ namespace AmtPtpConfigGui
             _appSettings = AppSettingsStore.Load();
 
             InitializeComponent();
+            AddHandler(UIElement.PreviewMouseWheelEvent, new MouseWheelEventHandler(SlowScrollWheel), true);
             ChkPalmEdgeRejection.IsChecked = _appSettings.PalmEdgeRejectionEnabled;
             _appSettings.Theme = ThemeManager.Get(_appSettings.Theme).Id;
             ThemeManager.Apply(_appSettings.Theme, Resources);
@@ -685,13 +687,13 @@ namespace AmtPtpConfigGui
 
         private Forms.ContextMenuStrip BuildTrayMenu()
         {
-            var menu = new Forms.ContextMenuStrip
+            var menu = new RoundedContextMenuStrip
             {
                 ShowImageMargin = false,
-                ShowCheckMargin = true,
+                ShowCheckMargin = false,
                 AutoClose = true,
-                Padding = new System.Windows.Forms.Padding(6, 7, 6, 7),
-                Font = new System.Drawing.Font("Segoe UI", 9F),
+                Padding = new System.Windows.Forms.Padding(8, 8, 8, 8),
+                Font = new System.Drawing.Font("Segoe UI Variable Text, Segoe UI", 9F),
                 BackColor = System.Drawing.Color.FromArgb(250, 251, 253),
                 ForeColor = System.Drawing.Color.FromArgb(30, 34, 40),
                 Renderer = new ModernTrayRenderer(ThemeManager.CurrentThemeId),
@@ -718,7 +720,7 @@ namespace AmtPtpConfigGui
                 menu.BackColor = trayColors.Back;
                 menu.ForeColor = trayColors.Fore;
                 menu.Renderer = new ModernTrayRenderer(ThemeManager.CurrentThemeId);
-                menu.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Regular);
+                menu.Font = new System.Drawing.Font("Segoe UI Variable Text, Segoe UI", 9F, System.Drawing.FontStyle.Regular);
                 menu.Items.Clear();
 
                 var header = new Forms.ToolStripMenuItem("Wellspring PTP")
@@ -2252,6 +2254,36 @@ namespace AmtPtpConfigGui
             }
         }
 
+        private static void SlowScrollWheel(object? sender, MouseWheelEventArgs e)
+        {
+            if (e.Delta == 0)
+                return;
+
+            DependencyObject? source = e.OriginalSource as DependencyObject;
+            ScrollViewer? viewer = null;
+
+            while (source != null)
+            {
+                if (source is ScrollViewer sv)
+                {
+                    viewer = sv;
+                    break;
+                }
+
+                source = System.Windows.Media.VisualTreeHelper.GetParent(source);
+            }
+
+            if (viewer == null)
+                return;
+
+            // One mouse-wheel notch = a deliberately small movement.
+            // WPF's default line/page behavior is too aggressive for this dense settings UI.
+            const double pixelsPerNotch = 18.0;
+            double notches = e.Delta / (double)System.Windows.Input.Mouse.MouseWheelDeltaForOneLine;
+            viewer.ScrollToVerticalOffset(viewer.VerticalOffset - notches * pixelsPerNotch);
+            e.Handled = true;
+        }
+
         private void SetBottomStatus(string text) => BottomStatusText.Text = text;
 
         protected override void OnClosed(EventArgs e)
@@ -2272,6 +2304,38 @@ namespace AmtPtpConfigGui
             base.OnClosed(e);
         }
     }
+    internal sealed class RoundedContextMenuStrip : Forms.ContextMenuStrip
+    {
+        [DllImport("gdi32.dll")]
+        private static extern IntPtr CreateRoundRectRgn(int x1, int y1, int x2, int y2, int cx, int cy);
+
+        [DllImport("user32.dll")]
+        private static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool redraw);
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            ApplyRoundedRegion();
+        }
+
+        protected override void OnSizeChanged(EventArgs e)
+        {
+            base.OnSizeChanged(e);
+            if (IsHandleCreated)
+                ApplyRoundedRegion();
+        }
+
+        private void ApplyRoundedRegion()
+        {
+            if (!IsHandleCreated || Width <= 0 || Height <= 0)
+                return;
+
+            IntPtr region = CreateRoundRectRgn(0, 0, Width + 1, Height + 1, 16, 16);
+            if (region != IntPtr.Zero)
+                SetWindowRgn(Handle, region, true);
+        }
+    }
+
     internal sealed class ModernTrayRenderer : Forms.ToolStripProfessionalRenderer
     {
         private sealed class Colors : Forms.ProfessionalColorTable

@@ -194,8 +194,8 @@
         <Style TargetType="TextBlock" x:Key="SliderValue">
             <Setter Property="HorizontalAlignment" Value="Right"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas"/>
-            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="FontSize" Value="12.5"/>
             <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
             <Setter Property="Background" Value="{DynamicResource ControlFillBrush}"/>
             <Setter Property="Margin" Value="8,0,0,0"/>
@@ -248,8 +248,8 @@
                                                 <Border Height="4" CornerRadius="2">
                                                     <Border.Background>
                                                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                                            <GradientStop Color="#5B8CF0" Offset="0"/>
-                                                            <GradientStop Color="#2554C7" Offset="1"/>
+                                                            <GradientStop Color="{DynamicResource AccentBrushHover}" Offset="0"/>
+                                                            <GradientStop Color="{DynamicResource AccentBrush}" Offset="1"/>
                                                         </LinearGradientBrush>
                                                     </Border.Background>
                                                 </Border>
@@ -284,6 +284,8 @@
             <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="FontSize" Value="12.5"/>
             <Setter Property="FontWeight" Value="Normal"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -464,7 +466,7 @@
                                         CornerRadius="9"
                                         Padding="4"
                                         Effect="{StaticResource CardShadow}">
-                                    <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                    <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" MaxHeight="320" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                         <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
                                     </ScrollViewer>
                                 </Border>
@@ -603,23 +605,23 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="CheckBox">
-                        <Grid MinWidth="118" MinHeight="26">
+                        <Grid MinWidth="142" MinHeight="28">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="28"/>
+                                <ColumnDefinition Width="34"/>
                                 <ColumnDefinition Width="42"/>
                             </Grid.ColumnDefinitions>
                             <ContentPresenter Grid.Column="0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="State" Grid.Column="1" Text="OFF"
-                                       FontFamily="Segoe UI Variable Text" FontSize="10.5" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="11" FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextSecondaryBrush}"
                                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                            <Border x:Name="Track" Grid.Column="2" Width="38" Height="22"
-                                    CornerRadius="11" Background="{DynamicResource ControlFillBrush}"
+                            <Border x:Name="Track" Grid.Column="2" Width="40" Height="24"
+                                    CornerRadius="12" Background="{DynamicResource ControlFillBrush}"
                                     BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
                                     HorizontalAlignment="Right" VerticalAlignment="Center">
                                 <Grid>
-                                    <Ellipse x:Name="Thumb" Width="16" Height="16" Fill="{DynamicResource TextTertiaryBrush}"
+                                    <Ellipse x:Name="Thumb" Width="18" Height="18" Fill="{DynamicResource TextTertiaryBrush}"
                                              HorizontalAlignment="Left" Margin="2,0,0,0" VerticalAlignment="Center"/>
                                 </Grid>
                             </Border>
@@ -629,6 +631,8 @@
                                 <Setter TargetName="Track" Property="Background" Value="{DynamicResource AccentBrush}"/>
                                 <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                                 <Setter TargetName="Thumb" Property="Fill" Value="{DynamicResource AccentContentBrush}"/>
+                                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right"/>
+                                <Setter TargetName="Thumb" Property="Margin" Value="0,0,2,0"/>
                                 <Setter TargetName="State" Property="Text" Value="ON"/>
                                 <Setter TargetName="State" Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
                             </Trigger>
@@ -675,7 +679,7 @@
                             <ToggleButton x:Name="DropDownToggle" Background="Transparent" BorderThickness="0" Focusable="False" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
                             <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True" Focusable="False" IsOpen="{TemplateBinding IsDropDownOpen}" PopupAnimation="Fade" VerticalOffset="5">
                                 <Border Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="4" SnapsToDevicePixels="True">
-                                    <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
+                                    <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" MaxHeight="320" VerticalScrollBarVisibility="Auto">
                                         <ItemsPresenter/>
                                     </ScrollViewer>
                                 </Border>
@@ -827,7 +831,7 @@
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Border Background="{DynamicResource ControlFillBrush}"
                             BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
-                            CornerRadius="9" Padding="10,7" MinWidth="122">
+                            CornerRadius="7" Padding="10,7" MinWidth="132" Height="34">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="#E5484D" VerticalAlignment="Center"/>
                             <TextBlock x:Name="StatusText" Margin="9,0,0,0" VerticalAlignment="Center"
@@ -837,7 +841,7 @@
                     <Border Margin="8,0,0,0"
                             Background="{DynamicResource CardBrush}"
                             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
-                            CornerRadius="9" Padding="10,7" MinWidth="250" MaxWidth="460">
+                            CornerRadius="7" Padding="10,7" MinWidth="250" MaxWidth="460" Height="34">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="Device" Style="{StaticResource SectionCaption}" Margin="0,0,8,0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="DeviceModelText" VerticalAlignment="Center"
@@ -880,7 +884,7 @@
                     <Button Content="＋" Width="38" Height="34" Padding="0" Margin="0,0,6,0"
                             Click="NewProfile_Click" ToolTip="New profile"/>
                     <Button Content="Rename" MinWidth="128" Height="34" Margin="0,0,6,0" Click="RenameProfile_Click"/>
-                    <Button Content="Delete" MinWidth="90" Height="34" Style="{StaticResource DangerButton}" Click="DeleteProfile_Click"/>
+                    <Button Content="Delete" MinWidth="90" Height="34" Click="DeleteProfile_Click"/>
                     <CheckBox x:Name="ChkProMode" Content="Pro Mode" Style="{StaticResource AndroidSwitch}"
                               Margin="14,0,0,0" VerticalAlignment="Center" Checked="ProMode_Changed" Unchecked="ProMode_Changed"/>
                 </WrapPanel>
@@ -929,7 +933,7 @@
                         Background="{DynamicResource ControlFillBrush}"
                         BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
                         CornerRadius="8" Height="116">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <TextBlock x:Name="LiveCoordText" Text="Live: no active contacts"
                                    Style="{StaticResource TelemetryText}"
                                    FontFamily="Consolas" FontSize="12"
@@ -969,7 +973,7 @@
 
             <TabControl Grid.Column="0" Style="{StaticResource SettingsTabControl}">
                 <TabItem Header="Palm" Style="{StaticResource SettingsTabItem}">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
                     <Border Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="14,12" Margin="0,0,0,14">
                         <Grid>
@@ -1108,7 +1112,7 @@
                 </TabItem>
 
                 <TabItem Header="Scroll" Style="{StaticResource SettingsTabItem}">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel>
                             <GroupBox>
                                 <GroupBox.Header>
@@ -1182,7 +1186,7 @@
                 </TabItem>
 
                 <TabItem Header="Pointer" Style="{StaticResource SettingsTabItem}">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel>
                             <GroupBox>
                                 <GroupBox.Header>
