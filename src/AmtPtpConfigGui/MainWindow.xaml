@@ -1,6 +1,7 @@
 <Window x:Class="AmtPtpConfigGui.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:AmtPtpConfigGui"
         Title="Wellspring PTP - Palm Rejection Settings"
         Icon="Assets/AppIcon.ico"
         Height="820" Width="1280" MinHeight="660" MinWidth="1120"
@@ -1018,8 +1019,8 @@
                                              handful of pooled shapes here instead of clearing+rebuilding the
                                              whole static background (pad, edge zones, test-touch point) 20-30
                                              times a second - see DrawLiveOverlay in the code-behind. -->
-                                        <Canvas x:Name="LiveOverlayCanvas" Width="700" Height="460" Background="Transparent"
-                                                IsHitTestVisible="False"/>
+                                        <local:LiveOverlayControl x:Name="LiveOverlayCanvas" Width="700" Height="460"
+                                                  IsHitTestVisible="False"/>
                                     </Grid>
                                 </Viewbox>
                             </Border>

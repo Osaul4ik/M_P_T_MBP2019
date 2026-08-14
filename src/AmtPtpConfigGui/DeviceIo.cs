@@ -105,7 +105,10 @@ namespace AmtPtpConfigGui.Native
         private const uint FileShareWrite = 0x2;
         private const uint OpenExisting = 3;
 
+        private readonly object _ioLock = new();
         private SafeFileHandle? _handle;
+        private IntPtr _liveFrameBuffer;
+        private int _liveFrameBufferSize;
 
         public bool IsConnected =>
             _handle != null && !_handle.IsInvalid;
@@ -134,32 +137,53 @@ namespace AmtPtpConfigGui.Native
         /// </summary>
         public bool TryConnect()
         {
-            Disconnect();
-
-            LastErrorMessage = string.Empty;
-
-            var handle = CreateFile(
-                ControlDevicePath,
-                GenericRead | GenericWrite,
-                FileShareRead | FileShareWrite,
-                IntPtr.Zero,
-                OpenExisting,
-                0,
-                IntPtr.Zero);
-
-            if (handle.IsInvalid)
+            lock (_ioLock)
             {
-                return Fail($"CreateFile('{ControlDevicePath}')");
-            }
+                DisconnectUnsafe();
 
-            _handle = handle;
-            return true;
+                LastErrorMessage = string.Empty;
+
+                var handle = CreateFile(
+                    ControlDevicePath,
+                    GenericRead | GenericWrite,
+                    FileShareRead | FileShareWrite,
+                    IntPtr.Zero,
+                    OpenExisting,
+                    0,
+                    IntPtr.Zero);
+
+                if (handle.IsInvalid)
+                {
+                    return Fail($"CreateFile('{ControlDevicePath}')");
+                }
+
+                _handle = handle;
+                _liveFrameBufferSize = Marshal.SizeOf<LiveFrame>();
+                _liveFrameBuffer = Marshal.AllocHGlobal(_liveFrameBufferSize);
+                return true;
+            }
         }
 
         public void Disconnect()
         {
+            lock (_ioLock)
+            {
+                DisconnectUnsafe();
+            }
+        }
+
+        private void DisconnectUnsafe()
+        {
             _handle?.Dispose();
             _handle = null;
+
+            if (_liveFrameBuffer != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(_liveFrameBuffer);
+                _liveFrameBuffer = IntPtr.Zero;
+            }
+
+            _liveFrameBufferSize = 0;
         }
 
         public bool TryGetPalmConfig(
@@ -534,37 +558,26 @@ namespace AmtPtpConfigGui.Native
         {
             frame = default;
 
-            if (!IsConnected)
-                return false;
-
-            int size = Marshal.SizeOf<LiveFrame>();
-            IntPtr outBuf = Marshal.AllocHGlobal(size);
-
-            try
+            lock (_ioLock)
             {
+                if (!IsConnected || _liveFrameBuffer == IntPtr.Zero)
+                    return false;
+
                 bool ok = DeviceIoControl(
                     _handle!,
                     IoctlGetLiveFrame,
                     IntPtr.Zero,
                     0,
-                    outBuf,
-                    (uint)size,
+                    _liveFrameBuffer,
+                    (uint)_liveFrameBufferSize,
                     out uint bytesReturned,
                     IntPtr.Zero);
 
-                if (!ok || bytesReturned < size)
+                if (!ok || bytesReturned < (uint)_liveFrameBufferSize)
                     return false;
 
-                frame = Marshal.PtrToStructure<LiveFrame>(outBuf);
-                // StructVersion 2 added Major/Minor geometry fields to
-                // LiveContact; a v1 driver will report a smaller
-                // bytesReturned and fail the size check above already,
-                // but keep an explicit version gate too.
+                frame = Marshal.PtrToStructure<LiveFrame>(_liveFrameBuffer);
                 return frame.StructVersion == 3;
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(outBuf);
             }
         }
 

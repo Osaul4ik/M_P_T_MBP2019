@@ -9,6 +9,8 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using System.Threading;
+using System.Threading.Tasks;
 using Forms = System.Windows.Forms;
 using AmtPtpConfigGui.Native;
 using Microsoft.Win32;
@@ -106,24 +108,17 @@ namespace AmtPtpConfigGui
         private bool _allowWindowClose;
         private bool _settingsDialogOpen;
 
-        private readonly DispatcherTimer _liveTimer;
+        private readonly DispatcherTimer _liveRenderTimer;
+        private CancellationTokenSource? _liveCts;
+        private Task? _livePollTask;
+        private readonly object _liveFrameLock = new();
+        private LiveFrame _latestLiveFrame;
+        private bool _hasLatestLiveFrame;
         private bool _liveEnabled;
         private uint _lastLiveSequence;
 
-        // Pooled live-overlay shapes (one triple per AMT_LIVE_MAX_CONTACTS
-        // slot), created once and reused every tick - see DrawLiveOverlay.
-        // Reusing these instead of allocating fresh Ellipse/TextBlock
-        // objects and clearing/rebuilding the whole canvas on every frame
-        // is what keeps Live mode from pegging the CPU: WPF layout/render
-        // cost comes from visual-tree churn, not from the IOCTL poll itself.
-        private const int LiveOverlaySlots = 5; // matches AMT_LIVE_MAX_CONTACTS in Public.h
-        private readonly Ellipse[] _liveFootprints = new Ellipse[LiveOverlaySlots];
-        private readonly Ellipse[] _liveCenters = new Ellipse[LiveOverlaySlots];
-        private readonly TextBlock[] _liveLabels = new TextBlock[LiveOverlaySlots];
-        private bool _liveOverlayInitialized;
-
-        private readonly Dictionary<uint, (double Major, double Minor)> _liveGeometrySmooth = new();
-        private const double LiveGeometrySmoothAlpha = 0.25; // lower = smoother/slower to react
+        private const int LiveOverlaySlots = 5;
+        private const double LiveGeometrySmoothAlpha = 0.25;
 
         private sealed class CornerExtrema
         {
@@ -196,15 +191,11 @@ namespace AmtPtpConfigGui
 
             Closing += MainWindow_Closing;
 
-            _liveTimer = new DispatcherTimer
+            _liveRenderTimer = new DispatcherTimer
             {
-                // 20 Hz instead of the previous 30 Hz - still visually
-                // smooth for a debug/calibration overlay, ~35% fewer
-                // ticks (and therefore fewer IOCTL polls + overlay
-                // updates) than before.
-                Interval = TimeSpan.FromMilliseconds(50)
+                Interval = TimeSpan.FromMilliseconds(33)
             };
-            _liveTimer.Tick += LiveTimer_Tick;
+            _liveRenderTimer.Tick += LiveRenderTimer_Tick;
 
             Loaded += (_, _) =>
             {
@@ -673,7 +664,8 @@ namespace AmtPtpConfigGui
                 return;
             }
 
-            _liveTimer.Stop();
+            StopLivePolling();
+            _liveRenderTimer.Stop();
             _device.Disconnect();
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
@@ -927,7 +919,7 @@ namespace AmtPtpConfigGui
             {
                 _device.SetLiveEnabled(false);
                 _liveEnabled = false;
-                _liveTimer.Stop();
+                _liveRenderTimer.Stop();
                 if (ChkLive != null)
                     ChkLive.IsChecked = false;
                 HideAllLiveOverlayElements();
@@ -1086,7 +1078,7 @@ namespace AmtPtpConfigGui
             if (!_device.IsConnected)
             {
                 _liveEnabled = false;
-                _liveTimer.Stop();
+                _liveRenderTimer.Stop();
                 LiveStatusText.Text = "Live: device not connected";
                 if (LiveCoordPanel != null) LiveCoordPanel.Visibility = Visibility.Collapsed;
                 if (LiveCornerText != null) LiveCornerText.Visibility = Visibility.Collapsed;
@@ -1098,7 +1090,7 @@ namespace AmtPtpConfigGui
             if (!_device.SetLiveEnabled(enabled))
             {
                 _liveEnabled = false;
-                _liveTimer.Stop();
+                _liveRenderTimer.Stop();
                 if (ChkLive.IsChecked == true)
                     ChkLive.IsChecked = false;
                 LiveStatusText.Text = "Live: error";
@@ -1113,12 +1105,13 @@ namespace AmtPtpConfigGui
 
             _liveEnabled = enabled;
             _lastLiveSequence = 0;
-            _liveGeometrySmooth.Clear();
 
             if (enabled)
             {
                 ResetCornerExtrema();
-                _liveTimer.Start();
+                _hasLatestLiveFrame = false;
+                StartLivePolling();
+                _liveRenderTimer.Start();
                 LiveStatusText.Text = "Live: waiting… | corners: collecting";
                 if (LiveCoordPanel != null) LiveCoordPanel.Visibility = Visibility.Visible;
                 if (LiveCornerText != null) LiveCornerText.Visibility = Visibility.Visible;
@@ -1126,7 +1119,8 @@ namespace AmtPtpConfigGui
             }
             else
             {
-                _liveTimer.Stop();
+                StopLivePolling();
+                _liveRenderTimer.Stop();
                 LiveStatusText.Text = "Live: disabled";
                 if (LiveCoordPanel != null) LiveCoordPanel.Visibility = Visibility.Collapsed;
                 if (LiveCornerText != null) LiveCornerText.Visibility = Visibility.Collapsed;
@@ -1166,13 +1160,19 @@ namespace AmtPtpConfigGui
             }
         }
 
-        private void LiveTimer_Tick(object? sender, EventArgs e)
+        private void LiveRenderTimer_Tick(object? sender, EventArgs e)
         {
             if (!_liveEnabled || !_device.IsConnected)
                 return;
 
-            if (!_device.TryGetLiveFrame(out var frame))
-                return;
+            LiveFrame frame;
+            lock (_liveFrameLock)
+            {
+                if (!_hasLatestLiveFrame)
+                    return;
+
+                frame = _latestLiveFrame;
+            }
 
             if (frame.Sequence == 0 || frame.Sequence == _lastLiveSequence)
                 return;
@@ -1181,271 +1181,116 @@ namespace AmtPtpConfigGui
             AccumulateCornerExtrema(frame);
             DrawLiveOverlay(frame);
 
-            if (frame.ContactCount > 0 && frame.Contacts != null)
-            {
-                var coordLines = new List<string>();
-
-                for (int i = 0; i < frame.ContactCount && i < frame.Contacts.Length; i++)
-                {
-                    var c = frame.Contacts[i];
-                    coordLines.Add(
-                        $"C{i + 1,-3}  {c.X,5},{c.Y,5}   P: {c.Pressure,3}");
-                }
-
-                LiveCoordText.Text = string.Join(Environment.NewLine, coordLines);
-            }
-            else
-            {
-                LiveCoordText.Text = "Live: coordinates — no active contacts";
-            }
+            int count = frame.ContactCount;
+            LiveCoordText.Text = BuildLiveContactText(frame, count);
 
             LiveCornerText.Text =
                 $"Corners: TL {_topLeft.Samples} | TR {_topRight.Samples} | " +
                 $"BL {_bottomLeft.Samples} | BR {_bottomRight.Samples}";
 
             LiveStatusText.Text =
-                $"Live: {frame.ContactCount} contacts | seq {frame.Sequence}" +
+                $"Live: {count} contacts | seq {frame.Sequence}" +
                 (frame.ButtonDown != 0 ? " | BUTTON" : "") +
                 (frame.LargePalmBlanked != 0 ? " | PALM" : "");
         }
 
-        // Creates the pooled overlay shapes once (lazy - PreviewCanvas/
-        // LiveOverlayCanvas aren't valid until the window is loaded) and
-        // adds them to LiveOverlayCanvas a single time. Every subsequent
-        // live tick only mutates their properties - no further
-        // Add/Remove/Clear on the canvas, which is what used to force a
-        // full WPF layout+render pass on every frame.
-        private void EnsureLiveOverlayElements()
+        private static string BuildLiveContactText(in LiveFrame frame, int count)
         {
-            if (_liveOverlayInitialized || LiveOverlayCanvas == null)
-                return;
+            if (count <= 0 || frame.Contacts == null)
+                return "Live: no active contacts";
 
-            for (int i = 0; i < LiveOverlaySlots; i++)
-            {
-                var footprint = new Ellipse { Visibility = Visibility.Collapsed };
-                var center = new Ellipse { Width = 6, Height = 6, Visibility = Visibility.Collapsed };
-                var label = new TextBlock
-                {
-                    FontSize = 11,
-                    FontWeight = FontWeights.SemiBold,
-                    Padding = new Thickness(5, 2, 5, 2),
-                    Visibility = Visibility.Collapsed,
-                };
-
-                LiveOverlayCanvas.Children.Add(footprint);
-                LiveOverlayCanvas.Children.Add(center);
-                LiveOverlayCanvas.Children.Add(label);
-
-                _liveFootprints[i] = footprint;
-                _liveCenters[i] = center;
-                _liveLabels[i] = label;
-            }
-
-            _liveOverlayInitialized = true;
-        }
-
-        // Hides (doesn't remove - removing/re-adding would defeat the
-        // whole point of pooling) every pooled overlay shape. Called when
-        // Live mode turns off or a frame has nothing to show, so stale
-        // footprints from the last live touch don't linger on screen.
-        private void HideAllLiveOverlayElements()
-        {
-            if (!_liveOverlayInitialized)
-                return;
-
-            for (int i = 0; i < LiveOverlaySlots; i++)
-            {
-                _liveFootprints[i].Visibility = Visibility.Collapsed;
-                _liveCenters[i].Visibility = Visibility.Collapsed;
-                _liveLabels[i].Visibility = Visibility.Collapsed;
-            }
-        }
-
-        private void DrawLiveOverlay(LiveFrame frame)
-        {
-            if (LiveOverlayCanvas == null)
-                return;
-
-            if (!_liveEnabled || frame.Contacts == null)
-            {
-                HideAllLiveOverlayElements();
-                return;
-            }
-
-            double w = LiveOverlayCanvas.Width;
-            double h = LiveOverlayCanvas.Height;
-            double xRange = _geometry.XMax - _geometry.XMin;
-            double yRange = _geometry.YMax - _geometry.YMin;
-
-            if (xRange <= 0 || yRange <= 0)
-            {
-                HideAllLiveOverlayElements();
-                return;
-            }
-
-            EnsureLiveOverlayElements();
-
-            // Track which contact IDs are still alive this frame so stale
-            // smoothing state for lifted contacts doesn't linger forever
-            // (and doesn't get reused if a ContactID happens to be recycled
-            // much later).
-            var seenIds = new HashSet<uint>();
-
-            int slots = Math.Min(frame.ContactCount, Math.Min(frame.Contacts.Length, LiveOverlaySlots));
+            int slots = Math.Min(count, Math.Min(frame.Contacts.Length, LiveOverlaySlots));
+            var sb = new System.Text.StringBuilder(slots * 42);
 
             for (int i = 0; i < slots; i++)
             {
                 var c = frame.Contacts[i];
-                seenIds.Add(c.ContactID);
+                if (i > 0)
+                    sb.AppendLine();
 
-                // LiveFrame X/Y are already normalized to the device's
-                // coordinate origin by the driver:
-                //   X = rawX - XMin
-                //   Y = YMax - rawY
-                // Therefore do NOT subtract _geometry.XMin/YMin again.
-                // Preview uses the same X direction as the normalized driver coordinates.
-                // Do not mirror X here: mirroring would also invert the physical
-                // orientation of the contact footprint.
-                double px = c.X / xRange * w;
-                double py = c.Y / yRange * h;
-
-                px = Math.Clamp(px, 0, w);
-                py = Math.Clamp(py, 0, h);
-
-                bool isPalm = c.PalmSuspect != 0;
-
-                // Outline/label color still reflects lifecycle phase so you
-                // can see DOWN/MOVE/UP at a glance; a palm-suspect contact
-                // always renders with a red fill regardless of phase, so it
-                // reads unambiguously even at a glance.
-                Brush outline;
-                Brush fill;
-
-                if (isPalm)
-                {
-                    outline = LivePalmOutline;
-                    fill = LiveFillPalm;
-                }
-                else if (c.Phase == 1)
-                {
-                    outline = Brushes.LimeGreen;
-                    fill = LiveFillDown;
-                }
-                else if (c.Phase == 3)
-                {
-                    outline = Brushes.Orange;
-                    fill = LiveFillUp;
-                }
-                else
-                {
-                    outline = Brushes.DeepSkyBlue;
-                    fill = LiveFillMove;
-                }
-
-                // Contact geometry: Major/Minor are raw sensor units from the
-                // nearest matched raw frame (0 for a reconstructed UP contact
-                // with no raw match this frame). Scale them against the pad's
-                // own sensor range - same convention as the offline test
-                // preview ellipse in DrawPreview() - so real touches and the
-                // manual test touch are visually comparable.
-                //
-                // Light per-contact EMA smoothing on the DISPLAYED size only
-                // (see _liveGeometrySmooth comment) - the short/minor axis of
-                // the firmware's ellipse fit is noticeably noisier per-frame
-                // than the long/major axis even for a perfectly still touch,
-                // which otherwise shows up as visible jitter in the rendered
-                // height while the width looks rock solid. A fresh DOWN
-                // snaps immediately to the raw size instead of fading in.
-                double rawMajor = c.Major;
-                double rawMinor = c.Minor;
-                double dispMajor, dispMinor;
-
-                if (c.Phase == 1 /* DOWN */ || !_liveGeometrySmooth.TryGetValue(c.ContactID, out var prevGeom))
-                {
-                    dispMajor = rawMajor;
-                    dispMinor = rawMinor;
-                }
-                else
-                {
-                    dispMajor = prevGeom.Major + (rawMajor - prevGeom.Major) * LiveGeometrySmoothAlpha;
-                    dispMinor = prevGeom.Minor + (rawMinor - prevGeom.Minor) * LiveGeometrySmoothAlpha;
-                }
-                _liveGeometrySmooth[c.ContactID] = (dispMajor, dispMinor);
-
-                // Major/minor are contact-size units, not X/Y coordinate units.
-                // Use one common scale so both axes grow physically consistently.
-                double sizeScaleX = w / xRange;
-                double sizeScaleY = h / yRange;
-                double sizeScale = (sizeScaleX + sizeScaleY) * 0.5;
-                double majorPx = dispMajor > 0 ? Math.Max(6, dispMajor * sizeScale) : 12;
-                double minorPx = dispMinor > 0 ? Math.Max(6, dispMinor * sizeScale) : 12;
-
-                var footprint = _liveFootprints[i];
-                footprint.Width = majorPx;
-                footprint.Height = minorPx;
-                footprint.Fill = fill;
-                footprint.Stroke = outline;
-                footprint.StrokeThickness = isPalm ? 2.5 : 2;
-
-                // Apple reports orientation in the raw finger field; 16384 is
-                // the special "point" value. The Linux bcm5974 mapping uses
-                // ABS_MT_ORIENTATION = 16384 - rawOrientation, where zero is
-                // the pad Y axis and +16384 is the pad X axis. Because our
-                // ellipse is drawn with its Major axis along X at 0 degrees,
-                // the equivalent WPF rotation is simply rawOrientation * 90 /
-                // 16384. We keep the raw value in the wire format and only
-                // convert here for visualization.
-                double rotationDeg = 0;
-                if (c.Orientation != 16384)
-                {
-                    rotationDeg = -(c.Orientation * 90.0 / 16384.0);
-                    while (rotationDeg <= -180) rotationDeg += 360;
-                    while (rotationDeg > 180) rotationDeg -= 360;
-                }
-
-                footprint.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
-                footprint.RenderTransform = new RotateTransform(rotationDeg);
-                Canvas.SetLeft(footprint, px - majorPx / 2);
-                Canvas.SetTop(footprint, py - minorPx / 2);
-                footprint.Visibility = Visibility.Visible;
-
-                var center = _liveCenters[i];
-                center.Fill = outline;
-                Canvas.SetLeft(center, px - 3);
-                Canvas.SetTop(center, py - 3);
-                center.Visibility = Visibility.Visible;
-
-                string tag = isPalm ? $"ID {c.ContactID} · PALM" : $"ID {c.ContactID}";
-                var label = _liveLabels[i];
-                label.Text = $"{tag}  P:{c.Pressure}  M:{c.Major}/{c.Minor}";
-                label.Foreground = isPalm ? Brushes.White : outline;
-                label.Background = isPalm ? LivePalmOutline : LiveTagBgBrush;
-                Canvas.SetLeft(label, px + Math.Max(18, majorPx / 2 + 4));
-                Canvas.SetTop(label, py - 9);
-                label.Visibility = Visibility.Visible;
+                sb.Append('C').Append(i + 1)
+                  .Append("  ")
+                  .Append(c.X).Append(',').Append(c.Y)
+                  .Append("  P:").Append(c.Pressure)
+                  .Append("  M:").Append(c.Major).Append('/').Append(c.Minor);
             }
 
-            // Any pooled slots beyond this frame's contact count belong to
-            // contacts that just lifted (or never existed) - hide them
-            // rather than leaving the last-drawn footprint stuck on screen.
-            for (int i = slots; i < LiveOverlaySlots; i++)
+            return sb.ToString();
+        }
+
+        private void StartLivePolling()
+        {
+            StopLivePolling();
+
+            _liveCts = new CancellationTokenSource();
+            var token = _liveCts.Token;
+
+            _livePollTask = Task.Run(() =>
             {
-                _liveFootprints[i].Visibility = Visibility.Collapsed;
-                _liveCenters[i].Visibility = Visibility.Collapsed;
-                _liveLabels[i].Visibility = Visibility.Collapsed;
+                while (!token.IsCancellationRequested)
+                {
+                    if (_device.IsConnected && _device.TryGetLiveFrame(out var frame))
+                    {
+                        lock (_liveFrameLock)
+                        {
+                            _latestLiveFrame = frame;
+                            _hasLatestLiveFrame = true;
+                        }
+                    }
+
+                    token.WaitHandle.WaitOne(8);
+                }
+            }, token);
+        }
+
+        private void StopLivePolling()
+        {
+            var cts = _liveCts;
+            _liveCts = null;
+
+            if (cts == null)
+                return;
+
+            try
+            {
+                cts.Cancel();
+                _livePollTask?.Wait(250);
+            }
+            catch (AggregateException)
+            {
+            }
+            finally
+            {
+                _livePollTask = null;
+                cts.Dispose();
+            }
+        }
+
+        private void EnsureLiveOverlayElements()
+        {
+            // Overlay drawing is now handled by LiveOverlayControl as one WPF
+            // visual. Keep this method for source compatibility with older
+            // callers; there are no per-contact child elements anymore.
+        }
+
+        private void HideAllLiveOverlayElements()
+        {
+            if (LiveOverlayControl != null)
+                LiveOverlayControl.Clear();
+        }
+
+        private void DrawLiveOverlay(LiveFrame frame)
+        {
+            if (LiveOverlayControl == null)
+                return;
+
+            if (!_liveEnabled || frame.Contacts == null)
+            {
+                LiveOverlayControl.Clear();
+                return;
             }
 
-            if (_liveGeometrySmooth.Count > 0)
-            {
-                var stale = new List<uint>();
-                foreach (var id in _liveGeometrySmooth.Keys)
-                {
-                    if (!seenIds.Contains(id))
-                        stale.Add(id);
-                }
-                foreach (var id in stale)
-                    _liveGeometrySmooth.Remove(id);
-            }
+            LiveOverlayControl.SetFrame(frame, _geometry, LiveGeometrySmoothAlpha);
         }
 
         // ---------------------------------------------------------------
@@ -2097,7 +1942,8 @@ namespace AmtPtpConfigGui
                 _device.SetLiveEnabled(false);
                 _liveEnabled = false;
             }
-            _liveTimer.Stop();
+            StopLivePolling();
+            _liveRenderTimer.Stop();
             _device.Dispose();
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
