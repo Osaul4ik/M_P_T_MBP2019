@@ -21,6 +21,7 @@ typedef struct _RAW_CONTACT
     SHORT  RawY;         // exact raw USB abs_y
     USHORT Major;        // touch_major, raw
     USHORT Minor;        // touch_minor, raw
+    USHORT Orientation;  // raw Apple orientation (signed 15-bit angle; 16384 = point)
     USHORT Pressure;     // force-touch trackpad pressure, raw ADC units (~0-300)
     UCHAR  Origin;        // firmware origin field; 0 == identity break signal
 } RAW_CONTACT, *PRAW_CONTACT;

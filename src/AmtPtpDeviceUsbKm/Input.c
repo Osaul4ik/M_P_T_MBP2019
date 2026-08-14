@@ -64,9 +64,10 @@ AmtInputParseFrame(
         rc->Y         = (USHORT)ny;
         rc->RawX      = (SHORT)rawX;
         rc->RawY      = (SHORT)rawY;
-        rc->Major     = (USHORT)major;
-        rc->Minor     = (USHORT)minor;
-        rc->Pressure  = (USHORT)pressure;
+        rc->Major       = (USHORT)major;
+        rc->Minor       = (USHORT)minor;
+        rc->Orientation = f->orientation;
+        rc->Pressure    = (USHORT)pressure;
         rc->Origin    = (UCHAR)f->origin;
         emitted++;
     }

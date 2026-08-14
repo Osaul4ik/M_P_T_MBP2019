@@ -1356,6 +1356,25 @@ namespace AmtPtpConfigGui
                 footprint.Fill = fill;
                 footprint.Stroke = outline;
                 footprint.StrokeThickness = isPalm ? 2.5 : 2;
+
+                // Apple reports orientation in the raw finger field; 16384 is
+                // the special "point" value. The Linux bcm5974 mapping uses
+                // ABS_MT_ORIENTATION = 16384 - rawOrientation, where zero is
+                // the pad Y axis and +16384 is the pad X axis. Because our
+                // ellipse is drawn with its Major axis along X at 0 degrees,
+                // the equivalent WPF rotation is simply rawOrientation * 90 /
+                // 16384. We keep the raw value in the wire format and only
+                // convert here for visualization.
+                double rotationDeg = 0;
+                if (c.Orientation != 16384)
+                {
+                    rotationDeg = c.Orientation * 90.0 / 16384.0;
+                    while (rotationDeg <= -180) rotationDeg += 360;
+                    while (rotationDeg > 180) rotationDeg -= 360;
+                }
+
+                footprint.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
+                footprint.RenderTransform = new RotateTransform(rotationDeg);
                 Canvas.SetLeft(footprint, px - majorPx / 2);
                 Canvas.SetTop(footprint, py - minorPx / 2);
                 footprint.Visibility = Visibility.Visible;
