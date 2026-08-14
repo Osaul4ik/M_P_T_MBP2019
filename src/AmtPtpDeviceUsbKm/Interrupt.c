@@ -286,7 +286,7 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
              ++i) {
             ULONG j;
             ULONG bestRawIndex = 0;
-            ULONG bestDistance = 0xFFFFFFFFUL;
+            ULONGLONG bestDistance = ~0ULL;
             BOOLEAN haveRawMatch = FALSE;
 
             pCtx->LiveFrame.Contacts[i].ContactID =

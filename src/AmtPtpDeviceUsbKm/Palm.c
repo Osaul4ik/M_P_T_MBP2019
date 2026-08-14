@@ -27,7 +27,6 @@ AmtPalmEdgeWidth(_In_ INT Range, _In_ LONGLONG FactorQ32)
 static BOOLEAN
 AmtPalmInEdgeZone(
     _In_ const struct BCM5974_CONFIG* DevInfo,
-    _In_ const AMT_PALM_CONFIG*       Config,
     _In_ const AMT_PALM_RUNTIME*      Runtime,
     _In_ INT                          NormX,
     _In_ INT                          NormY
@@ -64,7 +63,7 @@ AmtPalmClassify(
     // suppress accidental edge touches, not just wide palm-shaped ones.
     // Contacts already being tracked that merely move through the zone are
     // NOT affected - only IsBirth is checked here.
-    if (IsBirth && AmtPalmInEdgeZone(DevInfo, Config, Runtime, NormX, NormY)) {
+    if (IsBirth && AmtPalmInEdgeZone(DevInfo, Runtime, NormX, NormY)) {
         return PALM_LOCAL;
     }
 
@@ -116,7 +115,7 @@ AmtPalmClassify(
     // Soft edge bonus for continuations (or births that weren't caught by
     // the hard-reject above, e.g. a birth reported with major==0 for one
     // frame). Kept as a secondary signal on top of the hard reject.
-    if (major > 130 && AmtPalmInEdgeZone(DevInfo, Config, Runtime, NormX, NormY))
+    if (major > 130 && AmtPalmInEdgeZone(DevInfo, Runtime, NormX, NormY))
         score += 10;
 
     return (score >= palmScoreThresh) ? PALM_LOCAL : PALM_NONE;

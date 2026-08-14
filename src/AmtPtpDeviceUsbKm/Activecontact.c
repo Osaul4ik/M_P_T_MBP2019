@@ -390,8 +390,6 @@ AmtContactCommitSample(
     _In_    CONTACT_VELOCITY_BUCKET Velocity,
     _In_    INT             alphaNum,
     _In_    BOOLEAN         commitIsRetapSeededFirstSample,
-    _In_    const AMT_POINTER_CONFIG* PointerConfig,
-    _In_    const AMT_SCROLL_CONFIG* ScrollConfig,
     _In_    const AMT_POINTER_RUNTIME* PointerRuntime,
     _In_    const AMT_SCROLL_RUNTIME* ScrollRuntime,
     _Out_   USHORT*         OutX,
@@ -516,6 +514,8 @@ AmtContactUpdate(
     _In_    BOOLEAN         gestureActive,
     _In_    const AMT_POINTER_CONFIG* PointerConfig,
     _In_    const AMT_SCROLL_CONFIG* ScrollConfig,
+    _In_    const AMT_POINTER_RUNTIME* PointerRuntime,
+    _In_    const AMT_SCROLL_RUNTIME* ScrollRuntime,
     _Out_   USHORT*         OutX,
     _Out_   USHORT*         OutY
 )
@@ -570,7 +570,6 @@ AmtContactUpdate(
     AmtContactCommitSample(Contact, rawX, rawY, passed, aliveCountIsOne,
                            gestureActive, velocity,
                            alphaNum, retapSeededFirstSample,
-                           PointerConfig, ScrollConfig,
                            PointerRuntime, ScrollRuntime,
                            OutX, OutY);
 
