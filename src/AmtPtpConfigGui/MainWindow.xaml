@@ -408,14 +408,6 @@
             </Setter>
         </Style>
 
-        <!-- "Live" mode toggle, styled as a pill chip rather than a plain
-             checkbox - it's a persistent mode switch (like a mic-mute
-             toggle), a different interaction than the one-off option
-             checkboxes elsewhere (e.g. ChkIsBirth), so it gets a visibly
-             different affordance instead of reusing the same widget for
-             two different jobs. -->
-        <Style x:Key="ChipCheckBox" TargetType="CheckBox" BasedOn="{StaticResource ToggleChip}"/>
-
         <Style x:Key="ToggleChip" TargetType="CheckBox">
             <Setter Property="Padding" Value="12,6"/>
             <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
@@ -450,8 +442,8 @@
             </Setter>
         </Style>
 
-        <!-- Small colored legend/status pill used in the preview header and
-             the connection indicator. -->
+        <Style x:Key="ChipCheckBox" TargetType="CheckBox" BasedOn="{StaticResource ToggleChip}"/>
+
         <Style x:Key="Pill" TargetType="Border">
             <Setter Property="CornerRadius" Value="20"/>
             <Setter Property="Padding" Value="10,6"/>
