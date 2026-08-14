@@ -1,8 +1,8 @@
-using System.Windows;
+using Application = System.Windows.Application;
 
 namespace AmtPtpConfigGui
 {
-    public partial class App : System.Windows.Application
+    public partial class App : Application
     {
     }
 }

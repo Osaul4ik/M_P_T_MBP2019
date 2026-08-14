@@ -9,10 +9,23 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using System.Windows.Forms;
+using Forms = System.Windows.Forms;
 using AmtPtpConfigGui.Native;
 using Microsoft.Win32;
 using Application = System.Windows.Application;
+using Brush = System.Windows.Media.Brush;
+using Brushes = System.Windows.Media.Brushes;
+using Color = System.Windows.Media.Color;
+using Point = System.Windows.Point;
+using FontFamily = System.Windows.Media.FontFamily;
+using Orientation = System.Windows.Controls.Orientation;
+using Button = System.Windows.Controls.Button;
+using TextBox = System.Windows.Controls.TextBox;
+using RadioButton = System.Windows.Controls.RadioButton;
+using Rectangle = System.Windows.Shapes.Rectangle;
+using MessageBox = System.Windows.MessageBox;
+using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
+using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 
 namespace AmtPtpConfigGui
 {
@@ -83,7 +96,7 @@ namespace AmtPtpConfigGui
         private int _activeProfileIndex = -1;
 
         private readonly AppSettings _appSettings;
-        private readonly NotifyIcon _trayIcon;
+        private readonly Forms.NotifyIcon _trayIcon;
         private bool _allowWindowClose;
         private bool _settingsDialogOpen;
 
@@ -165,7 +178,7 @@ namespace AmtPtpConfigGui
             _uiReady = true;
 
             var appIcon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath ?? string.Empty);
-            _trayIcon = new NotifyIcon
+            _trayIcon = new Forms.NotifyIcon
             {
                 Icon = appIcon ?? System.Drawing.SystemIcons.Application,
                 Visible = true,
@@ -486,39 +499,39 @@ namespace AmtPtpConfigGui
 
         private void UpdateTrayMenu()
         {
-            var menu = new ContextMenuStrip();
+            var menu = new Forms.ContextMenuStrip();
 
-            var profilesItem = new ToolStripMenuItem("Профіль");
+            var profilesItem = new Forms.ToolStripMenuItem("Профіль");
             for (int i = 0; i < _profiles.Count; i++)
             {
                 int index = i;
-                var item = new ToolStripMenuItem(_profiles[i].Name)
+                var item = new Forms.ToolStripMenuItem(_profiles[i].Name)
                 { Checked = i == _activeProfileIndex };
                 item.Click += (_, _) => Dispatcher.Invoke(() => ActivateProfileFromTray(index));
                 profilesItem.DropDownItems.Add(item);
             }
             if (_profiles.Count == 0)
-                profilesItem.DropDownItems.Add(new ToolStripMenuItem("Немає профілів") { Enabled = false });
+                profilesItem.DropDownItems.Add(new Forms.ToolStripMenuItem("Немає профілів") { Enabled = false });
 
-            var palmEdges = new ToolStripMenuItem("Palm по краях")
+            var palmEdges = new Forms.ToolStripMenuItem("Palm по краях")
             { Checked = _appSettings.PalmEdgeRejectionEnabled, CheckOnClick = false };
             palmEdges.Click += (_, _) => Dispatcher.Invoke(() => TogglePalmEdgesFromTray());
 
-            var open = new ToolStripMenuItem("Відкрити апку");
+            var open = new Forms.ToolStripMenuItem("Відкрити апку");
             open.Click += (_, _) => Dispatcher.Invoke(ShowFromTray);
 
-            var settings = new ToolStripMenuItem("Налаштування");
+            var settings = new Forms.ToolStripMenuItem("Налаштування");
             settings.Click += (_, _) => Dispatcher.Invoke(ShowAppSettingsDialog);
 
-            var exit = new ToolStripMenuItem("Вийти");
+            var exit = new Forms.ToolStripMenuItem("Вийти");
             exit.Click += (_, _) => Dispatcher.Invoke(ExitApplication);
 
             menu.Items.Add(profilesItem);
             menu.Items.Add(palmEdges);
-            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add(open);
             menu.Items.Add(settings);
-            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add(exit);
 
             _trayIcon.ContextMenuStrip?.Dispose();
