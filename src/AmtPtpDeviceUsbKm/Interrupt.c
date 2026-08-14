@@ -307,11 +307,11 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
             // with the nearest raw contact from the same USB frame.
             //
             for (j = 0; j < rawFrame.ContactCount; ++j) {
-                LONG dx = (LONG)coreFrame.Contacts[i].X -
-                          (LONG)rawFrame.Contacts[j].X;
-                LONG dy = (LONG)coreFrame.Contacts[i].Y -
-                          (LONG)rawFrame.Contacts[j].Y;
-                ULONG distance = (ULONG)(dx * dx + dy * dy);
+                LONGLONG dx = (LONGLONG)coreFrame.Contacts[i].X -
+                               (LONGLONG)rawFrame.Contacts[j].X;
+                LONGLONG dy = (LONGLONG)coreFrame.Contacts[i].Y -
+                               (LONGLONG)rawFrame.Contacts[j].Y;
+                ULONGLONG distance = (ULONGLONG)(dx * dx + dy * dy);
 
                 if (!haveRawMatch || distance < bestDistance) {
                     haveRawMatch = TRUE;

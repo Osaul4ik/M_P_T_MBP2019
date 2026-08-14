@@ -8,6 +8,28 @@
 
 EXTERN_C_START
 
+// Precomputed fixed-point coefficients used only by the input hot path.
+// User-facing percentages remain in AMT_*_CONFIG for IOCTL/registry compatibility,
+// but the interrupt path never performs percent division.
+#define AMT_RUNTIME_FIXED_SHIFT 32
+#define AMT_RUNTIME_FIXED_ONE   (1LL << AMT_RUNTIME_FIXED_SHIFT)
+
+typedef struct _AMT_POINTER_RUNTIME
+{
+    LONGLONG CursorSpeedQ32;
+    INT  CursorSmoothingAlphaNum;
+    INT  CursorSmoothingAlphaNumSlow;
+    INT  CursorSmoothingAlphaDen;
+    LONGLONG CursorSmoothingSlopeQ32;
+} AMT_POINTER_RUNTIME, *PAMT_POINTER_RUNTIME;
+
+typedef struct _AMT_SCROLL_RUNTIME
+{
+    LONGLONG BaseScaleQ32;
+    LONGLONG FastScaleQ32;
+    LONGLONG SmoothingAlphaQ32;
+} AMT_SCROLL_RUNTIME, *PAMT_SCROLL_RUNTIME;
+
 typedef enum _CONTACT_STATE
 {
     CONTACT_FREE = 0,  // free pool slot, no identity
@@ -183,6 +205,8 @@ AmtContactUpdate(
     _In_    BOOLEAN         gestureActive,
     _In_    const AMT_POINTER_CONFIG* PointerConfig,
     _In_    const AMT_SCROLL_CONFIG* ScrollConfig,
+    _In_    const AMT_POINTER_RUNTIME* PointerRuntime,
+    _In_    const AMT_SCROLL_RUNTIME* ScrollRuntime,
     _Out_   USHORT*         OutX,
     _Out_   USHORT*         OutY
 );

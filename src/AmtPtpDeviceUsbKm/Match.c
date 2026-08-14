@@ -69,6 +69,7 @@ AmtMatchBuildCandidates(
     _In_  const RAW_FRAME*                        RawFrame,
     _In_  const struct BCM5974_CONFIG*             DevInfo,
     _In_  const AMT_PALM_CONFIG*                   PalmConfig,
+    _In_  const AMT_PALM_RUNTIME*                  PalmRuntime,
     _In_reads_(MAX_CONTACTS) const ACTIVE_CONTACT* Pool,
     _Out_ MATCH_CANDIDATE_SET*                     OutCandidates,
     _Out_ BOOLEAN*                                 LargePalmDetected
@@ -94,7 +95,7 @@ AmtMatchBuildCandidates(
         BOOLEAN isBirth = !AmtMatchHasNearbyActiveContact(
             Pool, (INT)rc->X, (INT)rc->Y);
 
-        PALM_CLASS palm = AmtPalmClassify(rc->Major, rc->Minor, DevInfo, PalmConfig,
+        PALM_CLASS palm = AmtPalmClassify(rc->Major, rc->Minor, DevInfo, PalmConfig, PalmRuntime,
                                           (INT)rc->X, (INT)rc->Y, isBirth);
 
         if (palm == PALM_LARGE) {

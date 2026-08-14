@@ -4,6 +4,7 @@
 #include <Hid.h>
 #include "ActiveContact.h"
 #include "PTPCore.h"
+#include "Palm.h"
 
 EXTERN_C_START
 
@@ -55,6 +56,7 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(
     AmtConfigControlGetContext
 )
 
+
 typedef struct _DEVICE_CONTEXT
 {
     // Protect shared frame-processing state across concurrent USB completions.
@@ -88,6 +90,7 @@ typedef struct _DEVICE_CONTEXT
     // by AmtPalmClassify (Palm.c) - protected by StateLock on write so a
     // config update from the GUI thread can't race a frame in flight.
     AMT_PALM_CONFIG PalmConfig;
+    AMT_PALM_RUNTIME PalmRuntime;
 
     // Runtime-tunable Force Tap (force touch) threshold and click action
     // (see AMT_POINTER_CONFIG in Public.h). Initialized to
@@ -99,9 +102,11 @@ typedef struct _DEVICE_CONTEXT
     // the action - protected by StateLock on write so a config update from
     // the GUI thread can't race a frame in flight.
     AMT_POINTER_CONFIG PointerConfig;
+    AMT_POINTER_RUNTIME PointerRuntime;
 
     // Runtime-tunable two-finger scroll behavior.
     AMT_SCROLL_CONFIG ScrollConfig;
+    AMT_SCROLL_RUNTIME ScrollRuntime;
 
     // TRUE only for trackpads whose packet format actually carries a
     // pressure reading (TYPE4/TYPE5 - see AppleDefinition.h). Derived once
@@ -339,6 +344,11 @@ VOID AmtPalmConfigSaveToRegistry(_In_ WDFDEVICE Device, _In_ const AMT_PALM_CONF
 // state (e.g. an edge zone covering the whole pad).
 VOID AmtPalmConfigClamp(_Inout_ PAMT_PALM_CONFIG Config);
 
+VOID AmtPalmRuntimeRebuild(
+    _In_ const AMT_PALM_CONFIG* Config,
+    _Out_ AMT_PALM_RUNTIME* Runtime
+);
+
 // Same best-effort registry persistence and clamp contract as the
 // AmtPalmConfig* trio above, for AMT_POINTER_CONFIG.
 _IRQL_requires_(PASSIVE_LEVEL)
@@ -351,5 +361,15 @@ VOID AmtPointerConfigClamp(_Inout_ PAMT_POINTER_CONFIG Config);
 VOID AmtScrollConfigLoadFromRegistry(_In_ WDFDEVICE Device, _Inout_ PAMT_SCROLL_CONFIG Config);
 VOID AmtScrollConfigSaveToRegistry(_In_ WDFDEVICE Device, _In_ const AMT_SCROLL_CONFIG* Config);
 VOID AmtScrollConfigClamp(_Inout_ PAMT_SCROLL_CONFIG Config);
+
+VOID AmtPointerRuntimeRebuild(
+    _In_ const AMT_POINTER_CONFIG* Config,
+    _Out_ AMT_POINTER_RUNTIME* Runtime
+);
+
+VOID AmtScrollRuntimeRebuild(
+    _In_ const AMT_SCROLL_CONFIG* Config,
+    _Out_ AMT_SCROLL_RUNTIME* Runtime
+);
 
 EXTERN_C_END

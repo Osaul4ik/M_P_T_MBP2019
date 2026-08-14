@@ -279,6 +279,7 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
         deviceContext->PalmConfig = defaultCfg;
     }
     AmtPalmConfigLoadFromRegistry(device, &deviceContext->PalmConfig);
+    AmtPalmRuntimeRebuild(&deviceContext->PalmConfig, &deviceContext->PalmRuntime);
 
     // Pointer config (Force Tap threshold + action): same compiled-in-
     // defaults-then-registry-override sequence as PalmConfig above.
@@ -287,12 +288,14 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
         deviceContext->PointerConfig = defaultPointerCfg;
     }
     AmtPointerConfigLoadFromRegistry(device, &deviceContext->PointerConfig);
+    AmtPointerRuntimeRebuild(&deviceContext->PointerConfig, &deviceContext->PointerRuntime);
 
     {
         AMT_SCROLL_CONFIG defaultScrollCfg = AMT_SCROLL_CONFIG_DEFAULT_INIT;
         deviceContext->ScrollConfig = defaultScrollCfg;
     }
     AmtScrollConfigLoadFromRegistry(device, &deviceContext->ScrollConfig);
+    AmtScrollRuntimeRebuild(&deviceContext->ScrollConfig, &deviceContext->ScrollRuntime);
 
     // Create the shared state lock for frame processing.
     {

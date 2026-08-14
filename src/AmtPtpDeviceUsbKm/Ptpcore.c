@@ -237,7 +237,7 @@ PTPCore_ProcessFrame(
     BOOLEAN              largePalm = FALSE;
 
     AmtMatchBuildCandidates(RawFrame, pCtx->DeviceInfo, &pCtx->PalmConfig,
-                            pCtx->ActiveContacts, &candidates, &largePalm);
+                            &pCtx->PalmRuntime, pCtx->ActiveContacts, &candidates, &largePalm);
 
     // Palm session: suppress candidates when palm active. Contacts that go
     // unmatched purely because of this suppression are NOT lifted (see
@@ -535,6 +535,7 @@ PTPCore_ProcessFrame(
                          cand->SlotIndex, NowQpc, pCtx->PerfFrequency.QuadPart,
                          (BOOLEAN)(aliveCount == 1), gestureThisFrame,
                          &pCtx->PointerConfig, &pCtx->ScrollConfig,
+                         &pCtx->PointerRuntime, &pCtx->ScrollRuntime,
                          &repX, &repY);
 
         // ARCHITECTURE FIX (PTP spec alignment): per the Windows Precision

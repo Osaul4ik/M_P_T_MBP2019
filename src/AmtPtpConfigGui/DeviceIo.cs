@@ -560,7 +560,7 @@ namespace AmtPtpConfigGui.Native
                 // LiveContact; a v1 driver will report a smaller
                 // bytesReturned and fail the size check above already,
                 // but keep an explicit version gate too.
-                return frame.StructVersion == 2;
+                return frame.StructVersion == 3;
             }
             finally
             {

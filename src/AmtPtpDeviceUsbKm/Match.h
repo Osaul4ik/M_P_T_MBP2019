@@ -5,6 +5,7 @@
 
 #include "PTPCore.h"
 #include "ActiveContact.h"
+#include "Palm.h"
 
 EXTERN_C_START
 
@@ -66,6 +67,7 @@ AmtMatchBuildCandidates(
     _In_  const RAW_FRAME*                        RawFrame,
     _In_  const struct BCM5974_CONFIG*             DevInfo,
     _In_  const AMT_PALM_CONFIG*                   PalmConfig,
+    _In_  const AMT_PALM_RUNTIME*                  PalmRuntime,
     _In_reads_(MAX_CONTACTS) const ACTIVE_CONTACT* Pool,
     _Out_ MATCH_CANDIDATE_SET*                     OutCandidates,
     _Out_ BOOLEAN*                                 LargePalmDetected

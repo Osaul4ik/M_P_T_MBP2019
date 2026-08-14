@@ -16,29 +16,19 @@
 // Air vs a T2 machine have different physical-size-to-sensor-range ratios).
 // ============================================================================
 
-// MICRO-OPT: "range * permille / 1000" as fixed-point "range * factor >>
-// SHIFT" instead of a runtime division - avoids a div/64-bit-div-helper per
-// contact per frame. Computed from the live (GUI-tunable) permille value,
-// so this can no longer be a compile-time constant; the multiply+shift is
-// still far cheaper than a division on the hot per-contact path.
-#define EDGE_FIXED_SHIFT 16
-
-static inline INT64
-AmtPalmEdgeFactor(_In_ ULONG Permille)
-{
-    return ((INT64)Permille << EDGE_FIXED_SHIFT) / 1000;
-}
-
+// MICRO-OPT: edge factors are precomputed when the palm config changes.
+// The hot per-contact path only does multiply+shift; no permille division.
 static inline INT
-AmtPalmEdgeWidth(_In_ INT Range, _In_ INT64 Factor)
+AmtPalmEdgeWidth(_In_ INT Range, _In_ LONGLONG FactorQ32)
 {
-    return (INT)(((INT64)Range * Factor) >> EDGE_FIXED_SHIFT);
+    return (INT)(((LONGLONG)Range * FactorQ32) >> AMT_RUNTIME_FIXED_SHIFT);
 }
 
 static BOOLEAN
 AmtPalmInEdgeZone(
     _In_ const struct BCM5974_CONFIG* DevInfo,
     _In_ const AMT_PALM_CONFIG*       Config,
+    _In_ const AMT_PALM_RUNTIME*      Runtime,
     _In_ INT                          NormX,
     _In_ INT                          NormY
 )
@@ -46,10 +36,10 @@ AmtPalmInEdgeZone(
     INT xRange = DevInfo->x.max - DevInfo->x.min;
     INT yRange = DevInfo->y.max - DevInfo->y.min;
 
-    INT edgeLeft   = AmtPalmEdgeWidth(xRange, AmtPalmEdgeFactor(Config->EdgePermilleLeft));
-    INT edgeRight  = AmtPalmEdgeWidth(xRange, AmtPalmEdgeFactor(Config->EdgePermilleRight));
-    INT edgeTop    = AmtPalmEdgeWidth(yRange, AmtPalmEdgeFactor(Config->EdgePermilleTop));
-    INT edgeBottom = AmtPalmEdgeWidth(yRange, AmtPalmEdgeFactor(Config->EdgePermilleBottom));
+    INT edgeLeft   = AmtPalmEdgeWidth(xRange, Runtime->EdgeFactorLeftQ32);
+    INT edgeRight  = AmtPalmEdgeWidth(xRange, Runtime->EdgeFactorRightQ32);
+    INT edgeTop    = AmtPalmEdgeWidth(yRange, Runtime->EdgeFactorTopQ32);
+    INT edgeBottom = AmtPalmEdgeWidth(yRange, Runtime->EdgeFactorBottomQ32);
 
     return (BOOLEAN)(NormX < edgeLeft || NormX > (xRange - edgeRight) ||
                       NormY < edgeTop  || NormY > (yRange - edgeBottom));
@@ -61,6 +51,7 @@ AmtPalmClassify(
     _In_ USHORT                       Minor,
     _In_ const struct BCM5974_CONFIG* DevInfo,
     _In_ const AMT_PALM_CONFIG*       Config,
+    _In_ const AMT_PALM_RUNTIME*      Runtime,
     _In_ INT                          NormX,
     _In_ INT                          NormY,
     _In_ BOOLEAN                      IsBirth
@@ -73,7 +64,7 @@ AmtPalmClassify(
     // suppress accidental edge touches, not just wide palm-shaped ones.
     // Contacts already being tracked that merely move through the zone are
     // NOT affected - only IsBirth is checked here.
-    if (IsBirth && AmtPalmInEdgeZone(DevInfo, Config, NormX, NormY)) {
+    if (IsBirth && AmtPalmInEdgeZone(DevInfo, Config, Runtime, NormX, NormY)) {
         return PALM_LOCAL;
     }
 
@@ -125,7 +116,7 @@ AmtPalmClassify(
     // Soft edge bonus for continuations (or births that weren't caught by
     // the hard-reject above, e.g. a birth reported with major==0 for one
     // frame). Kept as a secondary signal on top of the hard reject.
-    if (major > 130 && AmtPalmInEdgeZone(DevInfo, Config, NormX, NormY))
+    if (major > 130 && AmtPalmInEdgeZone(DevInfo, Config, Runtime, NormX, NormY))
         score += 10;
 
     return (score >= palmScoreThresh) ? PALM_LOCAL : PALM_NONE;

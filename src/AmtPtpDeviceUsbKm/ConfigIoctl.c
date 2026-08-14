@@ -27,6 +27,93 @@ AmtClampULong(_In_ ULONG Value, _In_ ULONG Min, _In_ ULONG Max)
     return Value;
 }
 
+static LONGLONG
+AmtPercentToQ32(_In_ ULONG Percent)
+{
+    return (((LONGLONG)Percent * AMT_RUNTIME_FIXED_ONE) + 50) / 100;
+}
+
+static LONGLONG
+AmtRatioToQ32(_In_ ULONG Numerator, _In_ ULONG Denominator)
+{
+    LONGLONG scaled;
+
+    if (Denominator == 0)
+        return 0;
+
+    scaled = ((LONGLONG)Numerator * AMT_RUNTIME_FIXED_ONE +
+              (Denominator / 2)) / Denominator;
+
+    return scaled;
+}
+
+VOID
+AmtPointerRuntimeRebuild(
+    _In_ const AMT_POINTER_CONFIG* Config,
+    _Out_ AMT_POINTER_RUNTIME* Runtime
+)
+{
+    ULONG alphaNum;
+
+    Runtime->CursorSpeedQ32 = AmtPercentToQ32(Config->CursorSpeedPercent);
+    Runtime->CursorSmoothingAlphaNumSlow = (INT)Config->SmoothingAlphaNumSlow;
+    Runtime->CursorSmoothingAlphaDen = (INT)Config->SmoothingAlphaDen;
+
+    {
+        ULONG span = Config->SmoothingAlphaDen - Config->SmoothingAlphaNumSlow;
+        Runtime->CursorSmoothingSlopeQ32 =
+            (span == 0) ? 0 : AmtRatioToQ32(span,
+                                            Config->CursorFastVelocity - Config->CursorSlowVelocity);
+    }
+
+    if (Config->CursorSmoothingPercent == 0) {
+        alphaNum = Config->SmoothingAlphaDen;
+    } else {
+        ULONG span = Config->SmoothingAlphaDen - Config->SmoothingAlphaNumSlow;
+        alphaNum = Config->SmoothingAlphaNumSlow +
+                   (ULONG)((((LONGLONG)span * Config->CursorSmoothingPercent) + 99) / 100);
+        if (alphaNum > Config->SmoothingAlphaDen)
+            alphaNum = Config->SmoothingAlphaDen;
+    }
+
+    Runtime->CursorSmoothingAlphaNum = (INT)alphaNum;
+}
+
+VOID
+AmtScrollRuntimeRebuild(
+    _In_ const AMT_SCROLL_CONFIG* Config,
+    _Out_ AMT_SCROLL_RUNTIME* Runtime
+)
+{
+    Runtime->BaseScaleQ32 = AmtRatioToQ32(
+        Config->ScaleNum * Config->SpeedPercent,
+        Config->ScaleDen * 100);
+    Runtime->FastScaleQ32 = AmtRatioToQ32(
+        Config->ScaleNumFast * Config->FastSpeedPercent,
+        Config->ScaleDenFast * 100);
+
+    {
+        ULONG alphaPercent = 100 - Config->SmoothingPercent;
+        if (alphaPercent < 10)
+            alphaPercent = 10;
+        Runtime->SmoothingAlphaQ32 = AmtPercentToQ32(alphaPercent);
+    }
+}
+
+VOID
+AmtPalmRuntimeRebuild(
+    _In_ const AMT_PALM_CONFIG* Config,
+    _Out_ AMT_PALM_RUNTIME* Runtime
+)
+{
+    // Palm edge permille -> Q32 factor is computed only when configuration
+    // changes; the per-contact hot path performs multiply+shift only.
+    Runtime->EdgeFactorTopQ32 = AmtRatioToQ32(Config->EdgePermilleTop, 1000);
+    Runtime->EdgeFactorLeftQ32 = AmtRatioToQ32(Config->EdgePermilleLeft, 1000);
+    Runtime->EdgeFactorRightQ32 = AmtRatioToQ32(Config->EdgePermilleRight, 1000);
+    Runtime->EdgeFactorBottomQ32 = AmtRatioToQ32(Config->EdgePermilleBottom, 1000);
+}
+
 VOID
 AmtPalmConfigClamp(_Inout_ PAMT_PALM_CONFIG Config)
 {
@@ -363,6 +450,7 @@ AmtPtpSetPalmConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
 
     WdfSpinLockAcquire(pDeviceContext->StateLock);
     pDeviceContext->PalmConfig = clamped;
+    AmtPalmRuntimeRebuild(&clamped, &pDeviceContext->PalmRuntime);
     WdfSpinLockRelease(pDeviceContext->StateLock);
 
     // Persist so the choice survives a reboot/replug, same as an Elan/
@@ -441,6 +529,7 @@ AmtPtpResetPalmConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
 
     WdfSpinLockAcquire(pDeviceContext->StateLock);
     pDeviceContext->PalmConfig = defaults;
+    AmtPalmRuntimeRebuild(&defaults, &pDeviceContext->PalmRuntime);
     WdfSpinLockRelease(pDeviceContext->StateLock);
 
     AmtPalmConfigSaveToRegistry(Device, &defaults);
@@ -501,6 +590,7 @@ AmtPtpSetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
 
     WdfSpinLockAcquire(pDeviceContext->StateLock);
     pDeviceContext->PointerConfig = clamped;
+    AmtPointerRuntimeRebuild(&clamped, &pDeviceContext->PointerRuntime);
     WdfSpinLockRelease(pDeviceContext->StateLock);
 
     AmtPointerConfigSaveToRegistry(Device, &clamped);
@@ -532,6 +622,7 @@ AmtPtpResetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
 
     WdfSpinLockAcquire(pDeviceContext->StateLock);
     pDeviceContext->PointerConfig = defaults;
+    AmtPointerRuntimeRebuild(&defaults, &pDeviceContext->PointerRuntime);
     WdfSpinLockRelease(pDeviceContext->StateLock);
 
     AmtPointerConfigSaveToRegistry(Device, &defaults);
@@ -571,6 +662,7 @@ AmtPtpSetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     AmtScrollConfigClamp(&clamped);
     WdfSpinLockAcquire(ctx->StateLock);
     ctx->ScrollConfig = clamped;
+    AmtScrollRuntimeRebuild(&clamped, &ctx->ScrollRuntime);
     WdfSpinLockRelease(ctx->StateLock);
     AmtScrollConfigSaveToRegistry(Device, &clamped);
     {
@@ -593,6 +685,7 @@ AmtPtpResetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     UNREFERENCED_PARAMETER(Request);
     WdfSpinLockAcquire(ctx->StateLock);
     ctx->ScrollConfig = defaults;
+    AmtScrollRuntimeRebuild(&defaults, &ctx->ScrollRuntime);
     WdfSpinLockRelease(ctx->StateLock);
     AmtScrollConfigSaveToRegistry(Device, &defaults);
     return STATUS_SUCCESS;
