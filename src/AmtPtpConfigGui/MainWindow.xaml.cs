@@ -1275,22 +1275,22 @@ namespace AmtPtpConfigGui
 
         private void HideAllLiveOverlayElements()
         {
-            if (LiveOverlayControl != null)
-                LiveOverlayControl.Clear();
+            if (LiveOverlayCanvas != null)
+                LiveOverlayCanvas.Clear();
         }
 
         private void DrawLiveOverlay(LiveFrame frame)
         {
-            if (LiveOverlayControl == null)
+            if (LiveOverlayCanvas == null)
                 return;
 
             if (!_liveEnabled || frame.Contacts == null)
             {
-                LiveOverlayControl.Clear();
+                LiveOverlayCanvas.Clear();
                 return;
             }
 
-            LiveOverlayControl.SetFrame(frame, _geometry, LiveGeometrySmoothAlpha);
+            LiveOverlayCanvas.SetFrame(frame, _geometry, LiveGeometrySmoothAlpha);
         }
 
         // ---------------------------------------------------------------
