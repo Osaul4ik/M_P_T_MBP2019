@@ -1,7 +1,9 @@
 // ConfigIoctl.h - AmtPtpConfigGui <-> driver custom IOCTL surface.
 //
-// Implements the four IOCTL_AMT_PTP_* control codes declared in Public.h:
-// GET/SET palm-rejection config, GET pad geometry, and RESET to defaults.
+// Implements the IOCTL_AMT_PTP_* control codes declared in Public.h:
+// GET/SET palm-rejection config, GET pad geometry, RESET palm config to
+// defaults, and the equivalent GET/SET/RESET trio for AMT_POINTER_CONFIG
+// (Force Tap threshold + action).
 // Declarations for the handler functions live in Device.h (next to the
 // other AmtPtpGet*/AmtPtpSet* HID handlers they sit beside in Queue.c).
 //
@@ -35,5 +37,10 @@ EXTERN_C_START
 #define AMT_REG_VALUE_SCORE_THRESH L"PalmScoreThresh"
 #define AMT_REG_VALUE_MIN_MAJOR    L"PalmMinMajor"
 #define AMT_REG_VALUE_MIN_MINOR    L"PalmMinMinor"
+
+// Registry value names for AMT_POINTER_CONFIG, same "one REG_DWORD each"
+// convention as the palm values above.
+#define AMT_REG_VALUE_FORCETAP_THRESHOLD L"PointerForceTapThreshold"
+#define AMT_REG_VALUE_FORCETAP_ACTION    L"PointerForceTapAction"
 
 EXTERN_C_END

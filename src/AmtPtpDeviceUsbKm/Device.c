@@ -280,6 +280,14 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     }
     AmtPalmConfigLoadFromRegistry(device, &deviceContext->PalmConfig);
 
+    // Pointer config (Force Tap threshold + action): same compiled-in-
+    // defaults-then-registry-override sequence as PalmConfig above.
+    {
+        AMT_POINTER_CONFIG defaultPointerCfg = AMT_POINTER_CONFIG_DEFAULT_INIT;
+        deviceContext->PointerConfig = defaultPointerCfg;
+    }
+    AmtPointerConfigLoadFromRegistry(device, &deviceContext->PointerConfig);
+
     // Create the shared state lock for frame processing.
     {
         WDF_OBJECT_ATTRIBUTES lockAttributes;

@@ -45,7 +45,11 @@ AmtSerializeCoreFrameToReport(
     Report->ContactCount = n;
 }
 
-// Queue one force-touch click (a full down+up pulse) for later delivery.
+// Queue ClickCount force-touch clicks (each a full down+up pulse) for later
+// delivery. ClickCount is 1 for every AMT_POINTER_ACTION_* except
+// DOUBLE_CLICK, which needs two independent down+up pulses (Button1 x2) to
+// read as a double-click to Windows - reusing this same one-click-at-a-time
+// queue instead of inventing a separate multi-click delivery path.
 //
 // Never touches ForceTouchDeliveryState directly - a click that arrives
 // while one is already in flight (or queued) just waits its turn. Only
@@ -53,21 +57,23 @@ AmtSerializeCoreFrameToReport(
 // overflow, so a delivered DOWN can never be left without its UP (see the
 // Device.h field comment for the failure mode this replaced).
 static VOID
-AmtForceTouchClickEnqueue(_Inout_ PDEVICE_CONTEXT pCtx)
+AmtForceTouchClickEnqueue(_Inout_ PDEVICE_CONTEXT pCtx, _In_ UCHAR ClickCount)
 {
-    if (pCtx->ForceTouchDeliveryState == FORCE_TOUCH_DELIVERY_IDLE &&
-        pCtx->PendingForceTouchClickCount == 0) {
-        // Nothing in flight and nothing queued - start immediately.
-        pCtx->ForceTouchDeliveryState = FORCE_TOUCH_DELIVERY_DOWN_PENDING;
-        return;
-    }
+    for (UCHAR i = 0; i < ClickCount; i++) {
+        if (pCtx->ForceTouchDeliveryState == FORCE_TOUCH_DELIVERY_IDLE &&
+            pCtx->PendingForceTouchClickCount == 0) {
+            // Nothing in flight and nothing queued - start immediately.
+            pCtx->ForceTouchDeliveryState = FORCE_TOUCH_DELIVERY_DOWN_PENDING;
+            continue;
+        }
 
-    if (pCtx->PendingForceTouchClickCount < PENDING_FORCE_TOUCH_CLICK_CAPACITY) {
-        pCtx->PendingForceTouchClickCount++;
+        if (pCtx->PendingForceTouchClickCount < PENDING_FORCE_TOUCH_CLICK_CAPACITY) {
+            pCtx->PendingForceTouchClickCount++;
+        }
+        // else: click storm far beyond anything a human can produce - drop
+        // the newest one. Safe: it never started delivering, so nothing is
+        // left half-sent.
     }
-    // else: click storm far beyond anything a human can produce - drop the
-    // newest one. Safe: it never started delivering, so nothing is left
-    // half-sent.
 }
 
 _IRQL_requires_(PASSIVE_LEVEL)
@@ -379,12 +385,19 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     //
     // SIMPLIFICATION (2026-08-03): PTPCore now decides the whole click on
     // the release frame (OutForceTouchClick) - nothing to test here.
+    //
+    // The action configured in PointerConfig.ForceTapAction decides how
+    // many click pulses this qualifying press enqueues: DOUBLE_CLICK needs
+    // two independent down+up pulses (see AmtForceTouchClickEnqueue),
+    // everything else is the usual single pulse.
     if (forceTouchClick) {
-        AmtForceTouchClickEnqueue(pCtx);
+        UCHAR clickCount =
+            (pCtx->PointerConfig.ForceTapAction == AMT_POINTER_ACTION_DOUBLE_CLICK) ? 2 : 1;
+        AmtForceTouchClickEnqueue(pCtx, clickCount);
     }
 
     if (pCtx->ForceTouchDeliveryState != FORCE_TOUCH_DELIVERY_IDLE) {
-        BOOLEAN edgeButton2State =
+        BOOLEAN edgeButtonState =
             (pCtx->ForceTouchDeliveryState == FORCE_TOUCH_DELIVERY_DOWN_PENDING);
 
         WDFREQUEST mouseRequest;
@@ -396,7 +409,24 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
                 PTP_FORCETOUCH_MOUSE_REPORT mouseReport;
                 RtlZeroMemory(&mouseReport, sizeof(mouseReport));
                 mouseReport.ReportID = REPORTID_STANDARDMOUSE;
-                mouseReport.Button2  = edgeButton2State ? 1 : 0;
+
+                // Which button bit carries the edge depends on the
+                // configured action - context menu/middle click each fire
+                // once per press (single pulse enqueued above); double
+                // click fires Button1 twice (two pulses enqueued above),
+                // and Windows reads two fast left clicks as a double-click.
+                switch (pCtx->PointerConfig.ForceTapAction) {
+                case AMT_POINTER_ACTION_MIDDLE_CLICK:
+                    mouseReport.Button3 = edgeButtonState ? 1 : 0;
+                    break;
+                case AMT_POINTER_ACTION_DOUBLE_CLICK:
+                    mouseReport.Button1 = edgeButtonState ? 1 : 0;
+                    break;
+                case AMT_POINTER_ACTION_CONTEXT_MENU:
+                default:
+                    mouseReport.Button2 = edgeButtonState ? 1 : 0;
+                    break;
+                }
 
                 Status = WdfMemoryCopyFromBuffer(
                     mouseRequestMemory, 0, (PVOID)&mouseReport, sizeof(mouseReport));

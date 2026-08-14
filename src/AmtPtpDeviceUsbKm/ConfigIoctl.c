@@ -46,6 +46,25 @@ AmtPalmConfigClamp(_Inout_ PAMT_PALM_CONFIG Config)
     RtlZeroMemory(Config->Reserved, sizeof(Config->Reserved));
 }
 
+VOID
+AmtPointerConfigClamp(_Inout_ PAMT_POINTER_CONFIG Config)
+{
+    Config->StructVersion = AMT_POINTER_CONFIG_VERSION;
+
+    Config->ForceTapThreshold = AmtClampULong(
+        Config->ForceTapThreshold, AMT_POINTER_THRESHOLD_MIN, AMT_POINTER_THRESHOLD_MAX);
+
+    // An out-of-range/corrupt action (e.g. a stale registry value from a
+    // newer GUI build) falls back to the original always-right-click
+    // behavior rather than being left as an unrecognized number that every
+    // switch statement downstream would have to guard against separately.
+    if (Config->ForceTapAction > AMT_POINTER_ACTION_MAX) {
+        Config->ForceTapAction = AMT_POINTER_ACTION_CONTEXT_MENU;
+    }
+
+    RtlZeroMemory(Config->Reserved, sizeof(Config->Reserved));
+}
+
 // ----------------------------------------------------------------------------
 // Registry persistence. Best-effort only: any failure (fresh install with
 // no saved values yet, access-denied, corrupt/missing value) just leaves
@@ -153,6 +172,58 @@ AmtPalmConfigSaveToRegistry(
     AmtRegistryWriteDword(key, AMT_REG_VALUE_SCORE_THRESH, Config->PalmScoreThresh);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_MIN_MAJOR,    Config->PalmMinMajor);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_MIN_MINOR,    Config->PalmMinMinor);
+
+    WdfRegistryClose(key);
+}
+
+_IRQL_requires_(PASSIVE_LEVEL)
+VOID
+AmtPointerConfigLoadFromRegistry(
+    _In_ WDFDEVICE Device,
+    _Inout_ PAMT_POINTER_CONFIG Config
+)
+{
+    WDFKEY   key;
+    NTSTATUS status;
+
+    PAGED_CODE();
+
+    status = WdfDeviceOpenRegistryKey(
+        Device, PLUGPLAY_REGKEY_DEVICE, KEY_READ, WDF_NO_OBJECT_ATTRIBUTES, &key);
+    if (!NT_SUCCESS(status)) {
+        return; // No saved values yet (or no access) - keep compiled-in defaults.
+    }
+
+    AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETAP_THRESHOLD, &Config->ForceTapThreshold);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETAP_ACTION,    &Config->ForceTapAction);
+
+    WdfRegistryClose(key);
+
+    // A value loaded straight from the registry is untrusted input the
+    // same as anything arriving over the SET IOCTL - clamp it too.
+    AmtPointerConfigClamp(Config);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+AmtPointerConfigSaveToRegistry(
+    _In_ WDFDEVICE Device,
+    _In_ const AMT_POINTER_CONFIG* Config
+)
+{
+    WDFKEY   key;
+    NTSTATUS status;
+
+    // Same PASSIVE_LEVEL rationale as AmtPalmConfigSaveToRegistry above -
+    // the SET IOCTL handler always runs at PASSIVE_LEVEL.
+    status = WdfDeviceOpenRegistryKey(
+        Device, PLUGPLAY_REGKEY_DEVICE, KEY_WRITE, WDF_NO_OBJECT_ATTRIBUTES, &key);
+    if (!NT_SUCCESS(status)) {
+        return; // Best-effort - in-memory config is already applied regardless.
+    }
+
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETAP_THRESHOLD, Config->ForceTapThreshold);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETAP_ACTION,    Config->ForceTapAction);
 
     WdfRegistryClose(key);
 }
@@ -300,6 +371,97 @@ AmtPtpResetPalmConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     return STATUS_SUCCESS;
 }
 
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+AmtPtpGetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
+{
+    NTSTATUS            status;
+    PDEVICE_CONTEXT     pDeviceContext;
+    PAMT_POINTER_CONFIG pOutConfig;
+    size_t              outLen = 0;
+
+    pDeviceContext = DeviceGetContext(Device);
+
+    status = WdfRequestRetrieveOutputBuffer(
+        Request, sizeof(AMT_POINTER_CONFIG), (PVOID*)&pOutConfig, &outLen);
+    if (!NT_SUCCESS(status)) {
+        goto exit;
+    }
+
+    WdfSpinLockAcquire(pDeviceContext->StateLock);
+    *pOutConfig = pDeviceContext->PointerConfig;
+    WdfSpinLockRelease(pDeviceContext->StateLock);
+
+    WdfRequestSetInformation(Request, sizeof(AMT_POINTER_CONFIG));
+    status = STATUS_SUCCESS;
+
+exit:
+    return status;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+AmtPtpSetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
+{
+    NTSTATUS            status;
+    PDEVICE_CONTEXT     pDeviceContext;
+    PAMT_POINTER_CONFIG pInConfig;
+    size_t              inLen = 0;
+    AMT_POINTER_CONFIG  clamped;
+
+    pDeviceContext = DeviceGetContext(Device);
+
+    status = WdfRequestRetrieveInputBuffer(
+        Request, sizeof(AMT_POINTER_CONFIG), (PVOID*)&pInConfig, &inLen);
+    if (!NT_SUCCESS(status)) {
+        goto exit;
+    }
+
+    // Same pattern as AmtPtpSetPalmConfig: copy out, clamp, apply, persist,
+    // echo the clamped result back.
+    clamped = *pInConfig;
+    AmtPointerConfigClamp(&clamped);
+
+    WdfSpinLockAcquire(pDeviceContext->StateLock);
+    pDeviceContext->PointerConfig = clamped;
+    WdfSpinLockRelease(pDeviceContext->StateLock);
+
+    AmtPointerConfigSaveToRegistry(Device, &clamped);
+
+    {
+        PAMT_POINTER_CONFIG pOutConfig;
+        size_t              outLen = 0;
+        if (NT_SUCCESS(WdfRequestRetrieveOutputBuffer(
+                Request, sizeof(AMT_POINTER_CONFIG), (PVOID*)&pOutConfig, &outLen))) {
+            *pOutConfig = clamped;
+            WdfRequestSetInformation(Request, sizeof(AMT_POINTER_CONFIG));
+        }
+    }
+
+    status = STATUS_SUCCESS;
+
+exit:
+    return status;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+AmtPtpResetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
+{
+    PDEVICE_CONTEXT    pDeviceContext = DeviceGetContext(Device);
+    AMT_POINTER_CONFIG defaults = AMT_POINTER_CONFIG_DEFAULT_INIT;
+
+    UNREFERENCED_PARAMETER(Request); // no in/out buffer for this IOCTL
+
+    WdfSpinLockAcquire(pDeviceContext->StateLock);
+    pDeviceContext->PointerConfig = defaults;
+    WdfSpinLockRelease(pDeviceContext->StateLock);
+
+    AmtPointerConfigSaveToRegistry(Device, &defaults);
+
+    return STATUS_SUCCESS;
+}
+
 // ----------------------------------------------------------------------------
 // Control-device dispatch - called for IOCTLs arriving through
 // \\.\\AmtPtpDeviceUsbKm. The control device itself has no DEVICE_CONTEXT;
@@ -348,6 +510,18 @@ AmtPtpConfigControlEvtIoDeviceControl(
 
     case IOCTL_AMT_PTP_RESET_PALM_CONFIG:
         status = AmtPtpResetPalmConfig(targetDevice, Request);
+        break;
+
+    case IOCTL_AMT_PTP_GET_POINTER_CONFIG:
+        status = AmtPtpGetPointerConfig(targetDevice, Request);
+        break;
+
+    case IOCTL_AMT_PTP_SET_POINTER_CONFIG:
+        status = AmtPtpSetPointerConfig(targetDevice, Request);
+        break;
+
+    case IOCTL_AMT_PTP_RESET_POINTER_CONFIG:
+        status = AmtPtpResetPointerConfig(targetDevice, Request);
         break;
 
     case IOCTL_AMT_PTP_SET_LIVE_ENABLED:

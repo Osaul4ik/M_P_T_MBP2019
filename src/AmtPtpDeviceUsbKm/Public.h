@@ -81,6 +81,62 @@ typedef struct _AMT_PALM_CONFIG
 
 
 // ============================================================================
+// Pointer runtime configuration - Force Tap (force touch) tuning.
+//
+// Mirrors (and, at runtime, replaces) FORCE_TOUCH_PRESSURE_THRESHOLD, which
+// used to be a hardcoded #define in include/hid/HidCommon.h, plus the
+// synthetic action a qualifying press fires on release - previously always
+// a hardcoded right-click (Button2) in Interrupt.c. Same wire-format
+// conventions as AMT_PALM_CONFIG above (plain ULONGs, blittable from C#).
+// ============================================================================
+
+typedef struct _AMT_POINTER_CONFIG
+{
+    ULONG StructVersion;   // AMT_POINTER_CONFIG_VERSION - bump on layout change
+
+    // Force Tap pressure threshold, raw ADC pressure units - same scale as
+    // RAW_CONTACT.Pressure (~0-300). A press whose peak pressure exceeds
+    // this while click arbitration is still PENDING resolves to a
+    // force-touch click on release instead of an ordinary click. Lower =
+    // easier to trigger (lighter press needed).
+    ULONG ForceTapThreshold;
+
+    // What a qualifying Force Tap synthesizes on release. One of the
+    // AMT_POINTER_ACTION_* values below.
+    ULONG ForceTapAction;
+
+    ULONG Reserved[5];      // future growth, keep struct size stable
+} AMT_POINTER_CONFIG, *PAMT_POINTER_CONFIG;
+
+#define AMT_POINTER_CONFIG_VERSION 1
+
+// ForceTapAction values.
+#define AMT_POINTER_ACTION_CONTEXT_MENU 0   // synthetic right-click (Button2)
+#define AMT_POINTER_ACTION_MIDDLE_CLICK 1   // synthetic middle-click (Button3)
+#define AMT_POINTER_ACTION_DOUBLE_CLICK 2   // synthetic double left-click (Button1 x2, e.g. "open")
+
+// Compiled-in defaults - 240 matches the previous hardcoded
+// FORCE_TOUCH_PRESSURE_THRESHOLD value, and CONTEXT_MENU matches the
+// previous always-right-click behavior, so a fresh install / registry-less
+// first boot behaves exactly like the driver did before this became
+// runtime-tunable.
+#define AMT_POINTER_CONFIG_DEFAULT_INIT                                    \
+{                                                                            \
+    /* StructVersion    */ AMT_POINTER_CONFIG_VERSION,                     \
+    /* ForceTapThreshold*/ 240,                                            \
+    /* ForceTapAction   */ AMT_POINTER_ACTION_CONTEXT_MENU,                \
+    /* Reserved         */ { 0, 0, 0, 0, 0 }                                \
+}
+
+// Sane clamp range - raw pressure realistically spans ~0-300, so keep the
+// threshold well inside that instead of letting it go degenerate (0 would
+// fire on any touch; a huge value would make Force Tap unreachable).
+#define AMT_POINTER_THRESHOLD_MIN    40
+#define AMT_POINTER_THRESHOLD_MAX   300
+#define AMT_POINTER_ACTION_MAX        2   // highest valid AMT_POINTER_ACTION_* value
+
+
+// ============================================================================
 // Live touch monitor
 //
 // Live monitoring is explicitly opt-in. When LiveEnabled == FALSE the
@@ -159,6 +215,17 @@ typedef struct _AMT_LIVE_FRAME
 
 #define IOCTL_AMT_PTP_GET_LIVE_FRAME \
     CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 5, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define IOCTL_AMT_PTP_GET_POINTER_CONFIG \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 6, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define IOCTL_AMT_PTP_SET_POINTER_CONFIG \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 7, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// Resets AMT_POINTER_CONFIG (in memory and in the registry) to
+// AMT_POINTER_CONFIG_DEFAULT_INIT. No input/output buffer.
+#define IOCTL_AMT_PTP_RESET_POINTER_CONFIG \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 8, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 typedef struct _AMT_PAD_GEOMETRY
 {

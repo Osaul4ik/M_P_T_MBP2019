@@ -226,6 +226,15 @@ namespace AmtPtpConfigGui
                     SetBottomStatus("Пристрій знайдено, але не вдалося прочитати конфігурацію — показано значення за замовчуванням.");
                 }
 
+                if (_device.TryGetPointerConfig(out var pointerCfg))
+                {
+                    LoadPointerConfigIntoControls(pointerCfg);
+                }
+                else
+                {
+                    LoadPointerConfigIntoControls(PointerConfig.Default);
+                }
+
                 if (_device.TryGetPadGeometry(out var geo))
                 {
                     _geometry = geo;
@@ -242,6 +251,7 @@ namespace AmtPtpConfigGui
                 StatusDot.Fill = DisconnectedBrush;
                 StatusText.Text = "Пристрій не знайдено — режим попереднього перегляду";
                 LoadConfigIntoSliders(PalmConfig.Default);
+                LoadPointerConfigIntoControls(PointerConfig.Default);
                 _geometry = PadGeometry.Fallback;
                 _geometryFromDevice = false;
 
@@ -676,6 +686,102 @@ namespace AmtPtpConfigGui
         }
 
         private static string FormatPermille(double permille) => $"{permille / 10.0:0.0}%";
+
+        // ---------------------------------------------------------------
+        // Pointer tab <-> PointerConfig plumbing (Force Tap threshold + action)
+        // ---------------------------------------------------------------
+
+        private bool _suppressPointerEvents;
+
+        private void LoadPointerConfigIntoControls(PointerConfig cfg)
+        {
+            _suppressPointerEvents = true;
+            try
+            {
+                SlForceTapThreshold.Value = cfg.ForceTapThreshold;
+
+                RadioButton selected = cfg.ForceTapAction switch
+                {
+                    PointerConfig.ActionMiddleClick => RbActionMiddleClick,
+                    PointerConfig.ActionDoubleClick => RbActionDoubleClick,
+                    _ => RbActionContextMenu,
+                };
+                RbActionContextMenu.IsChecked = ReferenceEquals(selected, RbActionContextMenu);
+                RbActionMiddleClick.IsChecked = ReferenceEquals(selected, RbActionMiddleClick);
+                RbActionDoubleClick.IsChecked = ReferenceEquals(selected, RbActionDoubleClick);
+            }
+            finally
+            {
+                _suppressPointerEvents = false;
+            }
+            UpdatePointerLabel();
+        }
+
+        private PointerConfig ReadPointerConfigFromControls()
+        {
+            var c = PointerConfig.Default;
+            c.ForceTapThreshold = (uint)SlForceTapThreshold.Value;
+            c.ForceTapAction =
+                RbActionMiddleClick.IsChecked == true ? PointerConfig.ActionMiddleClick :
+                RbActionDoubleClick.IsChecked == true ? PointerConfig.ActionDoubleClick :
+                PointerConfig.ActionContextMenu;
+            return c.Clamped();
+        }
+
+        private void UpdatePointerLabel()
+        {
+            if (LblForceTapThreshold != null)
+                LblForceTapThreshold.Text = $"{SlForceTapThreshold.Value:0}";
+        }
+
+        private void PointerSlider_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!_uiReady || _suppressPointerEvents) return;
+            UpdatePointerLabel();
+        }
+
+        private void PointerAction_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!_uiReady || _suppressPointerEvents) return;
+            // No live preview for the action choice — nothing else to refresh here.
+        }
+
+        private void PointerApply_Click(object sender, RoutedEventArgs e)
+        {
+            var requested = ReadPointerConfigFromControls();
+
+            if (!_device.IsConnected)
+            {
+                SetBottomStatus("Пристрій не підключено — налаштування вказівника не збережено на драйвері (лише попередній перегляд).");
+                return;
+            }
+
+            if (_device.TrySetPointerConfig(requested, out var applied))
+            {
+                LoadPointerConfigIntoControls(applied);
+                SetBottomStatus("Налаштування вказівника застосовано та збережено в реєстрі драйвера.");
+            }
+            else
+            {
+                SetBottomStatus("Не вдалося застосувати налаштування вказівника (помилка DeviceIoControl).");
+            }
+        }
+
+        private void PointerResetDefaults_Click(object sender, RoutedEventArgs e)
+        {
+            if (_device.IsConnected && _device.TryResetPointerConfig(out var applied))
+            {
+                LoadPointerConfigIntoControls(applied);
+                SetBottomStatus("Налаштування вказівника скинуто до значень за замовчуванням на драйвері.");
+            }
+            else
+            {
+                LoadPointerConfigIntoControls(PointerConfig.Default);
+                SetBottomStatus(_device.IsConnected
+                    ? "Не вдалося скинути налаштування вказівника на драйвері — показано локальні значення за замовчуванням."
+                    : "Показано значення за замовчуванням (пристрій не підключено).");
+            }
+        }
 
         private void Slider_Changed(object sender, RoutedEventArgs e)
         {

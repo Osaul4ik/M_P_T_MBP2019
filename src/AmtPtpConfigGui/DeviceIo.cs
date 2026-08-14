@@ -69,6 +69,27 @@ namespace AmtPtpConfigGui.Native
                 MethodBuffered,
                 FileAnyAccess);
 
+        public static readonly uint IoctlGetPointerConfig =
+            CtlCode(
+                FileDeviceUnknown,
+                AmtPtpIoctlIndex + 6,
+                MethodBuffered,
+                FileAnyAccess);
+
+        public static readonly uint IoctlSetPointerConfig =
+            CtlCode(
+                FileDeviceUnknown,
+                AmtPtpIoctlIndex + 7,
+                MethodBuffered,
+                FileAnyAccess);
+
+        public static readonly uint IoctlResetPointerConfig =
+            CtlCode(
+                FileDeviceUnknown,
+                AmtPtpIoctlIndex + 8,
+                MethodBuffered,
+                FileAnyAccess);
+
         private const string ControlDevicePath = @"\\.\AmtPtpDeviceUsbKm";
 
         private const uint GenericRead = 0x80000000;
@@ -188,6 +209,60 @@ namespace AmtPtpConfigGui.Native
             return TryGetPalmConfig(out applied);
         }
 
+        public bool TryGetPointerConfig(
+            out PointerConfig config)
+        {
+            config = PointerConfig.Default;
+
+            if (!IsConnected)
+                return false;
+
+            return TryIoctl(
+                IoctlGetPointerConfig,
+                null,
+                ref config);
+        }
+
+        public bool TrySetPointerConfig(
+            PointerConfig request,
+            out PointerConfig applied)
+        {
+            applied = request;
+
+            if (!IsConnected)
+                return false;
+
+            return TryIoctl(
+                IoctlSetPointerConfig,
+                (PointerConfig?)request,
+                ref applied);
+        }
+
+        public bool TryResetPointerConfig(
+            out PointerConfig applied)
+        {
+            applied = PointerConfig.Default;
+
+            if (!IsConnected)
+                return false;
+
+            bool ok = DeviceIoControl(
+                _handle!,
+                IoctlResetPointerConfig,
+                IntPtr.Zero,
+                0,
+                IntPtr.Zero,
+                0,
+                out _,
+                IntPtr.Zero);
+
+            if (!ok)
+                return false;
+
+            // Driver doesn't echo a buffer back for RESET - just re-fetch.
+            return TryGetPointerConfig(out applied);
+        }
+
         public bool TryGetPadGeometry(
             out PadGeometry geometry)
         {
@@ -280,6 +355,65 @@ namespace AmtPtpConfigGui.Native
 
                 output =
                     Marshal.PtrToStructure<PalmConfig>(
+                        outBuf);
+
+                return true;
+            }
+            finally
+            {
+                if (inBuf != IntPtr.Zero)
+                    Marshal.FreeHGlobal(inBuf);
+
+                Marshal.FreeHGlobal(outBuf);
+            }
+        }
+
+        private bool TryIoctl(
+            uint code,
+            PointerConfig? input,
+            ref PointerConfig output)
+        {
+            int size =
+                Marshal.SizeOf<PointerConfig>();
+
+            IntPtr inBuf = IntPtr.Zero;
+
+            IntPtr outBuf =
+                Marshal.AllocHGlobal(size);
+
+            try
+            {
+                uint inSize = 0;
+
+                if (input.HasValue)
+                {
+                    inBuf =
+                        Marshal.AllocHGlobal(size);
+
+                    Marshal.StructureToPtr(
+                        input.Value,
+                        inBuf,
+                        false);
+
+                    inSize =
+                        (uint)size;
+                }
+
+                bool ok = DeviceIoControl(
+                    _handle!,
+                    code,
+                    inBuf,
+                    inSize,
+                    outBuf,
+                    (uint)size,
+                    out uint bytesReturned,
+                    IntPtr.Zero);
+
+                if (!ok || bytesReturned < size)
+                    return false;
+
+                output =
+                    Marshal.PtrToStructure<PointerConfig>(
                         outBuf);
 
                 return true;

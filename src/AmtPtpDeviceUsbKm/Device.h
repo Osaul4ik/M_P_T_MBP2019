@@ -89,6 +89,17 @@ typedef struct _DEVICE_CONTEXT
     // config update from the GUI thread can't race a frame in flight.
     AMT_PALM_CONFIG PalmConfig;
 
+    // Runtime-tunable Force Tap (force touch) threshold and click action
+    // (see AMT_POINTER_CONFIG in Public.h). Initialized to
+    // AMT_POINTER_CONFIG_DEFAULT_INIT in AmtPtpDeviceUsbKmCreateDevice, then
+    // optionally overridden from the registry (AmtPointerConfigLoadFromRegistry)
+    // and/or live via IOCTL_AMT_PTP_SET_POINTER_CONFIG from AmtPtpConfigGui.
+    // Read every frame by PTPCore_ProcessFrame (Ptpcore.c) for the pressure
+    // threshold, and by the force-touch delivery block in Interrupt.c for
+    // the action - protected by StateLock on write so a config update from
+    // the GUI thread can't race a frame in flight.
+    AMT_POINTER_CONFIG PointerConfig;
+
     // TRUE only for trackpads whose packet format actually carries a
     // pressure reading (TYPE4/TYPE5 - see AppleDefinition.h). Derived once
     // from DeviceInfo->tp_type in EvtDevicePrepareHardware. TYPE1-3
@@ -296,6 +307,15 @@ NTSTATUS AmtPtpGetPadGeometry(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
 _IRQL_requires_max_(DISPATCH_LEVEL)
 NTSTATUS AmtPtpResetPalmConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
 
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS AmtPtpGetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS AmtPtpSetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS AmtPtpResetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+
 // Best-effort registry persistence under the device's driver-software key
 // (HKLM\SYSTEM\...\Enum\...\Device Parameters, via WdfDeviceOpenRegistryKey).
 // Failure to read/write the registry is never fatal - PalmConfig always
@@ -312,5 +332,15 @@ VOID AmtPalmConfigSaveToRegistry(_In_ WDFDEVICE Device, _In_ const AMT_PALM_CONF
 // buggy/malicious caller can never push the classifier into a degenerate
 // state (e.g. an edge zone covering the whole pad).
 VOID AmtPalmConfigClamp(_Inout_ PAMT_PALM_CONFIG Config);
+
+// Same best-effort registry persistence and clamp contract as the
+// AmtPalmConfig* trio above, for AMT_POINTER_CONFIG.
+_IRQL_requires_(PASSIVE_LEVEL)
+VOID AmtPointerConfigLoadFromRegistry(_In_ WDFDEVICE Device, _Inout_ PAMT_POINTER_CONFIG Config);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID AmtPointerConfigSaveToRegistry(_In_ WDFDEVICE Device, _In_ const AMT_POINTER_CONFIG* Config);
+
+VOID AmtPointerConfigClamp(_Inout_ PAMT_POINTER_CONFIG Config);
 
 EXTERN_C_END

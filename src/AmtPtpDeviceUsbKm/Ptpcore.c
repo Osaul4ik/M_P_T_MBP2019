@@ -689,7 +689,7 @@ PTPCore_ProcessFrame(
             INT dropFromPeak = (INT)pCtx->ClickArbitrationPeakPressure -
                                 (INT)framePeakPressure;
 
-            if (framePeakPressure > FORCE_TOUCH_PRESSURE_THRESHOLD) {
+            if (framePeakPressure > pCtx->PointerConfig.ForceTapThreshold) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
             } else if (dropFromPeak >= CLICK_ARBITRATION_PRESSURE_HYSTERESIS) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
