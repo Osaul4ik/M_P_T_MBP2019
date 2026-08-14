@@ -9,8 +9,10 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using System.Windows.Forms;
 using AmtPtpConfigGui.Native;
 using Microsoft.Win32;
+using Application = System.Windows.Application;
 
 namespace AmtPtpConfigGui
 {
@@ -79,6 +81,11 @@ namespace AmtPtpConfigGui
         private bool _profilesReady;
         private readonly List<GuiProfile> _profiles = new();
         private int _activeProfileIndex = -1;
+
+        private readonly AppSettings _appSettings;
+        private readonly NotifyIcon _trayIcon;
+        private bool _allowWindowClose;
+        private bool _settingsDialogOpen;
 
         private readonly DispatcherTimer _liveTimer;
         private bool _liveEnabled;
@@ -150,10 +157,24 @@ namespace AmtPtpConfigGui
 
         public MainWindow()
         {
+            _appSettings = AppSettingsStore.Load();
+
             InitializeComponent();
             InitializeProfiles();
             UpdateProModeVisibility();
             _uiReady = true;
+
+            var appIcon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath ?? string.Empty);
+            _trayIcon = new NotifyIcon
+            {
+                Icon = appIcon ?? System.Drawing.SystemIcons.Application,
+                Visible = true,
+                Text = "Wellspring Precision Touchpad"
+            };
+            _trayIcon.DoubleClick += (_, _) => ShowFromTray();
+            _trayIcon.MouseUp += TrayIcon_MouseUp;
+
+            Closing += MainWindow_Closing;
 
             _liveTimer = new DispatcherTimer
             {
@@ -165,7 +186,417 @@ namespace AmtPtpConfigGui
             };
             _liveTimer.Tick += LiveTimer_Tick;
 
-            Loaded += (_, _) => Reconnect();
+            Loaded += (_, _) =>
+            {
+                if (_appSettings.StartWithWindows)
+                    UpdateStartupRegistration(true);
+                Reconnect();
+                UpdateTrayMenu();
+            };
+        }
+
+        // ---------------------------------------------------------------
+        // Application / tray settings
+        // ---------------------------------------------------------------
+
+        private void AppSettings_Click(object sender, RoutedEventArgs e)
+        {
+            ShowAppSettingsDialog();
+        }
+
+        private void ShowAppSettingsDialog()
+        {
+            if (_settingsDialogOpen) return;
+            _settingsDialogOpen = true;
+
+            var dialog = new Window
+            {
+                Title = "Налаштування Wellspring PTP",
+                Width = 430,
+                Height = 430,
+                MinWidth = 470,
+                MinHeight = 430,
+                ResizeMode = ResizeMode.NoResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                WindowStyle = WindowStyle.ToolWindow,
+                Background = (Brush)FindResource("PageBrush"),
+                FontFamily = new FontFamily("Segoe UI Variable Text, Segoe UI"),
+                FontSize = 13
+            };
+
+            var root = new System.Windows.Controls.Grid { Margin = new Thickness(20) };
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var title = new TextBlock
+            { Text = "Параметри програми", FontSize = 18, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0,0,0,14) };
+            System.Windows.Controls.Grid.SetRow(title, 0);
+            root.Children.Add(title);
+
+            var stack = new StackPanel();
+            var closeToTray = new System.Windows.Controls.CheckBox
+            { Content = "При закритті ховати програму в трей", IsChecked = _appSettings.CloseToTray, Margin = new Thickness(0,0,0,12) };
+            var startup = new System.Windows.Controls.CheckBox
+            { Content = "Автозапуск GUI при завантаженні Windows", IsChecked = _appSettings.StartWithWindows, Margin = new Thickness(0,0,0,12) };
+            var palmEdges = new System.Windows.Controls.CheckBox
+            { Content = "Palm rejection по краях тачпада", IsChecked = _appSettings.PalmEdgeRejectionEnabled, Margin = new Thickness(0,0,0,12) };
+            stack.Children.Add(closeToTray);
+            stack.Children.Add(startup);
+            stack.Children.Add(palmEdges);
+            var hint = new TextBlock
+            { Text = "Після вимкнення Palm rejection по краях зберігається, але edge-зони тимчасово не блокують дотики.", Foreground = (Brush)FindResource("TextSecondaryBrush"), TextWrapping = TextWrapping.Wrap, FontSize = 11 };
+            stack.Children.Add(hint);
+            System.Windows.Controls.Grid.SetRow(stack, 1);
+            root.Children.Add(stack);
+
+            var backupGroup = new Border
+            {
+                Background = (Brush)FindResource("CardBrush"),
+                BorderBrush = (Brush)FindResource("CardBorderBrush"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(12),
+                Margin = new Thickness(0, 6, 0, 10)
+            };
+
+            var backupStack = new StackPanel();
+            backupStack.Children.Add(new TextBlock
+            {
+                Text = "Резервна копія",
+                FontWeight = FontWeights.SemiBold,
+                FontSize = 13,
+                Margin = new Thickness(0, 0, 0, 4)
+            });
+            backupStack.Children.Add(new TextBlock
+            {
+                Text = "Профілі та налаштування програми в одному файлі.",
+                Foreground = (Brush)FindResource("TextSecondaryBrush"),
+                FontSize = 11,
+                Margin = new Thickness(0, 0, 0, 9)
+            });
+
+            var backupButtons = new StackPanel { Orientation = Orientation.Horizontal };
+            var exportBackup = new System.Windows.Controls.Button
+            { Content = "Експорт...", Style = (Style)FindResource("GhostButton"), Width = 110, Margin = new Thickness(0, 0, 8, 0) };
+            var restoreBackup = new System.Windows.Controls.Button
+            { Content = "Відновити...", Style = (Style)FindResource("GhostButton"), Width = 110 };
+            backupButtons.Children.Add(exportBackup);
+            backupButtons.Children.Add(restoreBackup);
+            backupStack.Children.Add(backupButtons);
+            backupGroup.Child = backupStack;
+            System.Windows.Controls.Grid.SetRow(backupGroup, 2);
+            root.Children.Add(backupGroup);
+
+            exportBackup.Click += (_, _) => ExportBackup();
+            restoreBackup.Click += (_, _) => RestoreBackup();
+
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            var cancel = new System.Windows.Controls.Button { Content = "Скасувати", Style = (Style)FindResource("GhostButton"), Margin = new Thickness(0,0,8,0), Width = 100 };
+            var save = new System.Windows.Controls.Button { Content = "Зберегти", Style = (Style)FindResource("AccentButton"), Width = 100 };
+            buttons.Children.Add(cancel);
+            buttons.Children.Add(save);
+            System.Windows.Controls.Grid.SetRow(buttons, 4);
+            root.Children.Add(buttons);
+
+            cancel.Click += (_, _) => dialog.Close();
+            save.Click += (_, _) =>
+            {
+                _appSettings.CloseToTray = closeToTray.IsChecked == true;
+                _appSettings.StartWithWindows = startup.IsChecked == true;
+                var oldPalmEdges = _appSettings.PalmEdgeRejectionEnabled;
+                _appSettings.PalmEdgeRejectionEnabled = palmEdges.IsChecked == true;
+                AppSettingsStore.Save(_appSettings);
+                UpdateStartupRegistration(_appSettings.StartWithWindows);
+
+                if (oldPalmEdges != _appSettings.PalmEdgeRejectionEnabled)
+                    ApplyPalmEdgeToggle(_appSettings.PalmEdgeRejectionEnabled);
+
+                UpdateTrayMenu();
+                SetBottomStatus("Налаштування програми збережено.");
+                dialog.Close();
+            };
+
+            dialog.Content = root;
+            dialog.Closed += (_, _) => _settingsDialogOpen = false;
+            dialog.ShowDialog();
+        }
+
+        private void ExportBackup()
+        {
+            var dlg = new SaveFileDialog
+            {
+                Filter = "Wellspring PTP backup (*.wspbackup.json)|*.wspbackup.json|JSON (*.json)|*.json",
+                FileName = $"WellspringPTP-Backup-{DateTime.Now:yyyy-MM-dd}.wspbackup.json",
+                Title = "Експорт резервної копії"
+            };
+            if (dlg.ShowDialog() != true)
+                return;
+
+            try
+            {
+                // Capture the values currently visible in the GUI as the active profile,
+                // so the backup exactly represents what the user sees before pressing Save.
+                var active = ActiveProfile;
+                if (active != null)
+                {
+                    active.Palm = ReadConfigFromSliders();
+                    active.Pointer = ReadPointerConfigFromControls();
+                    active.Scroll = ReadScrollConfigFromControls();
+                }
+
+                var backup = new WellspringBackup
+                {
+                    Version = 1,
+                    AppSettings = new AppSettings
+                    {
+                        CloseToTray = _appSettings.CloseToTray,
+                        StartWithWindows = _appSettings.StartWithWindows,
+                        PalmEdgeRejectionEnabled = _appSettings.PalmEdgeRejectionEnabled
+                    },
+                    Profiles = _profiles.Select(CloneProfile).ToList(),
+                    ActiveProfileIndex = _activeProfileIndex
+                };
+
+                var json = JsonSerializer.Serialize(backup, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(dlg.FileName, json);
+                SetBottomStatus($"Резервну копію збережено: {dlg.FileName}");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Не вдалося створити резервну копію.\n\n{ex.Message}", "Резервна копія", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void RestoreBackup()
+        {
+            var dlg = new OpenFileDialog
+            {
+                Filter = "Wellspring PTP backup (*.wspbackup.json)|*.wspbackup.json|JSON (*.json)|*.json",
+                Title = "Відновлення резервної копії"
+            };
+            if (dlg.ShowDialog() != true)
+                return;
+
+            try
+            {
+                var json = File.ReadAllText(dlg.FileName);
+                var backup = JsonSerializer.Deserialize<WellspringBackup>(json);
+                if (backup == null || backup.Profiles == null || backup.Profiles.Count == 0)
+                    throw new InvalidDataException("Файл не містить коректного списку профілів.");
+
+                if (backup.Version < 1)
+                    throw new InvalidDataException("Непідтримувана версія резервної копії.");
+
+                var restoredProfiles = backup.Profiles.Select(CloneProfile).ToList();
+                foreach (var profile in restoredProfiles)
+                {
+                    profile.Name = string.IsNullOrWhiteSpace(profile.Name) ? "Профіль" : profile.Name.Trim();
+                    profile.Palm = profile.Palm.Clamped();
+                    profile.Pointer = profile.Pointer.Clamped();
+                    profile.Scroll = profile.Scroll.StructVersion == 0 ? ScrollConfig.Default : profile.Scroll.Clamped();
+                }
+
+                _profilesReady = false;
+                _profiles.Clear();
+                _profiles.AddRange(restoredProfiles);
+                _activeProfileIndex = Math.Clamp(backup.ActiveProfileIndex, 0, _profiles.Count - 1);
+                ProfileCombo.ItemsSource = null;
+                ProfileCombo.ItemsSource = _profiles;
+                ProfileCombo.SelectedIndex = _activeProfileIndex;
+                _profilesReady = true;
+
+                _appSettings.CloseToTray = backup.AppSettings?.CloseToTray ?? true;
+                _appSettings.StartWithWindows = backup.AppSettings?.StartWithWindows ?? false;
+                var oldPalmEdges = _appSettings.PalmEdgeRejectionEnabled;
+                _appSettings.PalmEdgeRejectionEnabled = backup.AppSettings?.PalmEdgeRejectionEnabled ?? true;
+
+                ProfileStore.Save(_profiles);
+                AppSettingsStore.Save(_appSettings);
+                UpdateStartupRegistration(_appSettings.StartWithWindows);
+
+                var active = ActiveProfile;
+                if (active != null)
+                {
+                    LoadConfigIntoSliders(active.Palm);
+                    LoadPointerConfigIntoControls(active.Pointer);
+                    LoadScrollConfigIntoControls(active.Scroll);
+                    DrawPreview();
+                }
+
+                if (oldPalmEdges != _appSettings.PalmEdgeRejectionEnabled)
+                    ApplyPalmEdgeToggle(_appSettings.PalmEdgeRejectionEnabled);
+
+                UpdateTrayMenu();
+                SetBottomStatus($"Резервну копію відновлено: {dlg.FileName}. Натисніть «Зберегти», щоб застосувати профіль до драйвера.");
+                MessageBox.Show(this, "Резервну копію успішно відновлено.\n\nПрофілі та налаштування програми завантажені.", "Резервна копія", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Не вдалося відновити резервну копію.\n\n{ex.Message}", "Резервна копія", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private static GuiProfile CloneProfile(GuiProfile source)
+        {
+            return new GuiProfile
+            {
+                Name = source.Name,
+                Palm = source.Palm,
+                Pointer = source.Pointer,
+                Scroll = source.Scroll
+            };
+        }
+
+        private void UpdateStartupRegistration(bool enabled)
+        {
+            const string runKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+            const string valueName = "WellspringPTP";
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(runKeyPath, writable: true)
+                    ?? Registry.CurrentUser.CreateSubKey(runKeyPath, writable: true);
+                if (key == null) return;
+
+                if (enabled)
+                {
+                    var exe = Environment.ProcessPath;
+                    if (!string.IsNullOrWhiteSpace(exe))
+                        key.SetValue(valueName, $"\"{exe}\"");
+                }
+                else
+                {
+                    key.DeleteValue(valueName, throwOnMissingValue: false);
+                }
+            }
+            catch
+            {
+                SetBottomStatus("Не вдалося змінити автозапуск Windows.");
+            }
+        }
+
+        private void TrayIcon_MouseUp(object? sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Right)
+                UpdateTrayMenu();
+        }
+
+        private void UpdateTrayMenu()
+        {
+            var menu = new ContextMenuStrip();
+
+            var profilesItem = new ToolStripMenuItem("Профіль");
+            for (int i = 0; i < _profiles.Count; i++)
+            {
+                int index = i;
+                var item = new ToolStripMenuItem(_profiles[i].Name)
+                { Checked = i == _activeProfileIndex };
+                item.Click += (_, _) => Dispatcher.Invoke(() => ActivateProfileFromTray(index));
+                profilesItem.DropDownItems.Add(item);
+            }
+            if (_profiles.Count == 0)
+                profilesItem.DropDownItems.Add(new ToolStripMenuItem("Немає профілів") { Enabled = false });
+
+            var palmEdges = new ToolStripMenuItem("Palm по краях")
+            { Checked = _appSettings.PalmEdgeRejectionEnabled, CheckOnClick = false };
+            palmEdges.Click += (_, _) => Dispatcher.Invoke(() => TogglePalmEdgesFromTray());
+
+            var open = new ToolStripMenuItem("Відкрити апку");
+            open.Click += (_, _) => Dispatcher.Invoke(ShowFromTray);
+
+            var settings = new ToolStripMenuItem("Налаштування");
+            settings.Click += (_, _) => Dispatcher.Invoke(ShowAppSettingsDialog);
+
+            var exit = new ToolStripMenuItem("Вийти");
+            exit.Click += (_, _) => Dispatcher.Invoke(ExitApplication);
+
+            menu.Items.Add(profilesItem);
+            menu.Items.Add(palmEdges);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(open);
+            menu.Items.Add(settings);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(exit);
+
+            _trayIcon.ContextMenuStrip?.Dispose();
+            _trayIcon.ContextMenuStrip = menu;
+        }
+
+        private void ActivateProfileFromTray(int index)
+        {
+            if (index < 0 || index >= _profiles.Count) return;
+            ProfileCombo.SelectedIndex = index;
+            Save_Click(this, new RoutedEventArgs());
+            ShowFromTray();
+        }
+
+        private void TogglePalmEdgesFromTray()
+        {
+            _appSettings.PalmEdgeRejectionEnabled = !_appSettings.PalmEdgeRejectionEnabled;
+            AppSettingsStore.Save(_appSettings);
+            ApplyPalmEdgeToggle(_appSettings.PalmEdgeRejectionEnabled);
+            UpdateTrayMenu();
+        }
+
+        private void ApplyPalmEdgeToggle(bool enabled)
+        {
+            var current = ReadConfigFromSliders();
+            if (enabled)
+            {
+                var active = ActiveProfile;
+                if (active != null)
+                {
+                    current.EdgePermilleTop = active.Palm.EdgePermilleTop;
+                    current.EdgePermilleLeft = active.Palm.EdgePermilleLeft;
+                    current.EdgePermilleRight = active.Palm.EdgePermilleRight;
+                    current.EdgePermilleBottom = active.Palm.EdgePermilleBottom;
+                    LoadConfigIntoSliders(current);
+                }
+            }
+            else
+            {
+                current.EdgePermilleTop = 0;
+                current.EdgePermilleLeft = 0;
+                current.EdgePermilleRight = 0;
+                current.EdgePermilleBottom = 0;
+                LoadConfigIntoSliders(current);
+            }
+
+            if (_device.IsConnected)
+            {
+                _device.TrySetPalmConfig(current, out var applied);
+                LoadConfigIntoSliders(applied);
+            }
+            DrawPreview();
+        }
+
+        private void ShowFromTray()
+        {
+            Show();
+            if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+            Activate();
+            Topmost = true;
+            Topmost = false;
+            Focus();
+        }
+
+        private void ExitApplication()
+        {
+            _allowWindowClose = true;
+            Close();
+        }
+
+        private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+        {
+            if (!_allowWindowClose && _appSettings.CloseToTray)
+            {
+                e.Cancel = true;
+                Hide();
+                SetBottomStatus("Wellspring PTP працює у системному треї.");
+            }
         }
 
         // ---------------------------------------------------------------
@@ -1320,6 +1751,17 @@ namespace AmtPtpConfigGui
         private void Save_Click(object sender, RoutedEventArgs e)
         {
             var requestedPalm = ReadConfigFromSliders();
+            var profileBeforeEdgeOverride = ActiveProfile;
+            if (!_appSettings.PalmEdgeRejectionEnabled && profileBeforeEdgeOverride != null)
+            {
+                // Preserve configured edge widths in the profile; only the
+                // effective driver config is disabled while the global
+                // tray toggle is off.
+                requestedPalm.EdgePermilleTop = 0;
+                requestedPalm.EdgePermilleLeft = 0;
+                requestedPalm.EdgePermilleRight = 0;
+                requestedPalm.EdgePermilleBottom = 0;
+            }
             var requestedPointer = ReadPointerConfigFromControls();
             var requestedScroll = ReadScrollConfigFromControls();
 
@@ -1352,7 +1794,7 @@ namespace AmtPtpConfigGui
             var profile = ActiveProfile;
             if (profile != null)
             {
-                profile.Palm = requestedPalm.Clamped();
+                profile.Palm = ReadConfigFromSliders();
                 profile.Pointer = requestedPointer.Clamped();
                 profile.Scroll = requestedScroll.StructVersion == 0 ? ScrollConfig.Default : requestedScroll.Clamped();
                 ProfileStore.Save(_profiles);
@@ -1378,9 +1820,27 @@ namespace AmtPtpConfigGui
 
         private void ResetDefaults_Click(object sender, RoutedEventArgs e)
         {
-            var appliedPalm = PalmConfig.Default;
-            bool palmOk = _device.IsConnected && _device.TryResetPalmConfig(out appliedPalm);
-            LoadConfigIntoSliders(palmOk ? appliedPalm : PalmConfig.Default);
+            var defaultPalm = PalmConfig.Default;
+            var driverPalm = defaultPalm;
+            if (!_appSettings.PalmEdgeRejectionEnabled)
+            {
+                driverPalm.EdgePermilleTop = 0;
+                driverPalm.EdgePermilleLeft = 0;
+                driverPalm.EdgePermilleRight = 0;
+                driverPalm.EdgePermilleBottom = 0;
+            }
+
+            var appliedPalm = driverPalm;
+            bool palmOk = false;
+            if (_device.IsConnected)
+            {
+                palmOk = _appSettings.PalmEdgeRejectionEnabled
+                    ? _device.TryResetPalmConfig(out appliedPalm)
+                    : _device.TrySetPalmConfig(driverPalm, out appliedPalm);
+            }
+            // GUI keeps the configured default edge widths visible even when
+            // the global edge-rejection switch is currently off.
+            LoadConfigIntoSliders(defaultPalm);
 
             var appliedPointer = PointerConfig.Default;
             bool pointerOk = _device.IsConnected && _device.TryResetPointerConfig(out appliedPointer);
@@ -1492,6 +1952,8 @@ namespace AmtPtpConfigGui
             }
             _liveTimer.Stop();
             _device.Dispose();
+            _trayIcon.Visible = false;
+            _trayIcon.Dispose();
             base.OnClosed(e);
         }
     }

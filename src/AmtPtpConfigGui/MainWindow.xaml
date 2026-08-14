@@ -538,15 +538,19 @@
                     </StackPanel>
                 </StackPanel>
 
-                <Border Grid.Column="2" Style="{StaticResource Pill}"
-                        Background="{StaticResource ControlFillBrush}"
-                        BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1">
-                    <StackPanel Orientation="Horizontal">
-                        <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="#E5484D" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="StatusText" Margin="9,0,0,0" VerticalAlignment="Center"
-                                   Text="Пристрій не знайдено — режим попереднього перегляду"/>
-                    </StackPanel>
-                </Border>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Style="{StaticResource Pill}"
+                            Background="{StaticResource ControlFillBrush}"
+                            BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="#E5484D" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="StatusText" Margin="9,0,0,0" VerticalAlignment="Center"
+                                       Text="Пристрій не знайдено — режим попереднього перегляду"/>
+                        </StackPanel>
+                    </Border>
+                    <Button x:Name="BtnAppSettings" Content="⚙" Width="38" Height="34" Margin="8,0,0,0"
+                            Style="{StaticResource GhostButton}" Click="AppSettings_Click" ToolTip="Налаштування програми"/>
+                </StackPanel>
             </Grid>
         </Border>
 
