@@ -31,6 +31,12 @@ namespace AmtPtpConfigGui
 {
     public partial class MainWindow : Window
     {
+        private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            IncludeFields = true
+        };
+
         private static SolidColorBrush Frozen(byte a, byte r, byte g, byte b)
         {
             var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
@@ -375,7 +381,7 @@ namespace AmtPtpConfigGui
                     ActiveProfileIndex = _activeProfileIndex
                 };
 
-                var json = JsonSerializer.Serialize(backup, new JsonSerializerOptions { WriteIndented = true });
+                var json = JsonSerializer.Serialize(backup, JsonOptions);
                 File.WriteAllText(dlg.FileName, json);
                 SetBottomStatus($"Backup saved: {dlg.FileName}");
             }
@@ -398,7 +404,7 @@ namespace AmtPtpConfigGui
             try
             {
                 var json = File.ReadAllText(dlg.FileName);
-                var backup = JsonSerializer.Deserialize<WellspringBackup>(json);
+                var backup = JsonSerializer.Deserialize<WellspringBackup>(json, JsonOptions);
                 if (backup == null || backup.Profiles == null || backup.Profiles.Count == 0)
                     throw new InvalidDataException("The file does not contain a valid profile list.");
 
@@ -409,8 +415,8 @@ namespace AmtPtpConfigGui
                 foreach (var profile in restoredProfiles)
                 {
                     profile.Name = string.IsNullOrWhiteSpace(profile.Name) ? "Profile" : profile.Name.Trim();
-                    profile.Palm = profile.Palm.Clamped();
-                    profile.Pointer = profile.Pointer.Clamped();
+                    profile.Palm = profile.Palm.StructVersion == 0 ? PalmConfig.Default : profile.Palm.Clamped();
+                    profile.Pointer = profile.Pointer.StructVersion == 0 ? PointerConfig.Default : profile.Pointer.Clamped();
                     profile.Scroll = profile.Scroll.StructVersion == 0 ? ScrollConfig.Default : profile.Scroll.Clamped();
                 }
 
@@ -497,7 +503,16 @@ namespace AmtPtpConfigGui
             var menu = new Forms.ContextMenuStrip
             {
                 ShowImageMargin = false,
-                AutoClose = true
+                ShowCheckMargin = true,
+                AutoClose = true,
+                Padding = new System.Windows.Forms.Padding(6, 7, 6, 7),
+                Font = new System.Drawing.Font("Segoe UI", 9F),
+                BackColor = System.Drawing.Color.FromArgb(250, 251, 253),
+                ForeColor = System.Drawing.Color.FromArgb(30, 34, 40),
+                Renderer = new ModernTrayRenderer(),
+                DropShadowEnabled = true,
+                ItemPadding = new System.Windows.Forms.Padding(10, 7, 10, 7),
+                ShowItemToolTips = true
             };
 
             RefreshTrayMenu(menu);
@@ -517,7 +532,7 @@ namespace AmtPtpConfigGui
             {
                 menu.Items.Clear();
 
-                var profilesItem = new Forms.ToolStripMenuItem("Profile");
+                var profilesItem = new Forms.ToolStripMenuItem("Profile") { ToolTipText = "Select active profile" };
                 for (int i = 0; i < _profiles.Count; i++)
                 {
                     int index = i;
@@ -1050,6 +1065,8 @@ namespace AmtPtpConfigGui
                 _liveEnabled = false;
                 _liveTimer.Stop();
                 LiveStatusText.Text = "Live: device not connected";
+                if (LiveCoordPanel != null) LiveCoordPanel.Visibility = Visibility.Collapsed;
+                if (LiveCornerText != null) LiveCornerText.Visibility = Visibility.Collapsed;
                 SetLiveDot(active: false);
                 HideAllLiveOverlayElements();
                 return;
@@ -1062,6 +1079,8 @@ namespace AmtPtpConfigGui
                 if (ChkLive.IsChecked == true)
                     ChkLive.IsChecked = false;
                 LiveStatusText.Text = "Live: error";
+                if (LiveCoordPanel != null) LiveCoordPanel.Visibility = Visibility.Collapsed;
+                if (LiveCornerText != null) LiveCornerText.Visibility = Visibility.Collapsed;
                 LiveCoordText.Text = "Live: coordinates —";
                 LiveCornerText.Text = "Corners: TL 0 | TR 0 | BL 0 | BR 0";
                 SetLiveDot(active: null); // error - solid red, no pulse
@@ -1078,12 +1097,16 @@ namespace AmtPtpConfigGui
                 ResetCornerExtrema();
                 _liveTimer.Start();
                 LiveStatusText.Text = "Live: waiting… | corners: collecting";
+                if (LiveCoordPanel != null) LiveCoordPanel.Visibility = Visibility.Visible;
+                if (LiveCornerText != null) LiveCornerText.Visibility = Visibility.Visible;
                 SetLiveDot(active: true);
             }
             else
             {
                 _liveTimer.Stop();
                 LiveStatusText.Text = "Live: disabled";
+                if (LiveCoordPanel != null) LiveCoordPanel.Visibility = Visibility.Collapsed;
+                if (LiveCornerText != null) LiveCornerText.Visibility = Visibility.Collapsed;
                 LiveCoordText.Text = "Live: coordinates —";
                 LiveCornerText.Text = "Corners: TL 0 | TR 0 | BL 0 | BR 0";
                 SetLiveDot(active: false);
@@ -1921,7 +1944,7 @@ namespace AmtPtpConfigGui
                 ReadPointerConfigFromControls(),
                 ReadScrollConfigFromControls());
 
-            var json = JsonSerializer.Serialize(profile, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(profile, JsonOptions);
             File.WriteAllText(dlg.FileName, json);
             SetBottomStatus($"Profile (Palm + Scroll + Pointer) saved: {dlg.FileName}");
         }
@@ -1949,12 +1972,12 @@ namespace AmtPtpConfigGui
 
                 if (isProfileFormat)
                 {
-                    var profile = JsonSerializer.Deserialize<AmtPtpProfile>(json);
+                    var profile = JsonSerializer.Deserialize<AmtPtpProfile>(json, JsonOptions);
                     if (profile == null)
                         throw new InvalidDataException("Empty or invalid profile file.");
 
-                    LoadConfigIntoSliders(profile.Palm.Clamped());
-                    LoadPointerConfigIntoControls(profile.Pointer.Clamped());
+                    LoadConfigIntoSliders(profile.Palm.StructVersion == 0 ? PalmConfig.Default : profile.Palm.Clamped());
+                    LoadPointerConfigIntoControls(profile.Pointer.StructVersion == 0 ? PointerConfig.Default : profile.Pointer.Clamped());
                     LoadScrollConfigIntoControls(profile.Scroll.StructVersion == 0 ? ScrollConfig.Default : profile.Scroll.Clamped());
                     DrawPreview();
                     SetBottomStatus($"Profile (Palm + Scroll + Pointer) loaded: {dlg.FileName}. Click “Save” to write it to the driver.");
@@ -1965,8 +1988,8 @@ namespace AmtPtpConfigGui
                     // data, so the Pointer tab's current values are left
                     // untouched rather than being reset to something the
                     // file never actually contained.
-                    var cfg = JsonSerializer.Deserialize<PalmConfig>(json);
-                    LoadConfigIntoSliders(cfg.Clamped());
+                    var cfg = JsonSerializer.Deserialize<PalmConfig>(json, JsonOptions);
+                    LoadConfigIntoSliders(cfg.StructVersion == 0 ? PalmConfig.Default : cfg.Clamped());
                     DrawPreview();
                     SetBottomStatus($"Profile (legacy Palm-only format) loaded: {dlg.FileName}. Click “Save” to write it to the driver.");
                 }
@@ -1996,4 +2019,27 @@ namespace AmtPtpConfigGui
             base.OnClosed(e);
         }
     }
+    internal sealed class ModernTrayRenderer : Forms.ToolStripProfessionalRenderer
+    {
+        private sealed class Colors : System.Windows.Forms.ProfessionalColorTable
+        {
+            public override System.Drawing.Color MenuBorder => System.Drawing.Color.FromArgb(220, 223, 229);
+            public override System.Drawing.Color MenuItemBorder => System.Drawing.Color.FromArgb(218, 222, 228);
+            public override System.Drawing.Color MenuItemSelected => System.Drawing.Color.FromArgb(232, 236, 242);
+            public override System.Drawing.Color MenuItemSelectedGradientBegin => System.Drawing.Color.FromArgb(232, 236, 242);
+            public override System.Drawing.Color MenuItemSelectedGradientEnd => System.Drawing.Color.FromArgb(232, 236, 242);
+            public override System.Drawing.Color ToolStripDropDownBackground => System.Drawing.Color.FromArgb(250, 251, 253);
+            public override System.Drawing.Color ImageMarginGradientBegin => System.Drawing.Color.FromArgb(250, 251, 253);
+            public override System.Drawing.Color ImageMarginGradientMiddle => System.Drawing.Color.FromArgb(250, 251, 253);
+            public override System.Drawing.Color ImageMarginGradientEnd => System.Drawing.Color.FromArgb(250, 251, 253);
+            public override System.Drawing.Color SeparatorDark => System.Drawing.Color.FromArgb(224, 227, 232);
+            public override System.Drawing.Color SeparatorLight => System.Drawing.Color.FromArgb(255, 255, 255);
+        }
+
+        public ModernTrayRenderer() : base(new Colors())
+        {
+            RoundedEdges = true;
+        }
+    }
+
 }

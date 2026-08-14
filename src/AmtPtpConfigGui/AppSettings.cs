@@ -26,6 +26,10 @@ namespace AmtPtpConfigGui
         private static readonly string DirectoryPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WellspringPTP");
         private static readonly string FilePath = Path.Combine(DirectoryPath, "settings.json");
+        private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
+        {
+            WriteIndented = true
+        };
 
         public static AppSettings Load()
         {
@@ -33,7 +37,7 @@ namespace AmtPtpConfigGui
             {
                 if (File.Exists(FilePath))
                 {
-                    var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath));
+                    var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), JsonOptions);
                     if (settings != null)
                         return settings;
                 }
@@ -50,7 +54,7 @@ namespace AmtPtpConfigGui
         public static void Save(AppSettings settings)
         {
             Directory.CreateDirectory(DirectoryPath);
-            var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(settings, JsonOptions);
             File.WriteAllText(FilePath, json);
         }
     }

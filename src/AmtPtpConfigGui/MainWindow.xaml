@@ -609,7 +609,7 @@
                                        Style="{StaticResource TelemetryText}" Margin="7,0,0,0"/>
                         </StackPanel>
                         <TextBlock x:Name="LiveCornerText" Text="Corners: TL 0 | TR 0 | BL 0 | BR 0"
-                                   Style="{StaticResource TelemetryText}" Margin="20,0,0,0" VerticalAlignment="Center"/>
+                                   Style="{StaticResource TelemetryText}" Margin="20,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
                     </StackPanel>
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
@@ -623,7 +623,7 @@
                     </StackPanel>
                 </Grid>
 
-                <Border Grid.Row="1" Margin="0,10,0,0" Padding="10,7"
+                <Border x:Name="LiveCoordPanel" Grid.Row="1" Margin="0,10,0,0" Padding="10,7" Visibility="Collapsed"
                         Background="{StaticResource ControlFillBrush}"
                         BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1"
                         CornerRadius="8" Height="116">

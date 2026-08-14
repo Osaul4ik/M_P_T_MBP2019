@@ -22,6 +22,11 @@ namespace AmtPtpConfigGui
         private static readonly string DirectoryPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WellspringPTP");
         private static readonly string FilePath = Path.Combine(DirectoryPath, "profiles.json");
+        private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            IncludeFields = true
+        };
 
         public static List<GuiProfile> Load()
         {
@@ -30,7 +35,7 @@ namespace AmtPtpConfigGui
                 if (File.Exists(FilePath))
                 {
                     var json = File.ReadAllText(FilePath);
-                    var profiles = JsonSerializer.Deserialize<List<GuiProfile>>(json);
+                    var profiles = JsonSerializer.Deserialize<List<GuiProfile>>(json, JsonOptions);
                     if (profiles != null && profiles.Count > 0)
                     {
                         Normalize(profiles);
@@ -56,7 +61,7 @@ namespace AmtPtpConfigGui
         {
             Directory.CreateDirectory(DirectoryPath);
             Normalize(profiles);
-            var json = JsonSerializer.Serialize(profiles, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(profiles, JsonOptions);
             File.WriteAllText(FilePath, json);
         }
 
@@ -77,8 +82,8 @@ namespace AmtPtpConfigGui
             {
                 if (string.IsNullOrWhiteSpace(p.Name))
                     p.Name = "Profile";
-                p.Palm = p.Palm.Clamped();
-                p.Pointer = p.Pointer.Clamped();
+                p.Palm = p.Palm.StructVersion == 0 ? Native.PalmConfig.Default : p.Palm.Clamped();
+                p.Pointer = p.Pointer.StructVersion == 0 ? Native.PointerConfig.Default : p.Pointer.Clamped();
                 p.Scroll = p.Scroll.StructVersion == 0 ? Native.ScrollConfig.Default : p.Scroll.Clamped();
             }
         }
