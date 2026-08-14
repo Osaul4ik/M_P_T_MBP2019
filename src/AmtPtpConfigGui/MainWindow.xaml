@@ -414,6 +414,8 @@
              checkboxes elsewhere (e.g. ChkIsBirth), so it gets a visibly
              different affordance instead of reusing the same widget for
              two different jobs. -->
+        <Style x:Key="ChipCheckBox" TargetType="CheckBox" BasedOn="{StaticResource ToggleChip}"/>
+
         <Style x:Key="ToggleChip" TargetType="CheckBox">
             <Setter Property="Padding" Value="12,6"/>
             <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
