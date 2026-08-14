@@ -478,7 +478,7 @@ namespace AmtPtpConfigGui
             }
         }
 
-        private void TrayIcon_MouseUp(object? sender, MouseEventArgs e)
+        private void TrayIcon_MouseUp(object? sender, System.Windows.Forms.MouseEventArgs e)
         {
             if (e.Button == MouseButtons.Right)
                 UpdateTrayMenu();
@@ -1642,7 +1642,7 @@ namespace AmtPtpConfigGui
             ClassificationText.Foreground = fingerBrush;
         }
 
-        private void AddZoneRect(double x, double y, double w, double h, Brush brush)
+        private void AddZoneRect(double x, double y, double w, double h, System.Windows.Media.Brush brush)
         {
             if (w <= 0 || h <= 0) return;
             var r = new Rectangle { Width = w, Height = h, Fill = brush };
@@ -1651,7 +1651,7 @@ namespace AmtPtpConfigGui
             PreviewCanvas.Children.Add(r);
         }
 
-        private void AddLabel(string text, double x, double y, Brush brush, double size)
+        private void AddLabel(string text, double x, double y, System.Windows.Media.Brush brush, double size)
         {
             var t = new TextBlock
             {
@@ -1702,7 +1702,7 @@ namespace AmtPtpConfigGui
             UpdateTestPointFromMouse(e);
         }
 
-        private void PreviewCanvas_MouseMove(object sender, MouseEventArgs e)
+        private void PreviewCanvas_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
         {
             if (_draggingTestPoint) UpdateTestPointFromMouse(e);
         }
@@ -1713,7 +1713,7 @@ namespace AmtPtpConfigGui
             PreviewCanvas.ReleaseMouseCapture();
         }
 
-        private void UpdateTestPointFromMouse(MouseEventArgs e)
+        private void UpdateTestPointFromMouse(System.Windows.Input.MouseEventArgs e)
         {
             var pos = e.GetPosition(PreviewCanvas);
             double xPct = Clamp(pos.X / PreviewCanvas.Width * 100.0, 0, 100);
