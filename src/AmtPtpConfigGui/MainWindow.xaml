@@ -6,7 +6,7 @@
         Icon="Assets/AppIcon.ico"
         Height="820" Width="1280" MinHeight="660" MinWidth="1120"
         WindowStartupLocation="CenterScreen"
-        Background="#F4F5F7"
+        Background="{DynamicResource PageBrush}"
         FontFamily="Segoe UI Variable Text, Segoe UI"
         FontSize="13"
         TextOptions.TextFormattingMode="Display"
@@ -94,7 +94,7 @@
 
         <!-- ===================== Base text + type scale ===================== -->
         <Style TargetType="TextBlock">
-            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
         </Style>
 
         <Style x:Key="TitleText" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
@@ -103,7 +103,7 @@
         </Style>
         <Style x:Key="SubtitleText" TargetType="TextBlock">
             <Setter Property="FontSize" Value="11.5"/>
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
             <Setter Property="Margin" Value="0,2,0,0"/>
         </Style>
         <Style x:Key="SectionTitle" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
@@ -112,12 +112,12 @@
         </Style>
         <Style x:Key="SectionCaption" TargetType="TextBlock">
             <Setter Property="FontSize" Value="11"/>
-            <Setter Property="Foreground" Value="{StaticResource TextTertiaryBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}"/>
             <Setter Property="Margin" Value="0,1,0,0"/>
         </Style>
         <Style x:Key="HintText" TargetType="TextBlock">
             <Setter Property="FontSize" Value="11"/>
-            <Setter Property="Foreground" Value="{StaticResource TextTertiaryBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}"/>
             <Setter Property="TextWrapping" Value="Wrap"/>
             <Setter Property="Margin" Value="0,10,0,0"/>
         </Style>
@@ -129,14 +129,14 @@
         <Style x:Key="TelemetryText" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="Cascadia Mono, Consolas"/>
             <Setter Property="FontSize" Value="11.5"/>
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
             <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
         </Style>
 
         <!-- ===================== Card container ===================== -->
         <Style x:Key="Card" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource CardBrush}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource CardBorderBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource CardBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="CornerRadius" Value="10"/>
             <Setter Property="Padding" Value="18,14"/>
@@ -152,8 +152,8 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="GroupBox">
-                        <Border Background="{StaticResource CardBrush}"
-                                BorderBrush="{StaticResource CardBorderBrush}"
+                        <Border Background="{DynamicResource CardBrush}"
+                                BorderBrush="{DynamicResource CardBorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="10">
                             <Grid>
@@ -162,7 +162,7 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <Border Grid.Column="0" Width="3" CornerRadius="2"
-                                        Background="{StaticResource AccentBrush}"
+                                        Background="{DynamicResource AccentBrush}"
                                         Margin="0,16"/>
                                 <StackPanel Grid.Column="1" Margin="{TemplateBinding Padding}">
                                     <ContentPresenter ContentSource="Header" Margin="0,0,0,14"/>
@@ -189,14 +189,14 @@
         <!-- ===================== Slider labels ===================== -->
         <Style TargetType="TextBlock" x:Key="SliderLabel">
             <Setter Property="FontWeight" Value="Normal"/>
-            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
         </Style>
         <Style TargetType="TextBlock" x:Key="SliderValue">
             <Setter Property="HorizontalAlignment" Value="Right"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="FontFamily" Value="Cascadia Mono, Consolas"/>
             <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
         </Style>
 
         <!-- ===================== Slider ===================== -->
@@ -209,18 +209,18 @@
                                      Fill="#140067C0" Opacity="0"/>
                             <Ellipse Width="18" Height="18"
                                      Fill="White"
-                                     Stroke="{StaticResource AccentBrush}"
+                                     Stroke="{DynamicResource AccentBrush}"
                                      StrokeThickness="2"
                                      Effect="{StaticResource ThumbShadow}"/>
                             <Ellipse x:Name="Core" Width="8" Height="8"
-                                     Fill="{StaticResource AccentBrush}"/>
+                                     Fill="{DynamicResource AccentBrush}"/>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Halo" Property="Opacity" Value="1"/>
                             </Trigger>
                             <Trigger Property="IsDragging" Value="True">
-                                <Setter TargetName="Core" Property="Fill" Value="{StaticResource AccentBrushPressed}"/>
+                                <Setter TargetName="Core" Property="Fill" Value="{DynamicResource AccentBrushPressed}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -237,7 +237,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Slider">
                         <Grid VerticalAlignment="Center">
-                            <Border Height="4" Background="{StaticResource ControlStrokeBrush}" CornerRadius="2"/>
+                            <Border Height="4" Background="{DynamicResource ControlStrokeBrush}" CornerRadius="2"/>
                             <Track x:Name="PART_Track">
                                 <Track.DecreaseRepeatButton>
                                     <RepeatButton Command="Slider.DecreaseLarge">
@@ -277,9 +277,9 @@
             <Setter Property="Padding" Value="16,8"/>
             <Setter Property="Margin" Value="8,0,0,0"/>
             <Setter Property="MinWidth" Value="120"/>
-            <Setter Property="Background" Value="{StaticResource ControlFillBrush}"/>
-            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource ControlStrokeBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource ControlFillBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="FontWeight" Value="Normal"/>
@@ -315,9 +315,9 @@
              soft colored elevation shadow so it visibly outranks every
              other button on screen instead of matching them 1:1. -->
         <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
             <Setter Property="Foreground" Value="White"/>
-            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Padding" Value="20,9"/>
             <Setter Property="MinWidth" Value="150"/>
@@ -336,10 +336,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource AccentBrushHover}"/>
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource AccentBrushHover}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource AccentBrushPressed}"/>
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource AccentBrushPressed}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.5"/>
@@ -355,7 +355,7 @@
         <Style x:Key="GhostButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
             <Setter Property="MinWidth" Value="0"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -367,11 +367,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource ControlFillBrush}"/>
-                                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource ControlFillBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource DividerBrush}"/>
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource DividerBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -381,14 +381,14 @@
 
         <!-- ===================== CheckBox ===================== -->
         <Style TargetType="CheckBox">
-            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="CheckBox">
                         <StackPanel Orientation="Horizontal">
                             <Border x:Name="Box" Width="18" Height="18" CornerRadius="4"
                                     Background="White"
-                                    BorderBrush="{StaticResource ControlStrokeBrush}"
+                                    BorderBrush="{DynamicResource ControlStrokeBrush}"
                                     BorderThickness="1.4"
                                     VerticalAlignment="Center">
                                 <Path x:Name="Check" Data="M2,7 L6,11 L14,2" Stroke="White"
@@ -400,12 +400,12 @@
                         </StackPanel>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Box" Property="Background" Value="{StaticResource AccentBrush}"/>
-                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                                <Setter TargetName="Box" Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                                 <Setter TargetName="Check" Property="Visibility" Value="Visible"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -415,31 +415,31 @@
 
         <Style x:Key="ToggleChip" TargetType="CheckBox">
             <Setter Property="Padding" Value="12,6"/>
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="CheckBox">
                         <Border x:Name="Chip" CornerRadius="16"
-                                Background="{StaticResource ControlFillBrush}"
-                                BorderBrush="{StaticResource ControlStrokeBrush}"
+                                Background="{DynamicResource ControlFillBrush}"
+                                BorderBrush="{DynamicResource ControlStrokeBrush}"
                                 BorderThickness="1"
                                 Padding="{TemplateBinding Padding}">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse x:Name="Dot" Width="7" Height="7"
-                                         Fill="{StaticResource TextTertiaryBrush}" VerticalAlignment="Center"/>
+                                         Fill="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center"/>
                                 <ContentPresenter Margin="7,0,0,0" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Chip" Property="Background" Value="{StaticResource AccentSoftBrush}"/>
-                                <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
-                                <Setter TargetName="Dot" Property="Fill" Value="{StaticResource AccentBrush}"/>
-                                <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                                <Setter TargetName="Chip" Property="Background" Value="{DynamicResource AccentSoftBrush}"/>
+                                <Setter TargetName="Chip" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AccentBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                                <Setter TargetName="Chip" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -463,7 +463,7 @@
             <Setter Property="Padding" Value="0,8"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="FontSize" Value="12.5"/>
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabItem">
@@ -473,16 +473,16 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource CardBrush}"/>
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource CardBrush}"/>
                                 <Setter TargetName="Root" Property="Effect" Value="{StaticResource CardShadow}"/>
-                                <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
                             </Trigger>
                             <MultiTrigger>
                                 <MultiTrigger.Conditions>
                                     <Condition Property="IsSelected" Value="False"/>
                                     <Condition Property="IsMouseOver" Value="True"/>
                                 </MultiTrigger.Conditions>
-                                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
                             </MultiTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -502,8 +502,8 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
-                            <Border Grid.Row="0" Background="{StaticResource ControlFillBrush}"
-                                    BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1"
+                            <Border Grid.Row="0" Background="{DynamicResource ControlFillBrush}"
+                                    BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
                                     CornerRadius="9" Padding="3" Margin="0,0,0,14">
                                 <UniformGrid Rows="1" IsItemsHost="True"/>
                             </Border>
@@ -528,7 +528,7 @@
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Width="38" Height="38" CornerRadius="11" Background="{StaticResource BrandMarkBrush}">
+                    <Border Width="38" Height="38" CornerRadius="11" Background="{DynamicResource BrandMarkBrush}">
                         <Grid>
                             <Ellipse Width="9" Height="9" Fill="#B8FFFFFF"
                                      HorizontalAlignment="Left" VerticalAlignment="Top" Margin="9,8,0,0"/>
@@ -542,27 +542,28 @@
                     </StackPanel>
                 </StackPanel>
 
-                <Grid Grid.Column="2" VerticalAlignment="Center">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <Border Grid.Column="0" Style="{StaticResource Pill}"
-                            Background="{StaticResource ControlFillBrush}"
-                            BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1"
-                            HorizontalAlignment="Right" MaxWidth="520">
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Style="{StaticResource Pill}"
+                            Background="{DynamicResource ControlFillBrush}"
+                            BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
+                            Padding="10,7" MinWidth="122">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="#E5484D" VerticalAlignment="Center"/>
                             <TextBlock x:Name="StatusText" Margin="9,0,0,0" VerticalAlignment="Center"
-                                       Text="Device not found — preview mode"
-                                       TextTrimming="CharacterEllipsis"/>
-                            <TextBlock x:Name="DeviceModelText" Margin="12,0,0,0" VerticalAlignment="Center"
-                                       Style="{StaticResource TelemetryText}" TextTrimming="CharacterEllipsis"/>
+                                       Text="Disconnected"/>
                         </StackPanel>
                     </Border>
-                    <Button x:Name="BtnAppSettings" Grid.Column="1" Content="⚙" Width="40" Height="34" Margin="10,0,0,0"
+                    <Border Margin="8,0,0,0" Style="{StaticResource Pill}"
+                            Background="{DynamicResource CardBrush}"
+                            BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
+                            Padding="10,7" MaxWidth="350">
+                        <TextBlock x:Name="DeviceModelText" VerticalAlignment="Center"
+                                   Style="{StaticResource TelemetryText}" TextTrimming="CharacterEllipsis"
+                                   Text="Apple PTP"/>
+                    </Border>
+                    <Button x:Name="BtnAppSettings" Content="⚙" Width="40" Height="34" Margin="8,0,0,0"
                             Padding="0" Style="{StaticResource GhostButton}" Click="AppSettings_Click" ToolTip="Application settings"/>
-                </Grid>
+                </StackPanel>
             </Grid>
         </Border>
 
@@ -630,8 +631,8 @@
                 </Grid>
 
                 <Border x:Name="LiveCoordPanel" Grid.Row="1" Margin="0,10,0,0" Padding="10,7" Visibility="Collapsed"
-                        Background="{StaticResource ControlFillBrush}"
-                        BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1"
+                        Background="{DynamicResource ControlFillBrush}"
+                        BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
                         CornerRadius="8" Height="116">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
                         <TextBlock x:Name="LiveCoordText" Text="Live: no active contacts"
@@ -650,10 +651,10 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock x:Name="BottomStatusText" VerticalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}" Text=""/>
+                <TextBlock x:Name="BottomStatusText" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text=""/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
                     <Button Content="Reset to defaults" Style="{StaticResource GhostButton}" Click="ResetDefaults_Click"/>
-                    <Border Width="1" Margin="10,4" Background="{StaticResource DividerBrush}"/>
+                    <Border Width="1" Margin="10,4" Background="{DynamicResource DividerBrush}"/>
                     <Button Style="{StaticResource AccentButton}" Click="Save_Click">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="✓" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="White"/>
@@ -982,18 +983,18 @@
 
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,14">
                         <TextBlock Text="Touchpad preview" Style="{StaticResource SectionTitle}" FontSize="16" VerticalAlignment="Center"/>
-                        <Border Style="{StaticResource Pill}" Background="{StaticResource SuccessSoftBrush}" Padding="9,3" Margin="14,0,0,0">
+                        <Border Style="{StaticResource Pill}" Background="{DynamicResource SuccessSoftBrush}" Padding="9,3" Margin="14,0,0,0">
                             <StackPanel Orientation="Horizontal">
-                                <Ellipse Width="8" Height="8" Fill="{StaticResource SuccessBrush}" VerticalAlignment="Center"/>
+                                <Ellipse Width="8" Height="8" Fill="{DynamicResource SuccessBrush}" VerticalAlignment="Center"/>
                                 <TextBlock Text="normal touch" FontSize="10.5" Margin="6,0,0,0"
-                                           Foreground="{StaticResource SuccessBrush}" VerticalAlignment="Center"/>
+                                           Foreground="{DynamicResource SuccessBrush}" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>
-                        <Border Style="{StaticResource Pill}" Background="{StaticResource DangerSoftBrush}" Padding="9,3" Margin="8,0,0,0">
+                        <Border Style="{StaticResource Pill}" Background="{DynamicResource DangerSoftBrush}" Padding="9,3" Margin="8,0,0,0">
                             <StackPanel Orientation="Horizontal">
-                                <Ellipse Width="8" Height="8" Fill="{StaticResource DangerBrush}" VerticalAlignment="Center"/>
+                                <Ellipse Width="8" Height="8" Fill="{DynamicResource DangerBrush}" VerticalAlignment="Center"/>
                                 <TextBlock Text="palm (PALM)" FontSize="10.5" Margin="6,0,0,0"
-                                           Foreground="{StaticResource DangerBrush}" VerticalAlignment="Center"/>
+                                           Foreground="{DynamicResource DangerBrush}" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -1006,7 +1007,7 @@
                          The canvas itself is filled in code (DrawPreview)
                          with a silver "glass" gradient (GlassPadBrush)
                          rather than a flat white rectangle. -->
-                    <Border Grid.Row="1" CornerRadius="16" Background="{StaticResource BezelBrush}"
+                    <Border Grid.Row="1" CornerRadius="16" Background="{DynamicResource BezelBrush}"
                             Padding="14" Effect="{StaticResource DeviceShadow}">
                         <Grid>
                             <Border CornerRadius="10" ClipToBounds="True">
@@ -1026,17 +1027,17 @@
                                     </Grid>
                                 </Viewbox>
                             </Border>
-                            <Border CornerRadius="10" Background="{StaticResource GlassShineBrush}" IsHitTestVisible="False"/>
+                            <Border CornerRadius="10" Background="{DynamicResource GlassShineBrush}" IsHitTestVisible="False"/>
                         </Grid>
                     </Border>
 
                     <Border Grid.Row="2" Margin="0,14,0,0" Padding="14,11" CornerRadius="8"
-                            Background="{StaticResource ControlFillBrush}"
-                            BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1">
+                            Background="{DynamicResource ControlFillBrush}"
+                            BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="Classification: " FontWeight="SemiBold"/>
                             <TextBlock x:Name="ClassificationText" Text="—" FontWeight="Bold"/>
-                            <TextBlock x:Name="GeometrySourceText" Margin="20,0,0,0" Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <TextBlock x:Name="GeometrySourceText" Margin="20,0,0,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
                         </StackPanel>
                     </Border>
                 </Grid>

@@ -177,6 +177,8 @@ namespace AmtPtpConfigGui
             _appSettings = AppSettingsStore.Load();
 
             InitializeComponent();
+            _appSettings.Theme = ThemeManager.Get(_appSettings.Theme).Id;
+            ThemeManager.Apply(_appSettings.Theme, Resources);
             InitializeProfiles();
             UpdateProModeVisibility();
             _uiReady = true;
@@ -223,106 +225,278 @@ namespace AmtPtpConfigGui
             if (_settingsDialogOpen) return;
             _settingsDialogOpen = true;
 
+            string originalTheme = ThemeManager.CurrentThemeId;
+            string selectedTheme = _appSettings.Theme;
+
             var dialog = new Window
             {
                 Title = "Wellspring PTP Settings",
-                Width = 430,
-                Height = 430,
-                MinWidth = 470,
-                MinHeight = 430,
+                Width = 540,
+                Height = 650,
+                MinWidth = 500,
+                MinHeight = 600,
                 ResizeMode = ResizeMode.NoResize,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Owner = this,
                 WindowStyle = WindowStyle.ToolWindow,
-                Background = (Brush)FindResource("PageBrush"),
+                ShowInTaskbar = false,
                 FontFamily = new FontFamily("Segoe UI Variable Text, Segoe UI"),
                 FontSize = 13
             };
+            dialog.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "PageBrush");
 
-            var root = new System.Windows.Controls.Grid { Margin = new Thickness(20) };
-            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var root = new Grid { Margin = new Thickness(22) };
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-            var title = new TextBlock
-            { Text = "Application settings", FontSize = 18, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0,0,0,14) };
-            System.Windows.Controls.Grid.SetRow(title, 0);
-            root.Children.Add(title);
-
-            var stack = new StackPanel();
-            var closeToTray = new System.Windows.Controls.CheckBox
-            { Content = "Minimize to tray when closing", IsChecked = _appSettings.CloseToTray, Margin = new Thickness(0,0,0,12) };
-            var startup = new System.Windows.Controls.CheckBox
-            { Content = "Start the GUI with Windows", IsChecked = _appSettings.StartWithWindows, Margin = new Thickness(0,0,0,12) };
-            var palmEdges = new System.Windows.Controls.CheckBox
-            { Content = "Palm rejection at touchpad edges", IsChecked = _appSettings.PalmEdgeRejectionEnabled, Margin = new Thickness(0,0,0,12) };
-            stack.Children.Add(closeToTray);
-            stack.Children.Add(startup);
-            stack.Children.Add(palmEdges);
-            var hint = new TextBlock
-            { Text = "When disabled, edge rejection settings are preserved but edge zones temporarily stop rejecting contacts.", Foreground = (Brush)FindResource("TextSecondaryBrush"), TextWrapping = TextWrapping.Wrap, FontSize = 11 };
-            stack.Children.Add(hint);
-            System.Windows.Controls.Grid.SetRow(stack, 1);
-            root.Children.Add(stack);
-
-            var backupGroup = new Border
+            var heading = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
+            heading.Children.Add(new TextBlock
             {
-                Background = (Brush)FindResource("CardBrush"),
-                BorderBrush = (Brush)FindResource("CardBorderBrush"),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(12),
-                Margin = new Thickness(0, 6, 0, 10)
+                Text = "Application settings",
+                FontSize = 20,
+                FontWeight = FontWeights.SemiBold
+            });
+            var headingSub = new TextBlock
+            {
+                Text = "Configure Wellspring PTP behavior and appearance.",
+                FontSize = 12,
+                Margin = new Thickness(0, 3, 0, 0)
+            };
+            headingSub.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondaryBrush");
+            heading.Children.Add(headingSub);
+            Grid.SetRow(heading, 0);
+            root.Children.Add(heading);
+
+            var scroll = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            };
+            var content = new StackPanel();
+            scroll.Content = content;
+            Grid.SetRow(scroll, 1);
+            root.Children.Add(scroll);
+
+            Border MakeCard(string title, string caption)
+            {
+                var card = new Border
+                {
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(12),
+                    Padding = new Thickness(16),
+                    Margin = new Thickness(0, 0, 0, 12)
+                };
+                var panel = new StackPanel();
+                panel.Children.Add(new TextBlock
+                {
+                    Text = title,
+                    FontSize = 14,
+                    FontWeight = FontWeights.SemiBold
+                });
+                var captionText = new TextBlock
+                {
+                    Text = caption,
+                    FontSize = 11,
+                    Margin = new Thickness(0, 2, 0, 12),
+                    TextWrapping = TextWrapping.Wrap
+                };
+                captionText.SetResourceReference(TextBlock.ForegroundProperty, "TextTertiaryBrush");
+                panel.Children.Add(captionText);
+                card.SetResourceReference(Border.BackgroundProperty, "CardBrush");
+                card.SetResourceReference(Border.BorderBrushProperty, "CardBorderBrush");
+                card.Child = panel;
+                card.Tag = panel;
+                return card;
+            }
+
+            var behaviorCard = MakeCard(
+                "Behavior",
+                "Control how the application stays available and starts with Windows.");
+            var behaviorPanel = (StackPanel)behaviorCard.Tag!;
+            var closeToTray = new CheckBox
+            {
+                Content = "Minimize to tray when closing",
+                IsChecked = _appSettings.CloseToTray,
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            var startup = new CheckBox
+            {
+                Content = "Start the GUI with Windows",
+                IsChecked = _appSettings.StartWithWindows,
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            var palmEdges = new CheckBox
+            {
+                Content = "Palm rejection at touchpad edges",
+                IsChecked = _appSettings.PalmEdgeRejectionEnabled,
+                Margin = new Thickness(0, 0, 0, 2)
+            };
+            behaviorPanel.Children.Add(closeToTray);
+            behaviorPanel.Children.Add(startup);
+            behaviorPanel.Children.Add(palmEdges);
+            behaviorPanel.Children.Add(new TextBlock
+            {
+                Text = "Edge rejection settings remain stored even when this option is disabled.",
+                Foreground = (Brush)FindResource("TextSecondaryBrush"),
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 11,
+                Margin = new Thickness(24, 3, 0, 0)
+            });
+            content.Children.Add(behaviorCard);
+
+            var themeCard = MakeCard(
+                "Appearance",
+                "Choose a palette. The preview updates immediately while this dialog is open.");
+            var themePanel = (StackPanel)themeCard.Tag!;
+            var themeRow = new Grid();
+            themeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            themeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var themeInfo = new StackPanel();
+            var themeName = new TextBlock
+            {
+                FontWeight = FontWeights.SemiBold,
+                FontSize = 13
+            };
+            var themeSub = new TextBlock
+            {
+                FontSize = 11,
+                Margin = new Thickness(0, 2, 0, 0)
+            };
+            themeSub.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondaryBrush");
+            themeInfo.Children.Add(themeName);
+            themeInfo.Children.Add(themeSub);
+            Grid.SetColumn(themeInfo, 0);
+            themeRow.Children.Add(themeInfo);
+
+            var changeTheme = new Button
+            {
+                Content = "Change theme",
+                Width = 126,
+                Height = 34,
+                Style = (Style)FindResource("GhostButton")
+            };
+            Grid.SetColumn(changeTheme, 1);
+            themeRow.Children.Add(changeTheme);
+            themePanel.Children.Add(themeRow);
+
+            var swatches = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 14, 0, 0)
+            };
+            themePanel.Children.Add(swatches);
+
+            void UpdateThemePreview()
+            {
+                var t = ThemeManager.Get(selectedTheme);
+                themeName.Text = t.Name;
+                themeSub.Text = $"{t.Name} palette · click Change theme to cycle";
+                swatches.Children.Clear();
+                foreach (var theme in ThemeManager.Themes)
+                {
+                    var swatch = new Border
+                    {
+                        Width = 26,
+                        Height = 18,
+                        CornerRadius = new CornerRadius(5),
+                        Margin = new Thickness(0, 0, 6, 0),
+                        Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(theme.Primary)!),
+                        BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(theme.Outline)!),
+                        BorderThickness = new Thickness(1),
+                        ToolTip = theme.Name
+                    };
+                    if (string.Equals(theme.Id, selectedTheme, StringComparison.OrdinalIgnoreCase))
+                        swatch.BorderThickness = new Thickness(2);
+                    swatches.Children.Add(swatch);
+                }
+            }
+
+            changeTheme.Click += (_, _) =>
+            {
+                selectedTheme = ThemeManager.NextThemeId(selectedTheme);
+                ThemeManager.Apply(selectedTheme, Resources);
+                RefreshTrayMenu();
+                UpdateThemePreview();
             };
 
-            var backupStack = new StackPanel();
-            backupStack.Children.Add(new TextBlock
-            {
-                Text = "Backup",
-                FontWeight = FontWeights.SemiBold,
-                FontSize = 13,
-                Margin = new Thickness(0, 0, 0, 4)
-            });
-            backupStack.Children.Add(new TextBlock
-            {
-                Text = "Profiles and application settings in one file.",
-                Foreground = (Brush)FindResource("TextSecondaryBrush"),
-                FontSize = 11,
-                Margin = new Thickness(0, 0, 0, 9)
-            });
+            UpdateThemePreview();
+            content.Children.Add(themeCard);
 
+            var backupCard = MakeCard(
+                "Backup & restore",
+                "Export all profiles and application settings to one file, or restore a previous backup.");
+            var backupPanel = (StackPanel)backupCard.Tag!;
             var backupButtons = new StackPanel { Orientation = Orientation.Horizontal };
-            var exportBackup = new System.Windows.Controls.Button
-            { Content = "Export...", Style = (Style)FindResource("GhostButton"), Width = 110, Margin = new Thickness(0, 0, 8, 0) };
-            var restoreBackup = new System.Windows.Controls.Button
-            { Content = "Restore...", Style = (Style)FindResource("GhostButton"), Width = 110 };
-            backupButtons.Children.Add(exportBackup);
-            backupButtons.Children.Add(restoreBackup);
-            backupStack.Children.Add(backupButtons);
-            backupGroup.Child = backupStack;
-            System.Windows.Controls.Grid.SetRow(backupGroup, 2);
-            root.Children.Add(backupGroup);
-
+            var exportBackup = new Button
+            {
+                Content = "Export backup...",
+                Style = (Style)FindResource("GhostButton"),
+                Width = 130,
+                Height = 34,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            var restoreBackup = new Button
+            {
+                Content = "Restore backup...",
+                Style = (Style)FindResource("GhostButton"),
+                Width = 140,
+                Height = 34
+            };
             exportBackup.Click += (_, _) => ExportBackup();
             restoreBackup.Click += (_, _) => RestoreBackup();
+            backupButtons.Children.Add(exportBackup);
+            backupButtons.Children.Add(restoreBackup);
+            backupPanel.Children.Add(backupButtons);
+            content.Children.Add(backupCard);
 
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
-            var cancel = new System.Windows.Controls.Button { Content = "Cancel", Style = (Style)FindResource("GhostButton"), Margin = new Thickness(0,0,8,0), Width = 100 };
-            var save = new System.Windows.Controls.Button { Content = "Save", Style = (Style)FindResource("AccentButton"), Width = 100 };
-            buttons.Children.Add(cancel);
-            buttons.Children.Add(save);
-            System.Windows.Controls.Grid.SetRow(buttons, 4);
-            root.Children.Add(buttons);
+            var footer = new DockPanel { LastChildFill = false, Margin = new Thickness(0, 16, 0, 0) };
+            var footerHint = new TextBlock
+            {
+                Text = "Changes are saved only when you press Save.",
+                VerticalAlignment = VerticalAlignment.Center,
+                FontSize = 11
+            };
+            footerHint.SetResourceReference(TextBlock.ForegroundProperty, "TextTertiaryBrush");
+            DockPanel.SetDock(footerHint, Dock.Left);
+            footer.Children.Add(footerHint);
+            var footerButtons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            var cancel = new Button
+            {
+                Content = "Cancel",
+                Style = (Style)FindResource("GhostButton"),
+                Width = 96,
+                Height = 34,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            var save = new Button
+            {
+                Content = "Save",
+                Style = (Style)FindResource("AccentButton"),
+                Width = 96,
+                Height = 34
+            };
+            footerButtons.Children.Add(cancel);
+            footerButtons.Children.Add(save);
+            DockPanel.SetDock(footerButtons, Dock.Right);
+            footer.Children.Add(footerButtons);
+            Grid.SetRow(footer, 2);
+            root.Children.Add(footer);
 
-            cancel.Click += (_, _) => dialog.Close();
+            cancel.Click += (_, _) =>
+            {
+                ThemeManager.Apply(originalTheme, Resources);
+                RefreshTrayMenu();
+                dialog.Close();
+            };
+
             save.Click += (_, _) =>
             {
                 _appSettings.CloseToTray = closeToTray.IsChecked == true;
                 _appSettings.StartWithWindows = startup.IsChecked == true;
                 var oldPalmEdges = _appSettings.PalmEdgeRejectionEnabled;
                 _appSettings.PalmEdgeRejectionEnabled = palmEdges.IsChecked == true;
+                _appSettings.Theme = ThemeManager.Get(selectedTheme).Id;
                 AppSettingsStore.Save(_appSettings);
                 UpdateStartupRegistration(_appSettings.StartWithWindows);
 
@@ -335,7 +509,15 @@ namespace AmtPtpConfigGui
             };
 
             dialog.Content = root;
-            dialog.Closed += (_, _) => _settingsDialogOpen = false;
+            dialog.Closed += (_, _) =>
+            {
+                if (!_appSettings.Theme.Equals(ThemeManager.CurrentThemeId, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(originalTheme, ThemeManager.CurrentThemeId, StringComparison.OrdinalIgnoreCase))
+                {
+                    ThemeManager.Apply(_appSettings.Theme, Resources);
+                }
+                _settingsDialogOpen = false;
+            };
             dialog.ShowDialog();
         }
 
@@ -364,12 +546,13 @@ namespace AmtPtpConfigGui
 
                 var backup = new WellspringBackup
                 {
-                    Version = 1,
+                    Version = 2,
                     AppSettings = new AppSettings
                     {
                         CloseToTray = _appSettings.CloseToTray,
                         StartWithWindows = _appSettings.StartWithWindows,
-                        PalmEdgeRejectionEnabled = _appSettings.PalmEdgeRejectionEnabled
+                        PalmEdgeRejectionEnabled = _appSettings.PalmEdgeRejectionEnabled,
+                        Theme = _appSettings.Theme
                     },
                     Profiles = _profiles.Select(CloneProfile).ToList(),
                     ActiveProfileIndex = _activeProfileIndex
@@ -427,6 +610,8 @@ namespace AmtPtpConfigGui
                 _appSettings.StartWithWindows = backup.AppSettings?.StartWithWindows ?? false;
                 var oldPalmEdges = _appSettings.PalmEdgeRejectionEnabled;
                 _appSettings.PalmEdgeRejectionEnabled = backup.AppSettings?.PalmEdgeRejectionEnabled ?? true;
+                _appSettings.Theme = ThemeManager.Get(backup.AppSettings?.Theme).Id;
+                ThemeManager.Apply(_appSettings.Theme, Resources);
 
                 ProfileStore.Save(_profiles);
                 AppSettingsStore.Save(_appSettings);
@@ -525,7 +710,7 @@ namespace AmtPtpConfigGui
                 Font = new System.Drawing.Font("Segoe UI", 9F),
                 BackColor = System.Drawing.Color.FromArgb(250, 251, 253),
                 ForeColor = System.Drawing.Color.FromArgb(30, 34, 40),
-                Renderer = new ModernTrayRenderer(),
+                Renderer = new ModernTrayRenderer(ThemeManager.CurrentThemeId),
                 DropShadowEnabled = true,
                 ShowItemToolTips = true
             };
@@ -545,9 +730,21 @@ namespace AmtPtpConfigGui
             menu.SuspendLayout();
             try
             {
+                var trayColors = ThemeManager.TrayColors(ThemeManager.CurrentThemeId);
+                menu.BackColor = trayColors.Back;
+                menu.ForeColor = trayColors.Fore;
+                menu.Renderer = new ModernTrayRenderer(ThemeManager.CurrentThemeId);
+                menu.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Regular);
                 menu.Items.Clear();
 
-                var profilesItem = new Forms.ToolStripMenuItem("Profile") { ToolTipText = "Select active profile", Padding = new System.Windows.Forms.Padding(10, 7, 10, 7) };
+                var header = new Forms.ToolStripMenuItem("Wellspring PTP")
+                {
+                    Enabled = false,
+                    Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold),
+                    Padding = new System.Windows.Forms.Padding(10, 8, 10, 8)
+                };
+
+                var profilesItem = new Forms.ToolStripMenuItem("Profile") { ToolTipText = "Select active profile", Padding = new System.Windows.Forms.Padding(10, 7, 10, 7), Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold) };
                 for (int i = 0; i < _profiles.Count; i++)
                 {
                     int index = i;
@@ -579,6 +776,8 @@ namespace AmtPtpConfigGui
                 var exit = new Forms.ToolStripMenuItem("Exit") { Padding = new System.Windows.Forms.Padding(10, 7, 10, 7) };
                 exit.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ExitApplication));
 
+                menu.Items.Add(header);
+                menu.Items.Add(new Forms.ToolStripSeparator());
                 menu.Items.Add(profilesItem);
                 menu.Items.Add(palmEdges);
                 menu.Items.Add(new Forms.ToolStripSeparator());
@@ -933,7 +1132,7 @@ namespace AmtPtpConfigGui
             if (connected)
             {
                 StatusDot.Fill = ConnectedBrush;
-                StatusText.Text = "Connected: Wellspring Precision Touchpad";
+                StatusText.Text = "Connected";
                 DeviceModelText.Text = _device.GetDeviceModelDisplay();
 
                 if (_device.TryGetPalmConfig(out var cfg))
@@ -970,7 +1169,7 @@ namespace AmtPtpConfigGui
             else
             {
                 StatusDot.Fill = DisconnectedBrush;
-                StatusText.Text = "Device not found — preview mode";
+                StatusText.Text = "Disconnected";
                 LoadConfigIntoSliders(PalmConfig.Default);
                 LoadPointerConfigIntoControls(PointerConfig.Default);
                 LoadScrollConfigIntoControls(ScrollConfig.Default);
@@ -1986,22 +2185,36 @@ namespace AmtPtpConfigGui
     }
     internal sealed class ModernTrayRenderer : Forms.ToolStripProfessionalRenderer
     {
-        private sealed class Colors : System.Windows.Forms.ProfessionalColorTable
+        private sealed class Colors : Forms.ProfessionalColorTable
         {
-            public override System.Drawing.Color MenuBorder => System.Drawing.Color.FromArgb(220, 223, 229);
-            public override System.Drawing.Color MenuItemBorder => System.Drawing.Color.FromArgb(218, 222, 228);
-            public override System.Drawing.Color MenuItemSelected => System.Drawing.Color.FromArgb(232, 236, 242);
-            public override System.Drawing.Color MenuItemSelectedGradientBegin => System.Drawing.Color.FromArgb(232, 236, 242);
-            public override System.Drawing.Color MenuItemSelectedGradientEnd => System.Drawing.Color.FromArgb(232, 236, 242);
-            public override System.Drawing.Color ToolStripDropDownBackground => System.Drawing.Color.FromArgb(250, 251, 253);
-            public override System.Drawing.Color ImageMarginGradientBegin => System.Drawing.Color.FromArgb(250, 251, 253);
-            public override System.Drawing.Color ImageMarginGradientMiddle => System.Drawing.Color.FromArgb(250, 251, 253);
-            public override System.Drawing.Color ImageMarginGradientEnd => System.Drawing.Color.FromArgb(250, 251, 253);
-            public override System.Drawing.Color SeparatorDark => System.Drawing.Color.FromArgb(224, 227, 232);
-            public override System.Drawing.Color SeparatorLight => System.Drawing.Color.FromArgb(255, 255, 255);
+            public Colors(string themeId)
+            {
+                var palette = ThemeManager.TrayColors(themeId);
+                MenuBack = palette.Back;
+                Fore = palette.Fore;
+                Selected = palette.Selected;
+                Border = palette.Border;
+            }
+
+            public System.Drawing.Color MenuBack { get; }
+            public System.Drawing.Color Fore { get; }
+            public System.Drawing.Color Selected { get; }
+            public System.Drawing.Color Border { get; }
+
+            public override System.Drawing.Color MenuBorder => Border;
+            public override System.Drawing.Color MenuItemBorder => Border;
+            public override System.Drawing.Color MenuItemSelected => Selected;
+            public override System.Drawing.Color MenuItemSelectedGradientBegin => Selected;
+            public override System.Drawing.Color MenuItemSelectedGradientEnd => Selected;
+            public override System.Drawing.Color ToolStripDropDownBackground => MenuBack;
+            public override System.Drawing.Color ImageMarginGradientBegin => MenuBack;
+            public override System.Drawing.Color ImageMarginGradientMiddle => MenuBack;
+            public override System.Drawing.Color ImageMarginGradientEnd => MenuBack;
+            public override System.Drawing.Color SeparatorDark => Border;
+            public override System.Drawing.Color SeparatorLight => MenuBack;
         }
 
-        public ModernTrayRenderer() : base(new Colors())
+        public ModernTrayRenderer(string themeId) : base(new Colors(themeId))
         {
             RoundedEdges = true;
         }

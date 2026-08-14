@@ -10,12 +10,13 @@ namespace AmtPtpConfigGui
         public bool CloseToTray { get; set; } = true;
         public bool StartWithWindows { get; set; } = false;
         public bool PalmEdgeRejectionEnabled { get; set; } = true;
+        public string Theme { get; set; } = "blue";
     }
 
 
     internal sealed class WellspringBackup
     {
-        public int Version { get; set; } = 1;
+        public int Version { get; set; } = 2;
         public AppSettings AppSettings { get; set; } = new AppSettings();
         public List<GuiProfile> Profiles { get; set; } = new List<GuiProfile>();
         public int ActiveProfileIndex { get; set; }

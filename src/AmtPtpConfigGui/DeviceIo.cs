@@ -242,6 +242,7 @@ namespace AmtPtpConfigGui.Native
             {
                 0x0272 or 0x0273 or 0x0274 => "MacBookPro12,1 · 2015 13-inch",
                 0x0290 or 0x0291 => "MacBookAir6/7,x · pre-Force Touch",
+                0x0277 => "MacBookPro13,2 · 2016 15-inch",
                 0x027A => "MacBookAir8,1 · 2018",
                 0x027B => "MacBookPro15,2 · 2018 13-inch",
                 0x027C => "MacBookPro15,1 · 2018 15-inch",
@@ -250,7 +251,7 @@ namespace AmtPtpConfigGui.Native
                 0x027F => "MacBookPro16,3 · 2020 13-inch",
                 0x0280 => "MacBookAir9,1 · 2020",
                 0x0340 => "MacBookPro16,1 · 2019 16-inch",
-                _ => $"Apple PTP · PID 0x{info.ProductId:X4}"
+                _ => $"Apple Internal Trackpad · PID 0x{info.ProductId:X4}"
             };
 
             return info.SupportsForceTouch != 0
