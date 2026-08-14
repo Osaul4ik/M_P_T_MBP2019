@@ -30,29 +30,32 @@ namespace AmtPtpConfigGui
 
         private static LinearGradientBrush CreateGlassPadBrush()
         {
+            // Brushed-aluminum silver, like the MacBook's own trackpad glass
+            // set into its aluminum body, instead of the previous dark
+            // "glass device" look.
             var brush = new LinearGradientBrush
             {
                 StartPoint = new Point(0, 0),
                 EndPoint = new Point(1, 1),
             };
-            brush.GradientStops.Add(new GradientStop(Color.FromRgb(0x35, 0x3B, 0x47), 0.0));
-            brush.GradientStops.Add(new GradientStop(Color.FromRgb(0x1C, 0x1F, 0x26), 0.55));
-            brush.GradientStops.Add(new GradientStop(Color.FromRgb(0x14, 0x16, 0x1B), 1.0));
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(0xF3, 0xF3, 0xF4), 0.0));
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(0xE2, 0xE3, 0xE5), 0.55));
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(0xD3, 0xD4, 0xD7), 1.0));
             brush.Freeze();
             return brush;
         }
 
-        private static readonly SolidColorBrush GlassPadStrokeBrush = Frozen(0xFF, 0x40, 0x46, 0x53);
-        private static readonly SolidColorBrush CrosshairBrush = Frozen(0xE0, 0xFF, 0xFF, 0xFF);
-        private static readonly SolidColorBrush EdgeZoneBrush = Frozen(70, 0xFF, 0x8A, 0x65);
-        private static readonly SolidColorBrush EdgeZoneLabelBrush = Frozen(0xFF, 0xFF, 0xAB, 0x91);
+        private static readonly SolidColorBrush GlassPadStrokeBrush = Frozen(0xFF, 0xB7, 0xB9, 0xBD);
+        private static readonly SolidColorBrush CrosshairBrush = Frozen(0x50, 0x00, 0x00, 0x00);
+        private static readonly SolidColorBrush EdgeZoneBrush = Frozen(60, 0xFF, 0x6D, 0x2E);
+        private static readonly SolidColorBrush EdgeZoneLabelBrush = Frozen(0xFF, 0xC4, 0x45, 0x0B);
 
-        // Test-touch classification fill - brightened "neon on dark glass"
-        // variants of the semantic accepted/soft-reject/hard-reject colors,
-        // tuned to stay legible on the dark pad surface above.
-        private static readonly SolidColorBrush PalmNoneBrush = Frozen(210, 0x34, 0xD3, 0x99);
-        private static readonly SolidColorBrush PalmLocalBrush = Frozen(210, 0xFB, 0xBF, 0x24);
-        private static readonly SolidColorBrush PalmLargeBrush = Frozen(210, 0xF8, 0x71, 0x71);
+        // Test-touch classification fill - the same semantic accepted/
+        // soft-reject/hard-reject colors, tuned to stay legible (with a
+        // dark stroke, see DrawPreview/AddCross) on the silver pad surface.
+        private static readonly SolidColorBrush PalmNoneBrush = Frozen(225, 0x1D, 0x9A, 0x6C);
+        private static readonly SolidColorBrush PalmLocalBrush = Frozen(225, 0xE0, 0x9A, 0x0A);
+        private static readonly SolidColorBrush PalmLargeBrush = Frozen(225, 0xE5, 0x48, 0x4D);
 
         // Live-overlay outline colors reuse WPF's own static Brushes.* -
         // those are already immutable singletons, no allocation there -
@@ -780,7 +783,7 @@ namespace AmtPtpConfigGui
                 Height = minorPx,
                 Fill = fingerBrush,
                 Stroke = Brushes.White,
-                StrokeThickness = 1,
+                StrokeThickness = 1.5,
             };
             Canvas.SetLeft(ellipse, px - majorPx / 2);
             Canvas.SetTop(ellipse, py - minorPx / 2);
@@ -841,7 +844,6 @@ namespace AmtPtpConfigGui
                 Y2 = y2,
                 Stroke = CrosshairBrush,
                 StrokeThickness = 1,
-                Opacity = 0.06,
             };
             PreviewCanvas.Children.Add(line);
         }
@@ -849,8 +851,8 @@ namespace AmtPtpConfigGui
         private void AddCross(double x, double y)
         {
             const double s = 8;
-            var l1 = new Line { X1 = x - s, Y1 = y, X2 = x + s, Y2 = y, Stroke = Brushes.White, StrokeThickness = 1.5, Opacity = 0.85 };
-            var l2 = new Line { X1 = x, Y1 = y - s, X2 = x, Y2 = y + s, Stroke = Brushes.White, StrokeThickness = 1.5, Opacity = 0.85 };
+            var l1 = new Line { X1 = x - s, Y1 = y, X2 = x + s, Y2 = y, Stroke = Brushes.Black, StrokeThickness = 1.5, Opacity = 0.55 };
+            var l2 = new Line { X1 = x, Y1 = y - s, X2 = x, Y2 = y + s, Stroke = Brushes.Black, StrokeThickness = 1.5, Opacity = 0.55 };
             PreviewCanvas.Children.Add(l1);
             PreviewCanvas.Children.Add(l2);
         }

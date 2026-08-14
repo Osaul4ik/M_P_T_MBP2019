@@ -54,13 +54,15 @@
         </LinearGradientBrush>
 
         <!-- Bezel around the trackpad "device" panel, and the glass shine
-             overlay drawn on top of it - see the preview column below. -->
+             overlay drawn on top of it - see the preview column below.
+             Brushed-aluminum silver, like the MacBook's own trackpad body,
+             rather than the previous dark "glass device" look. -->
         <LinearGradientBrush x:Key="BezelBrush" StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Color="#20232B" Offset="0"/>
-            <GradientStop Color="#15171C" Offset="1"/>
+            <GradientStop Color="#EEEFF1" Offset="0"/>
+            <GradientStop Color="#C9CBCE" Offset="1"/>
         </LinearGradientBrush>
         <LinearGradientBrush x:Key="GlassShineBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#22FFFFFF" Offset="0"/>
+            <GradientStop Color="#40FFFFFF" Offset="0"/>
             <GradientStop Color="#00FFFFFF" Offset="0.45"/>
         </LinearGradientBrush>
 
@@ -453,6 +455,66 @@
             <Setter Property="Padding" Value="10,6"/>
         </Style>
 
+        <!-- ===================== Settings tabs (Palm / Scroll / Pointer) =====================
+             A flat, segmented-control look (all tab headers in one rounded
+             strip, selected one lifted onto a white "pill") rather than the
+             default Win32 folder-tab chrome, to match the rest of the
+             settings-card visual language. -->
+        <Style x:Key="SettingsTabItem" TargetType="TabItem">
+            <Setter Property="Padding" Value="0,8"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="Root" CornerRadius="7" Margin="2,0" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter ContentSource="Header"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{StaticResource CardBrush}"/>
+                                <Setter TargetName="Root" Property="Effect" Value="{StaticResource CardShadow}"/>
+                                <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsSelected" Value="False"/>
+                                    <Condition Property="IsMouseOver" Value="True"/>
+                                </MultiTrigger.Conditions>
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                            </MultiTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SettingsTabControl" TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabControl">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0" Background="{StaticResource ControlFillBrush}"
+                                    BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1"
+                                    CornerRadius="9" Padding="3" Margin="0,0,0,14">
+                                <UniformGrid Rows="1" IsItemsHost="True"/>
+                            </Border>
+                            <ContentPresenter Grid.Row="1" ContentSource="SelectedContent"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
     </Window.Resources>
 
     <DockPanel LastChildFill="True" Margin="18">
@@ -514,12 +576,16 @@
                     </StackPanel>
                 </StackPanel>
 
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,0,0">
-                    <TextBlock x:Name="LiveCoordText" Text="Live: координати —"
-                               Style="{StaticResource TelemetryText}" MaxWidth="620" Margin="0,0,16,0"/>
-                    <TextBlock x:Name="LiveCornerText" Text="Кути: TL 0 | TR 0 | BL 0 | BR 0"
-                               Style="{StaticResource TelemetryText}" MaxWidth="320"/>
-                </StackPanel>
+                <Grid Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MinWidth="0"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="LiveCoordText" Grid.Column="0" Text="Live: координати —"
+                               Style="{StaticResource TelemetryText}" Margin="0,0,16,0"/>
+                    <TextBlock x:Name="LiveCornerText" Grid.Column="1" Text="Кути: TL 0 | TR 0 | BL 0 | BR 0"
+                               Style="{StaticResource TelemetryText}"/>
+                </Grid>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Content="Зберегти помилки в .txt" Click="SaveErrors_Click"/>
@@ -548,8 +614,8 @@
                     <Button Content="Зберегти профіль…" Click="SaveProfile_Click"/>
                     <Button Style="{StaticResource AccentButton}" Click="Apply_Click">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="✓" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                            <TextBlock Text="Застосувати" VerticalAlignment="Center"/>
+                            <TextBlock Text="✓" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="White"/>
+                            <TextBlock Text="Застосувати" VerticalAlignment="Center" Foreground="White"/>
                         </StackPanel>
                     </Button>
                 </StackPanel>
@@ -564,7 +630,9 @@
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <TabControl Grid.Column="0" Style="{StaticResource SettingsTabControl}">
+                <TabItem Header="Palm" Style="{StaticResource SettingsTabItem}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
 
                     <GroupBox>
@@ -685,6 +753,28 @@
 
                 </StackPanel>
             </ScrollViewer>
+                </TabItem>
+
+                <TabItem Header="Scroll" Style="{StaticResource SettingsTabItem}">
+                    <StackPanel Margin="4,24,4,0" HorizontalAlignment="Center">
+                        <TextBlock Text="Налаштування прокрутки"
+                                   Style="{StaticResource SectionTitle}" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Ще не реалізовано — з'явиться в одному з наступних оновлень."
+                                   Style="{StaticResource HintText}" TextAlignment="Center"
+                                   HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </TabItem>
+
+                <TabItem Header="Pointer" Style="{StaticResource SettingsTabItem}">
+                    <StackPanel Margin="4,24,4,0" HorizontalAlignment="Center">
+                        <TextBlock Text="Налаштування вказівника"
+                                   Style="{StaticResource SectionTitle}" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Ще не реалізовано — з'явиться в одному з наступних оновлень."
+                                   Style="{StaticResource HintText}" TextAlignment="Center"
+                                   HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </TabItem>
+            </TabControl>
 
             <!-- ===================== Live visualization ===================== -->
             <Border Grid.Column="2" Style="{StaticResource Card}" Margin="0" Effect="{StaticResource CardShadow}">
@@ -713,14 +803,14 @@
                         </Border>
                     </StackPanel>
 
-                    <!-- "Device" bezel around the trackpad glass: a dark
-                         frame (like the plastic/metal surround on a real
-                         trackpad) with a soft drop shadow, containing the
-                         canvas the driver-accurate classification is drawn
-                         on, plus a faint diagonal glass-shine overlay. The
-                         canvas itself is filled in code (DrawPreview) with
-                         a dark radial/linear "glass" gradient rather than a
-                         flat white rectangle. -->
+                    <!-- "Device" bezel around the trackpad glass: a silver
+                         brushed-aluminum frame (like the MacBook's own
+                         trackpad body) with a soft drop shadow, containing
+                         the canvas the driver-accurate classification is
+                         drawn on, plus a faint diagonal glass-shine overlay.
+                         The canvas itself is filled in code (DrawPreview)
+                         with a silver "glass" gradient (GlassPadBrush)
+                         rather than a flat white rectangle. -->
                     <Border Grid.Row="1" CornerRadius="16" Background="{StaticResource BezelBrush}"
                             Padding="14" Effect="{StaticResource DeviceShadow}">
                         <Grid>
