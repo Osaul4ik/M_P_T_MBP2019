@@ -11,10 +11,14 @@ namespace AmtPtpConfigGui.Native
         public uint SmoothingPercent;
         public uint Deadzone;
         public uint FastVelocity;
+        public uint ScaleNum;
+        public uint ScaleDen;
+        public uint ScaleNumFast;
+        public uint ScaleDenFast;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)]
         public uint[] Reserved;
 
-        public const uint CurrentVersion = 1;
+        public const uint CurrentVersion = 2;
 
         public static ScrollConfig Default => new ScrollConfig
         {
@@ -24,6 +28,10 @@ namespace AmtPtpConfigGui.Native
             SmoothingPercent = 0,
             Deadzone = 1,
             FastVelocity = 1600,
+            ScaleNum = 8,
+            ScaleDen = 10,
+            ScaleNumFast = 108,
+            ScaleDenFast = 100,
             Reserved = new uint[2],
         };
 
@@ -36,6 +44,10 @@ namespace AmtPtpConfigGui.Native
             c.SmoothingPercent = Clamp(c.SmoothingPercent, 0, 100);
             c.Deadzone = Clamp(c.Deadzone, 0, 8);
             c.FastVelocity = Clamp(c.FastVelocity, 500, 4000);
+            c.ScaleNum = Clamp(c.ScaleNum, 1, 400);
+            c.ScaleDen = Clamp(c.ScaleDen, 1, 400);
+            c.ScaleNumFast = Clamp(c.ScaleNumFast, 1, 400);
+            c.ScaleDenFast = Clamp(c.ScaleDenFast, 1, 400);
             c.Reserved ??= new uint[2];
             return c;
         }

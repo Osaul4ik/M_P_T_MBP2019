@@ -1476,8 +1476,12 @@ namespace AmtPtpConfigGui
                 SlCursorSmoothing.Value = cfg.CursorSmoothingPercent;
                 SlCursorSpeed.Value = cfg.CursorSpeedPercent;
                 SlCursorDeadzone.Value = cfg.CursorDeadzone;
+                SlCursorDeadzoneSlow.Value = cfg.CursorDeadzoneSlow;
+                SlCursorDeadzoneFast.Value = cfg.CursorDeadzoneFast;
                 SlCursorSlowVelocity.Value = cfg.CursorSlowVelocity;
                 SlCursorFastVelocity.Value = cfg.CursorFastVelocity;
+                SlSmoothingAlphaDen.Value = cfg.SmoothingAlphaDen;
+                SlSmoothingAlphaNumSlow.Value = cfg.SmoothingAlphaNumSlow;
 
                 RadioButton selected = cfg.ForceTapAction switch
                 {
@@ -1500,8 +1504,12 @@ namespace AmtPtpConfigGui
             c.CursorSmoothingPercent = (uint)SlCursorSmoothing.Value;
             c.CursorSpeedPercent = (uint)SlCursorSpeed.Value;
             c.CursorDeadzone = (uint)SlCursorDeadzone.Value;
+            c.CursorDeadzoneSlow = (uint)SlCursorDeadzoneSlow.Value;
+            c.CursorDeadzoneFast = (uint)SlCursorDeadzoneFast.Value;
             c.CursorSlowVelocity = (uint)SlCursorSlowVelocity.Value;
             c.CursorFastVelocity = (uint)SlCursorFastVelocity.Value;
+            c.SmoothingAlphaDen = (uint)SlSmoothingAlphaDen.Value;
+            c.SmoothingAlphaNumSlow = (uint)SlSmoothingAlphaNumSlow.Value;
             c.ForceTapAction =
                 RbActionMiddleClick.IsChecked == true ? PointerConfig.ActionMiddleClick :
                 RbActionDoubleClick.IsChecked == true ? PointerConfig.ActionDoubleClick :
@@ -1516,8 +1524,12 @@ namespace AmtPtpConfigGui
             LblCursorSmoothing.Text = $"{SlCursorSmoothing.Value:0}%";
             LblCursorSpeed.Text = $"{SlCursorSpeed.Value:0}%";
             LblCursorDeadzone.Text = $"{SlCursorDeadzone.Value:0}";
+            LblCursorDeadzoneSlow.Text = $"{SlCursorDeadzoneSlow.Value:0}";
+            LblCursorDeadzoneFast.Text = $"{SlCursorDeadzoneFast.Value:0}";
             LblCursorSlowVelocity.Text = $"{SlCursorSlowVelocity.Value:0}";
             LblCursorFastVelocity.Text = $"{SlCursorFastVelocity.Value:0}";
+            LblSmoothingAlphaDen.Text = $"{SlSmoothingAlphaDen.Value:0}";
+            LblSmoothingAlphaNumSlow.Text = $"{SlSmoothingAlphaNumSlow.Value:0}";
         }
 
         private void PointerSlider_Changed(object sender, RoutedEventArgs e)
@@ -1545,6 +1557,10 @@ namespace AmtPtpConfigGui
                 SlScrollSmoothing.Value = cfg.SmoothingPercent;
                 SlScrollDeadzone.Value = cfg.Deadzone;
                 SlScrollFastVelocity.Value = cfg.FastVelocity;
+                SlScrollScaleNum.Value = cfg.ScaleNum;
+                SlScrollScaleDen.Value = cfg.ScaleDen;
+                SlScrollScaleNumFast.Value = cfg.ScaleNumFast;
+                SlScrollScaleDenFast.Value = cfg.ScaleDenFast;
             }
             finally { _suppressScrollEvents = false; }
             UpdateScrollLabels();
@@ -1558,6 +1574,10 @@ namespace AmtPtpConfigGui
             c.SmoothingPercent = (uint)SlScrollSmoothing.Value;
             c.Deadzone = (uint)SlScrollDeadzone.Value;
             c.FastVelocity = (uint)SlScrollFastVelocity.Value;
+            c.ScaleNum = (uint)SlScrollScaleNum.Value;
+            c.ScaleDen = (uint)SlScrollScaleDen.Value;
+            c.ScaleNumFast = (uint)SlScrollScaleNumFast.Value;
+            c.ScaleDenFast = (uint)SlScrollScaleDenFast.Value;
             return c.Clamped();
         }
 
@@ -1569,6 +1589,10 @@ namespace AmtPtpConfigGui
             LblScrollSmoothing.Text = $"{SlScrollSmoothing.Value:0}%";
             LblScrollDeadzone.Text = $"{SlScrollDeadzone.Value:0}";
             LblScrollFastVelocity.Text = $"{SlScrollFastVelocity.Value:0}";
+            LblScrollScaleNum.Text = $"{SlScrollScaleNum.Value:0}";
+            LblScrollScaleDen.Text = $"{SlScrollScaleDen.Value:0}";
+            LblScrollScaleNumFast.Text = $"{SlScrollScaleNumFast.Value:0}";
+            LblScrollScaleDenFast.Text = $"{SlScrollScaleDenFast.Value:0}";
         }
 
         private void ScrollSlider_Changed(object sender, RoutedEventArgs e)

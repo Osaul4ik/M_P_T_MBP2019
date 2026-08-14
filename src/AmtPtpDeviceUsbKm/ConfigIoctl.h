@@ -45,13 +45,21 @@ EXTERN_C_START
 #define AMT_REG_VALUE_CURSOR_SMOOTH      L"PointerCursorSmoothing"
 #define AMT_REG_VALUE_CURSOR_SPEED       L"PointerCursorSpeed"
 #define AMT_REG_VALUE_CURSOR_DEADZONE    L"PointerCursorDeadzone"
+#define AMT_REG_VALUE_CURSOR_DEADZONE_SLOW L"PointerCursorDeadzoneSlow"
+#define AMT_REG_VALUE_CURSOR_DEADZONE_FAST L"PointerCursorDeadzoneFast"
 #define AMT_REG_VALUE_CURSOR_SLOW_VEL    L"PointerCursorSlowVelocity"
 #define AMT_REG_VALUE_CURSOR_FAST_VEL    L"PointerCursorFastVelocity"
+#define AMT_REG_VALUE_CURSOR_ALPHA_DEN   L"PointerSmoothingAlphaDen"
+#define AMT_REG_VALUE_CURSOR_ALPHA_SLOW  L"PointerSmoothingAlphaNumSlow"
 
 #define AMT_REG_VALUE_SCROLL_SPEED       L"ScrollSpeed"
 #define AMT_REG_VALUE_SCROLL_FAST_SPEED  L"ScrollFastSpeed"
 #define AMT_REG_VALUE_SCROLL_SMOOTH      L"ScrollSmoothing"
 #define AMT_REG_VALUE_SCROLL_DEADZONE    L"ScrollDeadzone"
 #define AMT_REG_VALUE_SCROLL_FAST_VEL    L"ScrollFastVelocity"
+#define AMT_REG_VALUE_SCROLL_SCALE_NUM   L"ScrollScaleNum"
+#define AMT_REG_VALUE_SCROLL_SCALE_DEN   L"ScrollScaleDen"
+#define AMT_REG_VALUE_SCROLL_SCALE_NUM_FAST L"ScrollScaleNumFast"
+#define AMT_REG_VALUE_SCROLL_SCALE_DEN_FAST L"ScrollScaleDenFast"
 
 EXTERN_C_END

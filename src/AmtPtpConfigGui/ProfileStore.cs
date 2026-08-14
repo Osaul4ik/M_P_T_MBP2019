@@ -83,7 +83,27 @@ namespace AmtPtpConfigGui
                 if (string.IsNullOrWhiteSpace(p.Name))
                     p.Name = "Profile";
                 p.Palm = p.Palm.StructVersion == 0 ? Native.PalmConfig.Default : p.Palm.Clamped();
+                if (p.Pointer.StructVersion < Native.PointerConfig.CurrentVersion)
+                {
+                    var defaults = Native.PointerConfig.Default;
+                    var old = p.Pointer;
+                    old.CursorDeadzoneSlow = defaults.CursorDeadzoneSlow;
+                    old.CursorDeadzoneFast = defaults.CursorDeadzoneFast;
+                    old.SmoothingAlphaDen = defaults.SmoothingAlphaDen;
+                    old.SmoothingAlphaNumSlow = defaults.SmoothingAlphaNumSlow;
+                    p.Pointer = old;
+                }
                 p.Pointer = p.Pointer.StructVersion == 0 ? Native.PointerConfig.Default : p.Pointer.Clamped();
+                if (p.Scroll.StructVersion < Native.ScrollConfig.CurrentVersion)
+                {
+                    var defaults = Native.ScrollConfig.Default;
+                    var old = p.Scroll;
+                    old.ScaleNum = defaults.ScaleNum;
+                    old.ScaleDen = defaults.ScaleDen;
+                    old.ScaleNumFast = defaults.ScaleNumFast;
+                    old.ScaleDenFast = defaults.ScaleDenFast;
+                    p.Scroll = old;
+                }
                 p.Scroll = p.Scroll.StructVersion == 0 ? Native.ScrollConfig.Default : p.Scroll.Clamped();
             }
         }

@@ -838,7 +838,27 @@
                                         <TextBlock x:Name="LblScrollFastVelocity" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollFastVelocity" Minimum="500" Maximum="4000" ValueChanged="ScrollSlider_Changed"/>
-                                    <TextBlock Style="{StaticResource HintText}" Text="Fast Velocity defines when fast scroll mode activates."/>
+                                    <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Base scale numerator"/>
+                                        <TextBlock x:Name="LblScrollScaleNum" Grid.Column="1" Style="{StaticResource SliderValue}"/>
+                                    </Grid>
+                                    <Slider x:Name="SlScrollScaleNum" Minimum="1" Maximum="400" ValueChanged="ScrollSlider_Changed"/>
+                                    <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Base scale denominator"/>
+                                        <TextBlock x:Name="LblScrollScaleDen" Grid.Column="1" Style="{StaticResource SliderValue}"/>
+                                    </Grid>
+                                    <Slider x:Name="SlScrollScaleDen" Minimum="1" Maximum="400" ValueChanged="ScrollSlider_Changed"/>
+                                    <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast scale numerator"/>
+                                        <TextBlock x:Name="LblScrollScaleNumFast" Grid.Column="1" Style="{StaticResource SliderValue}"/>
+                                    </Grid>
+                                    <Slider x:Name="SlScrollScaleNumFast" Minimum="1" Maximum="400" ValueChanged="ScrollSlider_Changed"/>
+                                    <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast scale denominator"/>
+                                        <TextBlock x:Name="LblScrollScaleDenFast" Grid.Column="1" Style="{StaticResource SliderValue}"/>
+                                    </Grid>
+                                    <Slider x:Name="SlScrollScaleDenFast" Minimum="1" Maximum="400" ValueChanged="ScrollSlider_Changed"/>
+                                    <TextBlock Style="{StaticResource HintText}" Text="Scale values are advanced fixed-point multipliers applied on top of the basic speed controls."/>
                                 </StackPanel>
                             </GroupBox>
                         </StackPanel>
@@ -892,6 +912,26 @@
                                         <TextBlock x:Name="LblCursorFastVelocity" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorFastVelocity" Minimum="200" Maximum="2000" ValueChanged="PointerSlider_Changed"/>
+                                    <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Slow dead zone"/>
+                                        <TextBlock x:Name="LblCursorDeadzoneSlow" Grid.Column="1" Style="{StaticResource SliderValue}"/>
+                                    </Grid>
+                                    <Slider x:Name="SlCursorDeadzoneSlow" Minimum="0" Maximum="8" ValueChanged="PointerSlider_Changed"/>
+                                    <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Fast dead zone"/>
+                                        <TextBlock x:Name="LblCursorDeadzoneFast" Grid.Column="1" Style="{StaticResource SliderValue}"/>
+                                    </Grid>
+                                    <Slider x:Name="SlCursorDeadzoneFast" Minimum="0" Maximum="8" ValueChanged="PointerSlider_Changed"/>
+                                    <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Smoothing denominator"/>
+                                        <TextBlock x:Name="LblSmoothingAlphaDen" Grid.Column="1" Style="{StaticResource SliderValue}"/>
+                                    </Grid>
+                                    <Slider x:Name="SlSmoothingAlphaDen" Minimum="1" Maximum="16" ValueChanged="PointerSlider_Changed"/>
+                                    <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Slow smoothing numerator"/>
+                                        <TextBlock x:Name="LblSmoothingAlphaNumSlow" Grid.Column="1" Style="{StaticResource SliderValue}"/>
+                                    </Grid>
+                                    <Slider x:Name="SlSmoothingAlphaNumSlow" Minimum="1" Maximum="16" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Style="{StaticResource SliderLabel}" Text="Force touch threshold"/>
                                         <TextBlock x:Name="LblForceTapThreshold" Grid.Column="1" Style="{StaticResource SliderValue}"/>

@@ -56,10 +56,16 @@ AmtPointerConfigClamp(_Inout_ PAMT_POINTER_CONFIG Config)
     Config->CursorSmoothingPercent = AmtClampULong(Config->CursorSmoothingPercent, AMT_POINTER_SMOOTH_MIN, AMT_POINTER_SMOOTH_MAX);
     Config->CursorSpeedPercent = AmtClampULong(Config->CursorSpeedPercent, AMT_POINTER_SPEED_MIN, AMT_POINTER_SPEED_MAX);
     Config->CursorDeadzone = AmtClampULong(Config->CursorDeadzone, AMT_POINTER_DEADZONE_MIN, AMT_POINTER_DEADZONE_MAX);
+    Config->CursorDeadzoneSlow = AmtClampULong(Config->CursorDeadzoneSlow, AMT_POINTER_DEADZONE_MIN, AMT_POINTER_DEADZONE_MAX);
+    Config->CursorDeadzoneFast = AmtClampULong(Config->CursorDeadzoneFast, AMT_POINTER_DEADZONE_MIN, AMT_POINTER_DEADZONE_MAX);
     Config->CursorSlowVelocity = AmtClampULong(Config->CursorSlowVelocity, AMT_POINTER_SLOW_VEL_MIN, AMT_POINTER_SLOW_VEL_MAX);
     Config->CursorFastVelocity = AmtClampULong(Config->CursorFastVelocity, AMT_POINTER_FAST_VEL_MIN, AMT_POINTER_FAST_VEL_MAX);
     if (Config->CursorFastVelocity <= Config->CursorSlowVelocity)
         Config->CursorFastVelocity = Config->CursorSlowVelocity + 1;
+    Config->SmoothingAlphaDen = AmtClampULong(Config->SmoothingAlphaDen, AMT_POINTER_ALPHA_DEN_MIN, AMT_POINTER_ALPHA_DEN_MAX);
+    Config->SmoothingAlphaNumSlow = AmtClampULong(Config->SmoothingAlphaNumSlow, AMT_POINTER_ALPHA_SLOW_MIN, AMT_POINTER_ALPHA_SLOW_MAX);
+    if (Config->SmoothingAlphaNumSlow > Config->SmoothingAlphaDen)
+        Config->SmoothingAlphaNumSlow = Config->SmoothingAlphaDen;
 }
 
 VOID
@@ -71,6 +77,10 @@ AmtScrollConfigClamp(_Inout_ PAMT_SCROLL_CONFIG Config)
     Config->SmoothingPercent = AmtClampULong(Config->SmoothingPercent, AMT_SCROLL_SMOOTH_MIN, AMT_SCROLL_SMOOTH_MAX);
     Config->Deadzone = AmtClampULong(Config->Deadzone, AMT_SCROLL_DEADZONE_MIN, AMT_SCROLL_DEADZONE_MAX);
     Config->FastVelocity = AmtClampULong(Config->FastVelocity, AMT_SCROLL_FAST_VEL_MIN, AMT_SCROLL_FAST_VEL_MAX);
+    Config->ScaleNum = AmtClampULong(Config->ScaleNum, AMT_SCROLL_SCALE_NUM_MIN, AMT_SCROLL_SCALE_NUM_MAX);
+    Config->ScaleDen = AmtClampULong(Config->ScaleDen, AMT_SCROLL_SCALE_DEN_MIN, AMT_SCROLL_SCALE_DEN_MAX);
+    Config->ScaleNumFast = AmtClampULong(Config->ScaleNumFast, AMT_SCROLL_SCALE_NUM_MIN, AMT_SCROLL_SCALE_NUM_MAX);
+    Config->ScaleDenFast = AmtClampULong(Config->ScaleDenFast, AMT_SCROLL_SCALE_DEN_MIN, AMT_SCROLL_SCALE_DEN_MAX);
     RtlZeroMemory(Config->Reserved, sizeof(Config->Reserved));
 }
 
@@ -208,8 +218,12 @@ AmtPointerConfigLoadFromRegistry(
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_SMOOTH,      &Config->CursorSmoothingPercent);
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_SPEED,       &Config->CursorSpeedPercent);
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_DEADZONE,    &Config->CursorDeadzone);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_DEADZONE_SLOW, &Config->CursorDeadzoneSlow);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_DEADZONE_FAST, &Config->CursorDeadzoneFast);
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_SLOW_VEL,    &Config->CursorSlowVelocity);
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_FAST_VEL,    &Config->CursorFastVelocity);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_ALPHA_DEN,   &Config->SmoothingAlphaDen);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_ALPHA_SLOW,  &Config->SmoothingAlphaNumSlow);
 
     WdfRegistryClose(key);
 
@@ -241,8 +255,12 @@ AmtPointerConfigSaveToRegistry(
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_SMOOTH,      Config->CursorSmoothingPercent);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_SPEED,       Config->CursorSpeedPercent);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_DEADZONE,    Config->CursorDeadzone);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_DEADZONE_SLOW, Config->CursorDeadzoneSlow);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_DEADZONE_FAST, Config->CursorDeadzoneFast);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_SLOW_VEL,    Config->CursorSlowVelocity);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_FAST_VEL,    Config->CursorFastVelocity);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_ALPHA_DEN,   Config->SmoothingAlphaDen);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_ALPHA_SLOW,  Config->SmoothingAlphaNumSlow);
 
     WdfRegistryClose(key);
 }
@@ -261,6 +279,10 @@ AmtScrollConfigLoadFromRegistry(_In_ WDFDEVICE Device, _Inout_ PAMT_SCROLL_CONFI
     AmtRegistryReadDword(key, AMT_REG_VALUE_SCROLL_SMOOTH,     &Config->SmoothingPercent);
     AmtRegistryReadDword(key, AMT_REG_VALUE_SCROLL_DEADZONE,   &Config->Deadzone);
     AmtRegistryReadDword(key, AMT_REG_VALUE_SCROLL_FAST_VEL,   &Config->FastVelocity);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_SCROLL_SCALE_NUM,  &Config->ScaleNum);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_SCROLL_SCALE_DEN,  &Config->ScaleDen);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_SCROLL_SCALE_NUM_FAST, &Config->ScaleNumFast);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_SCROLL_SCALE_DEN_FAST, &Config->ScaleDenFast);
     WdfRegistryClose(key);
     AmtScrollConfigClamp(Config);
 }
@@ -276,6 +298,10 @@ AmtScrollConfigSaveToRegistry(_In_ WDFDEVICE Device, _In_ const AMT_SCROLL_CONFI
     AmtRegistryWriteDword(key, AMT_REG_VALUE_SCROLL_SMOOTH,     Config->SmoothingPercent);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_SCROLL_DEADZONE,   Config->Deadzone);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_SCROLL_FAST_VEL,   Config->FastVelocity);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_SCROLL_SCALE_NUM,  Config->ScaleNum);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_SCROLL_SCALE_DEN,  Config->ScaleDen);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_SCROLL_SCALE_NUM_FAST, Config->ScaleNumFast);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_SCROLL_SCALE_DEN_FAST, Config->ScaleDenFast);
     WdfRegistryClose(key);
 }
 

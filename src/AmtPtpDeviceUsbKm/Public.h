@@ -101,11 +101,15 @@ typedef struct _AMT_POINTER_CONFIG
     ULONG CursorSmoothingPercent;
     ULONG CursorSpeedPercent;
     ULONG CursorDeadzone;
+    ULONG CursorDeadzoneSlow;
+    ULONG CursorDeadzoneFast;
     ULONG CursorSlowVelocity;
     ULONG CursorFastVelocity;
+    ULONG SmoothingAlphaDen;
+    ULONG SmoothingAlphaNumSlow;
 } AMT_POINTER_CONFIG, *PAMT_POINTER_CONFIG;
 
-#define AMT_POINTER_CONFIG_VERSION 2
+#define AMT_POINTER_CONFIG_VERSION 3
 
 #define AMT_POINTER_SMOOTH_MIN       0
 #define AMT_POINTER_SMOOTH_MAX       100
@@ -117,6 +121,10 @@ typedef struct _AMT_POINTER_CONFIG
 #define AMT_POINTER_SLOW_VEL_MAX     300
 #define AMT_POINTER_FAST_VEL_MIN     200
 #define AMT_POINTER_FAST_VEL_MAX     2000
+#define AMT_POINTER_ALPHA_DEN_MIN    1
+#define AMT_POINTER_ALPHA_DEN_MAX    16
+#define AMT_POINTER_ALPHA_SLOW_MIN  1
+#define AMT_POINTER_ALPHA_SLOW_MAX 16
 
 // ForceTapAction values.
 #define AMT_POINTER_ACTION_CONTEXT_MENU 0   // synthetic right-click (Button2)
@@ -136,8 +144,12 @@ typedef struct _AMT_POINTER_CONFIG
     0,                                                                      \
     100,                                                                    \
     1,                                                                      \
+    4,                                                                      \
+    0,                                                                      \
     110,                                                                    \
-    700                                                                     \
+    700,                                                                    \
+    8,                                                                      \
+    2                                                                       \
 }
 
 // Sane clamp range - raw pressure realistically spans ~0-300, so keep the
@@ -256,10 +268,14 @@ typedef struct _AMT_SCROLL_CONFIG
     ULONG SmoothingPercent;
     ULONG Deadzone;
     ULONG FastVelocity;
+    ULONG ScaleNum;
+    ULONG ScaleDen;
+    ULONG ScaleNumFast;
+    ULONG ScaleDenFast;
     ULONG Reserved[2];
 } AMT_SCROLL_CONFIG, *PAMT_SCROLL_CONFIG;
 
-#define AMT_SCROLL_CONFIG_VERSION 1
+#define AMT_SCROLL_CONFIG_VERSION 2
 #define AMT_SCROLL_SPEED_MIN          20
 #define AMT_SCROLL_SPEED_MAX          200
 #define AMT_SCROLL_FAST_SPEED_MIN     20
@@ -270,6 +286,10 @@ typedef struct _AMT_SCROLL_CONFIG
 #define AMT_SCROLL_DEADZONE_MAX       8
 #define AMT_SCROLL_FAST_VEL_MIN       500
 #define AMT_SCROLL_FAST_VEL_MAX       4000
+#define AMT_SCROLL_SCALE_NUM_MIN       1
+#define AMT_SCROLL_SCALE_NUM_MAX     400
+#define AMT_SCROLL_SCALE_DEN_MIN       1
+#define AMT_SCROLL_SCALE_DEN_MAX     400
 #define AMT_SCROLL_CONFIG_DEFAULT_INIT \
 { \
     AMT_SCROLL_CONFIG_VERSION, \
@@ -278,6 +298,10 @@ typedef struct _AMT_SCROLL_CONFIG
     0, \
     1, \
     1600, \
+    8, \
+    10, \
+    108, \
+    100, \
     { 0, 0 } \
 }
 

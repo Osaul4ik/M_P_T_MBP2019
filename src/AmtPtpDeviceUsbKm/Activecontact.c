@@ -3,17 +3,8 @@
 #include "Driver.h"
 #include "ActiveContact.h"
 
-// Adaptive deadzone reduces steppy two-finger scrolling.
-#define XY_DEADZONE_UNITS          1  // fallback: VELOCITY_UNKNOWN/MEDIUM
-#define XY_DEADZONE_UNITS_SLOW     4  // near-stationary: absorb tilt/small-lift drift
-#define XY_DEADZONE_UNITS_FAST     0  // fast motion: no deadzone lag
-
-// Velocity buckets choose deadzone and smoothing.
-#define VELOCITY_SLOW_UNITS_PER_SEC   110
-#define VELOCITY_FAST_UNITS_PER_SEC   700
-
-// Separate FAST threshold for two-finger scroll gestures. 
-#define VELOCITY_FAST_SCROLL_UNITS_PER_SEC   1600
+// Pointer/scroll thresholds, deadzones, smoothing coefficients and scroll
+// scale factors are runtime-configurable through AMT_*_CONFIG.
 
 typedef enum _CONTACT_VELOCITY_BUCKET
 {
@@ -23,29 +14,19 @@ typedef enum _CONTACT_VELOCITY_BUCKET
     VELOCITY_FAST,
 } CONTACT_VELOCITY_BUCKET;
 
-#define SMOOTHING_ALPHA_DEN  8
 // Lower smoothing reduces slow-speed jitter.
-#define SMOOTHING_ALPHA_NUM_SLOW  2  // stronger smoothing, near-stationary
 
-// Continuous alpha ramp endpoints (see AmtContactEvaluateVelocity below).
-#define ALPHA_NUM_MIN  SMOOTHING_ALPHA_NUM_SLOW  // heaviest blend, near-stationary
-#define ALPHA_NUM_MAX  SMOOTHING_ALPHA_DEN       // = raw passthrough, bit-identical
-
-// Scale scroll deltas to reduce abrupt stops. FAST gets a +35% boost on
-// top of the base scale (0.8 * 1.35 = 1.08) so a quick swipe covers more
-// distance per frame than a slow/medium one, which keep the base scale.
-#define SCROLL_SCALE_NUM       6
-#define SCROLL_SCALE_DEN       10
-#define SCROLL_SCALE_NUM_FAST  100
-#define SCROLL_SCALE_DEN_FAST  100
+// Continuous alpha ramp endpoints are now supplied by PointerConfig.
+// Scroll scale factors are supplied by ScrollConfig.
 
 static inline USHORT
-AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal, _In_ INT alphaNum)
+AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal, _In_ INT alphaNum,
+    _In_ INT alphaDen)
 {
     // Blend the new sample with the previous report.
     INT blended = ((INT)rawVal * alphaNum +
-                   (INT)prevVal * (SMOOTHING_ALPHA_DEN - alphaNum)) /
-                  SMOOTHING_ALPHA_DEN;
+                   (INT)prevVal * (alphaDen - alphaNum)) /
+                  alphaDen;
     return (USHORT)blended;
 }
 
@@ -70,12 +51,14 @@ AmtContactEvaluateVelocity(
     _In_  LONGLONG FastThresholdUnitsPerSec,
     _In_  LONGLONG        SlowThresholdUnitsPerSec,
     _In_  LONGLONG        AlphaFastThresholdUnitsPerSec,
+    _In_  INT             AlphaDen,
+    _In_  INT             AlphaSlowNum,
     _Out_ INT*     OutAlphaNum
 )
 {
     if (DtQpcTicks <= 0 || PerfFrequencyHz <= 0) {
         // No timestamp basis yet - same default as before: raw/unknown.
-        *OutAlphaNum = ALPHA_NUM_MAX;
+        *OutAlphaNum = AlphaDen;
         return VELOCITY_UNKNOWN;
     }
 
@@ -94,9 +77,9 @@ AmtContactEvaluateVelocity(
         bucket = VELOCITY_MEDIUM;
     }
 
-    // Continuous ramp between ALPHA_NUM_MIN (at/below
-    // VELOCITY_SLOW_UNITS_PER_SEC) and ALPHA_NUM_MAX (at/above
-    // VELOCITY_FAST_UNITS_PER_SEC, bit-identical to raw), so a speed
+    // Continuous ramp between the configured slow alpha numerator (at/below
+    // the slow velocity threshold) and the configured denominator (at/above
+    // the fast velocity threshold, bit-identical to raw), so a speed
     // anywhere in between gets a proportionally lighter blend instead
     // of snapping between two fixed states at a single threshold.
     //
@@ -105,14 +88,14 @@ AmtContactEvaluateVelocity(
     // division, and callers on the gesture-frame path simply don't read
     // the result afterward.
     if (unitsPerSec <= SlowThresholdUnitsPerSec) {
-        *OutAlphaNum = ALPHA_NUM_MIN;
+        *OutAlphaNum = AlphaSlowNum;
     } else if (unitsPerSec >= AlphaFastThresholdUnitsPerSec) {
-        *OutAlphaNum = ALPHA_NUM_MAX;
+        *OutAlphaNum = AlphaDen;
     } else {
         LONGLONG span   = AlphaFastThresholdUnitsPerSec - SlowThresholdUnitsPerSec;
         LONGLONG offset = unitsPerSec - SlowThresholdUnitsPerSec;
-        *OutAlphaNum = ALPHA_NUM_MIN +
-                       (INT)(((ALPHA_NUM_MAX - ALPHA_NUM_MIN) * offset) / span);
+        *OutAlphaNum = AlphaSlowNum +
+                       (INT)(((AlphaDen - AlphaSlowNum) * offset) / span);
     }
 
     return bucket;
@@ -129,9 +112,9 @@ AmtContactDeadzoneForVelocity(
         return (INT)ScrollConfig->Deadzone;
 
     if (Velocity == VELOCITY_SLOW)
-        return (INT)PointerConfig->CursorDeadzone + 1;
+        return (INT)PointerConfig->CursorDeadzoneSlow;
     if (Velocity == VELOCITY_FAST)
-        return (INT)PointerConfig->CursorDeadzone;
+        return (INT)PointerConfig->CursorDeadzoneFast;
     return (INT)PointerConfig->CursorDeadzone;
 }
 
@@ -408,9 +391,14 @@ AmtContactCommitSample(
             INT dx = (INT)candX - (INT)Contact->ReportX;
             INT dy = (INT)candY - (INT)Contact->ReportY;
 
-            INT rawScale = (Velocity == VELOCITY_FAST) ? (INT)ScrollConfig->FastSpeedPercent : (INT)ScrollConfig->SpeedPercent;
-            INT scaledDx = (dx * rawScale) / 100;
-            INT scaledDy = (dy * rawScale) / 100;
+            INT scaleNum = (Velocity == VELOCITY_FAST)
+                         ? (INT)ScrollConfig->ScaleNumFast * (INT)ScrollConfig->FastSpeedPercent
+                         : (INT)ScrollConfig->ScaleNum * (INT)ScrollConfig->SpeedPercent;
+            INT scaleDen = (Velocity == VELOCITY_FAST)
+                         ? (INT)ScrollConfig->ScaleDenFast * 100
+                         : (INT)ScrollConfig->ScaleDen * 100;
+            INT scaledDx = (dx * scaleNum) / scaleDen;
+            INT scaledDy = (dy * scaleNum) / scaleDen;
 
             INT smooth = (INT)ScrollConfig->SmoothingPercent;
             if (smooth > 0) {
@@ -436,18 +424,20 @@ AmtContactCommitSample(
             // AmtContactUpdate). Everything else blends by the continuous
             // alpha the caller computed from measured velocity: heaviest
             // smoothing near-stationary, ramping linearly to a
-            // bit-identical raw passthrough by VELOCITY_FAST_UNITS_PER_SEC.
+            // bit-identical raw passthrough by the configured fast velocity.
             // Replaces the old hard SLOW/MEDIUM/FAST switch, which only
             // ever reported a fixed 3/8 blend or exactly raw with nothing
             // between - a deliberate slow move sitting right at the
             // threshold speed could flip frame-to-frame between the two.
-            INT userAlpha = PointerConfig->CursorSmoothingPercent == 0 ? 8 :
-                            1 + (INT)((PointerConfig->CursorSmoothingPercent * 7 + 99) / 100);
-            INT effAlpha = commitIsRetapSeededFirstSample ? ALPHA_NUM_MIN :
+            INT userAlpha = PointerConfig->CursorSmoothingPercent == 0 ? (INT)PointerConfig->SmoothingAlphaDen :
+                            (INT)PointerConfig->SmoothingAlphaNumSlow +
+                            (INT)(((PointerConfig->SmoothingAlphaDen - PointerConfig->SmoothingAlphaNumSlow) *
+                                  PointerConfig->CursorSmoothingPercent + 99) / 100);
+            INT effAlpha = commitIsRetapSeededFirstSample ? (INT)PointerConfig->SmoothingAlphaNumSlow :
                            ((alphaNum < userAlpha) ? alphaNum : userAlpha);
 
-            repX = AmtContactSmoothCoord(candX, Contact->ReportX, effAlpha);
-            repY = AmtContactSmoothCoord(candY, Contact->ReportY, effAlpha);
+            repX = AmtContactSmoothCoord(candX, Contact->ReportX, effAlpha, (INT)PointerConfig->SmoothingAlphaDen);
+            repY = AmtContactSmoothCoord(candY, Contact->ReportY, effAlpha, (INT)PointerConfig->SmoothingAlphaDen);
 
             INT speed = (INT)PointerConfig->CursorSpeedPercent;
             if (speed != 100) {
@@ -530,7 +520,10 @@ AmtContactUpdate(
     INT alphaNum;
     CONTACT_VELOCITY_BUCKET velocity = AmtContactEvaluateVelocity(
         rawX, rawY, Contact->HystX, Contact->HystY, dtTicks, PerfFrequencyHz,
-        fastThreshold, slowThreshold, alphaFastThreshold, &alphaNum);
+        fastThreshold, slowThreshold, alphaFastThreshold,
+        (INT)PointerConfig->SmoothingAlphaDen,
+        (INT)PointerConfig->SmoothingAlphaNumSlow,
+        &alphaNum);
 
     INT deadzoneThreshold = AmtContactDeadzoneForVelocity(velocity, gestureActive, PointerConfig, ScrollConfig);
 
