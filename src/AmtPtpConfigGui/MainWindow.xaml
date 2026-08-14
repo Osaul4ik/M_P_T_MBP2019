@@ -321,9 +321,8 @@
             <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Padding" Value="20,9"/>
-            <Setter Property="MinWidth" Value="150"/>
-            <Setter Property="Height" Value="42"/>
-            <Setter Property="Effect" Value="{StaticResource PrimaryButtonShadow}"/>
+            <Setter Property="MinWidth" Value="128"/>
+            <Setter Property="Height" Value="38"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -360,9 +359,9 @@
             <Setter Property="Background" Value="{DynamicResource ControlFillBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeBrush}"/>
             <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
-            <Setter Property="MinWidth" Value="150"/>
-            <Setter Property="Height" Value="42"/>
-            <Setter Property="Padding" Value="20,9"/>
+            <Setter Property="MinWidth" Value="128"/>
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="Padding" Value="16,8"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -682,13 +681,80 @@
             <Setter Property="Padding" Value="10,6"/>
         </Style>
 
+        <Style x:Key="ModernComboBox" TargetType="ComboBox">
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource ControlFillBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <Border x:Name="Field" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
+                                <Grid>
+                                    <ContentPresenter Margin="{TemplateBinding Padding}" VerticalAlignment="Center" HorizontalAlignment="Left" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"/>
+                                    <Path Data="M 0 0 L 4 4 L 8 0" Stroke="{DynamicResource TextSecondaryBrush}" StrokeThickness="1.5" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                </Grid>
+                            </Border>
+                            <ToggleButton x:Name="DropDownToggle" Background="Transparent" BorderThickness="0" Focusable="False" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+                            <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True" Focusable="False" IsOpen="{TemplateBinding IsDropDownOpen}" PopupAnimation="Fade" VerticalOffset="5">
+                                <Border Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="4" SnapsToDevicePixels="True">
+                                    <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsDropDownOpen" Value="True">
+                                <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ModernComboBoxItem" TargetType="ComboBoxItem">
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="ItemRoot" Background="{TemplateBinding Background}" CornerRadius="7" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ItemRoot" Property="Background" Value="{DynamicResource ControlHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemRoot" Property="Background" Value="{DynamicResource AccentSoftBrush}"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- ===================== Settings tabs (Palm / Scroll / Pointer) =====================
              A flat, segmented-control look (all tab headers in one rounded
              strip, selected one lifted onto a white "pill") rather than the
              default Win32 folder-tab chrome, to match the rest of the
              settings-card visual language. -->
         <Style x:Key="SettingsTabItem" TargetType="TabItem">
-            <Setter Property="Padding" Value="0,8"/>
+            <Setter Property="Padding" Value="14,8"/>
+            <Setter Property="Margin" Value="2,0"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="FontSize" Value="12.5"/>
             <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
@@ -698,19 +764,26 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabItem">
-                        <Border x:Name="Root" CornerRadius="7" Margin="2,0" Padding="{TemplateBinding Padding}" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                        <Border x:Name="Root"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="{TemplateBinding Padding}"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch">
                             <ContentPresenter ContentSource="Header"
-                                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                                               IsHitTestVisible="False"/>
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              IsHitTestVisible="False"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentBrush}"/>
                                 <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentBrushHover}"/>
-                                <Setter TargetName="Root" Property="BorderThickness" Value="1"/>
-                                <Setter TargetName="Root" Property="Effect" Value="{StaticResource CardShadow}"/>
-                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
-                                <Setter Property="FontWeight" Value="Bold"/>
+                                <Setter Property="Foreground" Value="{DynamicResource AccentContentBrush}"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
                             </Trigger>
                             <MultiTrigger>
                                 <MultiTrigger.Conditions>
@@ -718,7 +791,8 @@
                                     <Condition Property="IsMouseOver" Value="True"/>
                                 </MultiTrigger.Conditions>
                                 <Setter TargetName="Root" Property="Background" Value="{DynamicResource ControlHoverBrush}"/>
-                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource ControlStrokeBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
                             </MultiTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -790,8 +864,8 @@
                         </StackPanel>
                     </Border>
                     <Border Margin="8,0,0,0"
-                            Background="{DynamicResource ControlFillBrush}"
-                            BorderBrush="{DynamicResource AccentBrush}" BorderThickness="1"
+                            Background="{DynamicResource CardBrush}"
+                            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
                             CornerRadius="9" Padding="10,7" MinWidth="250" MaxWidth="460">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="Device" Style="{StaticResource SectionCaption}" Margin="0,0,8,0" VerticalAlignment="Center"/>
@@ -804,11 +878,11 @@
                                        ToolTip="Detected Mac/trackpad model"/>
                         </StackPanel>
                     </Border>
-                    <Button x:Name="BtnAppSettings" Content="⚙" Width="40" Height="34" Margin="8,0,0,0"
+                    <Button x:Name="BtnAppSettings" Content="⚙" Width="38" Height="38" Margin="8,0,0,0"
                             Padding="0" Background="{DynamicResource ControlFillBrush}"
                             BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
                             Foreground="{DynamicResource TextPrimaryBrush}"
-                            Style="{StaticResource GhostButton}" Click="AppSettings_Click" ToolTip="Application settings"/>
+                            Style="{StaticResource SecondaryButton}" Click="AppSettings_Click" ToolTip="Application settings"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -825,8 +899,12 @@
                     <TextBlock Text="Profile" FontWeight="SemiBold" FontSize="12.5"/>
                     <TextBlock Text="Pointer / Scroll / Palm settings" Style="{StaticResource SectionCaption}"/>
                 </StackPanel>
-                <ComboBox x:Name="ProfileCombo" Grid.Column="1" Height="34" VerticalContentAlignment="Center"
-                          SelectionChanged="ProfileCombo_SelectionChanged"/>
+                <ComboBox x:Name="ProfileCombo" Grid.Column="1" Style="{StaticResource ModernComboBox}"
+                          SelectionChanged="ProfileCombo_SelectionChanged">
+                    <ComboBox.ItemContainerStyle>
+                        <Style TargetType="ComboBoxItem" BasedOn="{StaticResource ModernComboBoxItem}"/>
+                    </ComboBox.ItemContainerStyle>
+                </ComboBox>
                 <WrapPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <Button Content="＋" Width="38" Height="34" Padding="0" Margin="0,0,6,0"
                             Click="NewProfile_Click" ToolTip="New profile"/>
@@ -899,8 +977,8 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock x:Name="BottomStatusText" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text=""/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="Reset to defaults" Style="{StaticResource SecondaryButton}" Click="ResetDefaults_Click" Margin="0"/>
-                    <Button Style="{StaticResource AccentButton}" Click="Save_Click" Margin="10,0,0,0">
+                    <Button Content="Reset to defaults" Style="{StaticResource SecondaryButton}" Click="ResetDefaults_Click" Margin="0,0,8,0"/>
+                    <Button Style="{StaticResource AccentButton}" Click="Save_Click" Margin="0">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="✓" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center"/>
                             <TextBlock Text="Save" VerticalAlignment="Center"/>
@@ -1228,17 +1306,17 @@
 
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,14">
                         <TextBlock Text="Touchpad preview" Style="{StaticResource SectionTitle}" FontSize="16" VerticalAlignment="Center"/>
-                        <Border Style="{StaticResource Pill}" Background="{DynamicResource SuccessSoftBrush}" Padding="10,5" Margin="14,0,0,0" BorderBrush="{DynamicResource SuccessBrush}" BorderThickness="1">
+                        <Border Background="Transparent" Padding="4,3" Margin="12,0,0,0">
                             <StackPanel Orientation="Horizontal">
-                                <Ellipse Width="10" Height="10" Fill="{DynamicResource SuccessBrush}" VerticalAlignment="Center"/>
-                                <TextBlock Text="Normal touch" FontSize="12.5" FontWeight="SemiBold" Margin="7,0,0,0"
+                                <Ellipse Width="9" Height="9" Fill="{DynamicResource SuccessBrush}" VerticalAlignment="Center"/>
+                                <TextBlock Text="Normal touch" FontSize="13" FontWeight="SemiBold" Margin="7,0,0,0"
                                            Foreground="{DynamicResource SuccessBrush}" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>
-                        <Border Style="{StaticResource Pill}" Background="{DynamicResource DangerSoftBrush}" Padding="10,5" Margin="8,0,0,0" BorderBrush="{DynamicResource DangerBrush}" BorderThickness="1">
+                        <Border Background="Transparent" Padding="4,3" Margin="6,0,0,0">
                             <StackPanel Orientation="Horizontal">
-                                <Ellipse Width="10" Height="10" Fill="{DynamicResource DangerBrush}" VerticalAlignment="Center"/>
-                                <TextBlock Text="Palm (PALM)" FontSize="12.5" FontWeight="SemiBold" Margin="7,0,0,0"
+                                <Ellipse Width="9" Height="9" Fill="{DynamicResource DangerBrush}" VerticalAlignment="Center"/>
+                                <TextBlock Text="Palm" FontSize="13" FontWeight="SemiBold" Margin="7,0,0,0"
                                            Foreground="{DynamicResource DangerBrush}" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>

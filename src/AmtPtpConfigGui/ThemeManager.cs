@@ -40,15 +40,32 @@ namespace AmtPtpConfigGui
 
         private static readonly ThemeDefinition[] Definitions =
         {
-            new("old", "Old", "#FFFBFF", "#1A1C1E", "#E1E6F0", "#D2D9E8", "#1A1C1E", "#F6F0D4", "#F6F0D4", "#F8EEC2", "#FCFAF1", "#33141E1E", "#F6F0D4", "#4A3200", "#F6F0D4", "#5C1408", "#1E7A34", "#E8E8E8", "#C7C7C7", "#B9B9B9", "#D8DDE8", "#C8CFDD", "#24FFBE5A", "#1FFF5A46"),
-            new("cream", "Cream", "#FFF7E7", "#26190A", "#F2E2CC", "#E9D5B4", "#2B1C08", "#FFE7C4", "#FFE7C4", "#FCDBAA", "#FFF2DD", "#333C280A", "#FFE7C4", "#452C00", "#FFE7C4", "#5C1408", "#1E7A34", "#F5F3F0", "#D6C9B8", "#C1B09A", "#E9D5B4", "#D9C39E", "#24FFB446", "#1FFF5A46"),
-            new("paper", "Paper", "#FDF6E3", "#3A3226", "#F1EBD7", "#E9E1CA", "#3A3226", "#E3DBC7", "#E3DBC7", "#DED6BE", "#F7F1DE", "#32322D14", "#E3DBC7", "#3C2C00", "#E3DBC7", "#5C1408", "#1E7A34", "#EEE8D5", "#CCC5B9", "#BCB09F", "#E9E1CA", "#D8D0B8", "#22D2AA28", "#1FBE503C"),
-            new("rose", "Rose", "#FFF0F6", "#3A0D21", "#F9D6E0", "#F0BFD4", "#3A0D21", "#F5B3CD", "#F5B3CD", "#EB8FBA", "#FDE9F3", "#33480A28", "#F5B3CD", "#442900", "#F5B3CD", "#5C1424", "#1E7A34", "#FFD6E8", "#F687B3", "#EC4899", "#F0BFD4", "#E5A9C4", "#FFFFF0F6", "#1FE63C64"),
-            new("blue", "Blue", "#EEF4FF", "#0D1B2E", "#E3EAF5", "#D6E4FF", "#0D1B2E", "#C1D3F7", "#C1D3F7", "#A9C6F3", "#E6EDFB", "#330A143C", "#C1D3F7", "#402C00", "#C1D3F7", "#5C1408", "#1E7A34", "#E6EBF3", "#C2CCDA", "#AEB9C9", "#D6E4FF", "#BFD1F0", "#22F2F7FF", "#1FFF5A46"),
-            new("monet", "Monet", "#FFF9F5", "#341A06", "#FFE0C2", "#FFCD9D", "#341A06", "#FFE0C0", "#FFE0C0", "#F7CDA2", "#FFF3E6", "#3346230A", "#FFE0C0", "#412A00", "#FFE0C0", "#5C1A08", "#1E7A34", "#F7F3EF", "#DEC8AA", "#D4B88E", "#FFCD9D", "#E6B681", "#1FFFF2EA", "#1FFF5A3C")
+            new("light", "Light",
+                "#F7F7F8", "#1F1F1F",
+                "#FFFFFF", "#F3F3F4", "#242424",
+                "#FAFAFB", "#E8E8EB", "#DCDCE0",
+                "#D8D8DD", "#5A5A62",
+                "#F0F0F1", "#5F5F66",
+                "#F7D9D7", "#8A1C16",
+                "#16803C",
+                "#EEEEF0", "#D0D0D5", "#B7B7BF",
+                "#EDEDEF", "#E4E4E7",
+                "#12F0B06A", "#10E34B40"),
+
+            new("dark", "Dark",
+                "#171717", "#F4F4F5",
+                "#202020", "#292929", "#D4D4D8",
+                "#262626", "#303030", "#3A3A3A",
+                "#3F3F46", "#A1A1AA",
+                "#2A2A2A", "#F3F4F6",
+                "#452020", "#FFB4AE",
+                "#4ADE80",
+                "#242424", "#4A4A4A", "#626262",
+                "#303030", "#3A3A3A",
+                "#14FFFFFF", "#16FF6B5A")
         };
 
-        private const string DefaultTheme = "blue";
+        private const string DefaultTheme = "light";
 
         public static string CurrentThemeId { get; private set; } = DefaultTheme;
 
