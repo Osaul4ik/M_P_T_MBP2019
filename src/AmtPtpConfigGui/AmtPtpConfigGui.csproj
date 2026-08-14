@@ -9,11 +9,16 @@
     <RootNamespace>AmtPtpConfigGui</RootNamespace>
     <AssemblyName>AmtPtpConfigGui</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <Platforms>x64;ARM64</Platforms>
     <SatelliteResourceLanguages>uk;en</SatelliteResourceLanguages>
     <DebugType>none</DebugType>
     <PublishReadyToRun>false</PublishReadyToRun>
     <SelfContained>false</SelfContained>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\AppIcon.ico" />
+  </ItemGroup>
 
 </Project>
