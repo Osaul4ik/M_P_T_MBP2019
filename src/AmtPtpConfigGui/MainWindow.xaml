@@ -247,11 +247,8 @@
                                             <ControlTemplate TargetType="RepeatButton">
                                                 <Border Height="4" CornerRadius="2">
                                                     <Border.Background>
-                                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                                            <GradientStop Color="{DynamicResource AccentBrushHover}" Offset="0"/>
-                                                            <GradientStop Color="{DynamicResource AccentBrush}" Offset="1"/>
-                                                        </LinearGradientBrush>
-                                                    </Border.Background>
+                                                    <DynamicResource ResourceKey="AccentBrush"/>
+                                                </Border.Background>
                                                 </Border>
                                             </ControlTemplate>
                                         </RepeatButton.Template>
