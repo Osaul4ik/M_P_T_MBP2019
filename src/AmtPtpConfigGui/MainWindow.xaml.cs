@@ -26,6 +26,8 @@ using Button = System.Windows.Controls.Button;
 using TextBox = System.Windows.Controls.TextBox;
 using RadioButton = System.Windows.Controls.RadioButton;
 using Rectangle = System.Windows.Shapes.Rectangle;
+using CheckBox = System.Windows.Controls.CheckBox;
+using ColorConverter = System.Windows.Media.ColorConverter;
 using MessageBox = System.Windows.MessageBox;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
@@ -460,7 +462,7 @@ namespace AmtPtpConfigGui
             footerHint.SetResourceReference(TextBlock.ForegroundProperty, "TextTertiaryBrush");
             DockPanel.SetDock(footerHint, Dock.Left);
             footer.Children.Add(footerHint);
-            var footerButtons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            var footerButtons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
             var cancel = new Button
             {
                 Content = "Cancel",

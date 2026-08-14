@@ -3,6 +3,11 @@ using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Media;
 
+using WpfApplication = System.Windows.Application;
+using WpfColor = System.Windows.Media.Color;
+using WpfColorConverter = System.Windows.Media.ColorConverter;
+using WpfPoint = System.Windows.Point;
+
 namespace AmtPtpConfigGui
 {
     internal static class ThemeManager
@@ -75,7 +80,7 @@ namespace AmtPtpConfigGui
             var theme = Get(id);
             CurrentThemeId = theme.Id;
 
-            var resources = Application.Current.Resources;
+            var resources = WpfApplication.Current.Resources;
             resources["PageBrush"] = Brush(theme.Bg);
             resources["CardBrush"] = Brush(theme.Surface);
             resources["CardBorderBrush"] = Brush(theme.Outline);
@@ -135,7 +140,7 @@ namespace AmtPtpConfigGui
 
         private static SolidColorBrush Brush(string hex, byte alpha)
         {
-            var color = (Color)ColorConverter.ConvertFromString(hex)!;
+            var color = (WpfColor)WpfColorConverter.ConvertFromString(hex)!;
             color.A = alpha;
             var brush = new SolidColorBrush(color);
             brush.Freeze();
@@ -146,11 +151,11 @@ namespace AmtPtpConfigGui
         {
             var brush = new LinearGradientBrush
             {
-                StartPoint = new Point(0, 0),
-                EndPoint = new Point(1, 1)
+                StartPoint = new WpfPoint(0, 0),
+                EndPoint = new WpfPoint(1, 1)
             };
-            brush.GradientStops.Add(new GradientStop((Color)ColorConverter.ConvertFromString(startHex)!, 0));
-            brush.GradientStops.Add(new GradientStop((Color)ColorConverter.ConvertFromString(endHex)!, 1));
+            brush.GradientStops.Add(new GradientStop((WpfColor)WpfColorConverter.ConvertFromString(startHex)!, 0));
+            brush.GradientStops.Add(new GradientStop((WpfColor)WpfColorConverter.ConvertFromString(endHex)!, 1));
             brush.Freeze();
             return brush;
         }
@@ -159,24 +164,24 @@ namespace AmtPtpConfigGui
         {
             var brush = new LinearGradientBrush
             {
-                StartPoint = new Point(0, 0),
-                EndPoint = new Point(1, 1)
+                StartPoint = new WpfPoint(0, 0),
+                EndPoint = new WpfPoint(1, 1)
             };
-            brush.GradientStops.Add(new GradientStop(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF), 0));
-            brush.GradientStops.Add(new GradientStop(Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF), 0.45));
+            brush.GradientStops.Add(new GradientStop(WpfColor.FromArgb(0x40, 0xFF, 0xFF, 0xFF), 0));
+            brush.GradientStops.Add(new GradientStop(WpfColor.FromArgb(0x00, 0xFF, 0xFF, 0xFF), 0.45));
             brush.Freeze();
             return brush;
         }
 
         private static string Darken(string hex)
         {
-            var c = (Color)ColorConverter.ConvertFromString(hex)!;
+            var c = (WpfColor)WpfColorConverter.ConvertFromString(hex)!;
             return $"#{c.R:X2}{c.G:X2}{c.B:X2}";
         }
 
         private static System.Drawing.Color DrawingColor(string hex)
         {
-            var c = (Color)ColorConverter.ConvertFromString(hex)!;
+            var c = (WpfColor)WpfColorConverter.ConvertFromString(hex)!;
             return System.Drawing.Color.FromArgb(c.A, c.R, c.G, c.B);
         }
     }
