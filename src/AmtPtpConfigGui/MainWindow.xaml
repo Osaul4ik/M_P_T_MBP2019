@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Wellspring PTP - Palm Rejection Settings"
         Icon="Assets/AppIcon.ico"
-        Height="820" Width="1280" MinHeight="660" MinWidth="1040"
+        Height="820" Width="1280" MinHeight="660" MinWidth="1120"
         WindowStartupLocation="CenterScreen"
         Background="#F4F5F7"
         FontFamily="Segoe UI Variable Text, Segoe UI"
@@ -538,19 +538,25 @@
                     </StackPanel>
                 </StackPanel>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Style="{StaticResource Pill}"
+                <Grid Grid.Column="2" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Style="{StaticResource Pill}"
                             Background="{StaticResource ControlFillBrush}"
-                            BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1">
+                            BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1"
+                            HorizontalAlignment="Right" MaxWidth="520">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="#E5484D" VerticalAlignment="Center"/>
                             <TextBlock x:Name="StatusText" Margin="9,0,0,0" VerticalAlignment="Center"
-                                       Text="Пристрій не знайдено — режим попереднього перегляду"/>
+                                       Text="Пристрій не знайдено — режим попереднього перегляду"
+                                       TextTrimming="CharacterEllipsis"/>
                         </StackPanel>
                     </Border>
-                    <Button x:Name="BtnAppSettings" Content="⚙" Width="38" Height="34" Margin="8,0,0,0"
-                            Style="{StaticResource GhostButton}" Click="AppSettings_Click" ToolTip="Налаштування програми"/>
-                </StackPanel>
+                    <Button x:Name="BtnAppSettings" Grid.Column="1" Content="⚙" Width="40" Height="34" Margin="10,0,0,0"
+                            Padding="0" Style="{StaticResource GhostButton}" Click="AppSettings_Click" ToolTip="Налаштування програми"/>
+                </Grid>
             </Grid>
         </Border>
 
@@ -559,9 +565,8 @@
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="250"/>
+                    <ColumnDefinition Width="190"/>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,14,0">
                     <TextBlock Text="Профіль" FontWeight="SemiBold" FontSize="12.5"/>
@@ -569,13 +574,14 @@
                 </StackPanel>
                 <ComboBox x:Name="ProfileCombo" Grid.Column="1" Height="34" VerticalContentAlignment="Center"
                           SelectionChanged="ProfileCombo_SelectionChanged"/>
-                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="＋" Width="42" MinWidth="42" Click="NewProfile_Click" ToolTip="Новий профіль"/>
-                    <Button Content="Перейменувати" Click="RenameProfile_Click"/>
-                    <Button Content="Видалити" Style="{StaticResource GhostButton}" Click="DeleteProfile_Click"/>
+                <WrapPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Content="＋" Width="38" Height="34" Padding="0" Margin="0,0,6,0"
+                            Click="NewProfile_Click" ToolTip="Новий профіль"/>
+                    <Button Content="Перейменувати" MinWidth="128" Height="34" Margin="0,0,6,0" Click="RenameProfile_Click"/>
+                    <Button Content="Видалити" MinWidth="90" Height="34" Style="{StaticResource GhostButton}" Click="DeleteProfile_Click"/>
                     <CheckBox x:Name="ChkProMode" Content="Pro Mode" Style="{StaticResource ChipCheckBox}"
                               Margin="14,0,0,0" VerticalAlignment="Center" Checked="ProMode_Changed" Unchecked="ProMode_Changed"/>
-                </StackPanel>
+                </WrapPanel>
             </Grid>
         </Border>
 
@@ -605,8 +611,17 @@
                         <ColumnDefinition Width="*" MinWidth="0"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock x:Name="LiveCoordText" Grid.Column="0" Text="Live: координати —"
-                               Style="{StaticResource TelemetryText}" Margin="0,0,16,0"/>
+                    <Border Grid.Column="0" Margin="0,0,16,0" Padding="10,7"
+                            Background="{StaticResource ControlFillBrush}"
+                            BorderBrush="{StaticResource ControlStrokeBrush}" BorderThickness="1"
+                            CornerRadius="8" MinHeight="48" MaxHeight="92">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <TextBlock x:Name="LiveCoordText" Text="Live: координати — немає активних контактів"
+                                       Style="{StaticResource TelemetryText}"
+                                       FontFamily="Consolas, Segoe UI"
+                                       TextWrapping="Wrap"/>
+                        </ScrollViewer>
+                    </Border>
                     <TextBlock x:Name="LiveCornerText" Grid.Column="1" Text="Кути: TL 0 | TR 0 | BL 0 | BR 0"
                                Style="{StaticResource TelemetryText}"/>
                 </Grid>

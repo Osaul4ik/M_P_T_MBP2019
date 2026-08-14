@@ -646,10 +646,10 @@ namespace AmtPtpConfigGui.Native
         }
 
         protected override bool ReleaseHandle() =>
-            CloseHandleNative(handle);
+            CloseHandle(handle);
 
         [DllImport("kernel32.dll")]
-        private static extern bool CloseHandleNative(
+        private static extern bool CloseHandle(
             IntPtr handle);
     }
 }

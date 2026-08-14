@@ -1113,14 +1113,10 @@ namespace AmtPtpConfigGui
                 for (int i = 0; i < frame.ContactCount && i < frame.Contacts.Length; i++)
                 {
                     var c = frame.Contacts[i];
-
-                    coordLines.Add(
-                        $"C{i} ID {c.ContactID}: " +
-                        $"Raw X={c.RawX}, Y={c.RawY}  |  " +
-                        $"Norm X={c.X}, Y={c.Y}");
+                    coordLines.Add($"C{i + 1}  ID {c.ContactID,-3}   Raw {c.RawX,4},{c.RawY,4}   Norm {c.X,4},{c.Y,4}");
                 }
 
-                LiveCoordText.Text = string.Join("   •   ", coordLines);
+                LiveCoordText.Text = string.Join(Environment.NewLine, coordLines);
             }
             else
             {
