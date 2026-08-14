@@ -614,6 +614,7 @@ namespace AmtPtpConfigGui.Native
         public short RawY;     // exact raw USB abs_y
         public ushort Major;   // touch_major, raw sensor units
         public ushort Minor;   // touch_minor, raw sensor units
+        public ushort Pressure; // raw pressure/force value
         public ushort Orientation; // raw Apple orientation
     }
 
