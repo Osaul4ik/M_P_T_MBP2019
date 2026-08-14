@@ -87,10 +87,25 @@ namespace AmtPtpConfigGui
                 {
                     var defaults = Native.PointerConfig.Default;
                     var old = p.Pointer;
-                    old.CursorDeadzoneSlow = defaults.CursorDeadzoneSlow;
-                    old.CursorDeadzoneFast = defaults.CursorDeadzoneFast;
-                    old.SmoothingAlphaDen = defaults.SmoothingAlphaDen;
-                    old.SmoothingAlphaNumSlow = defaults.SmoothingAlphaNumSlow;
+
+                    // Version 3 → 4: add Force Touch enable and the
+                    // optional pressure gate. Preserve all existing v3
+                    // pointer tuning while adopting the new factory
+                    // behavior for the newly added fields.
+                    if (p.Pointer.StructVersion < 4)
+                    {
+                        old.ForceTouchEnabled = defaults.ForceTouchEnabled;
+                        old.RequirePressureToActivate = defaults.RequirePressureToActivate;
+                    }
+
+                    if (p.Pointer.StructVersion < 3)
+                    {
+                        old.CursorDeadzoneSlow = defaults.CursorDeadzoneSlow;
+                        old.CursorDeadzoneFast = defaults.CursorDeadzoneFast;
+                        old.SmoothingAlphaDen = defaults.SmoothingAlphaDen;
+                        old.SmoothingAlphaNumSlow = defaults.SmoothingAlphaNumSlow;
+                    }
+
                     p.Pointer = old;
                 }
                 p.Pointer = p.Pointer.StructVersion == 0 ? Native.PointerConfig.Default : p.Pointer.Clamped();

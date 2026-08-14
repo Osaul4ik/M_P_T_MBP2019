@@ -8,6 +8,8 @@ namespace AmtPtpConfigGui.Native
         public uint StructVersion;
         public uint ForceTapThreshold;
         public uint ForceTapAction;
+        public uint ForceTouchEnabled;
+        public uint RequirePressureToActivate;
         public uint CursorSmoothingPercent;
         public uint CursorSpeedPercent;
         public uint CursorDeadzone;
@@ -18,7 +20,7 @@ namespace AmtPtpConfigGui.Native
         public uint SmoothingAlphaDen;
         public uint SmoothingAlphaNumSlow;
 
-        public const uint CurrentVersion = 3;
+        public const uint CurrentVersion = 4;
         public const uint ActionContextMenu = 0;
         public const uint ActionMiddleClick = 1;
         public const uint ActionDoubleClick = 2;
@@ -31,6 +33,8 @@ namespace AmtPtpConfigGui.Native
             StructVersion = CurrentVersion,
             ForceTapThreshold = 250,
             ForceTapAction = ActionContextMenu,
+            ForceTouchEnabled = 1,
+            RequirePressureToActivate = 1,
             CursorSmoothingPercent = 0,
             CursorSpeedPercent = 100,
             CursorDeadzone = 1,
@@ -48,6 +52,8 @@ namespace AmtPtpConfigGui.Native
             c.StructVersion = CurrentVersion;
             c.ForceTapThreshold = Clamp(c.ForceTapThreshold, ThresholdMin, ThresholdMax);
             if (c.ForceTapAction > ActionMax) c.ForceTapAction = ActionContextMenu;
+            c.ForceTouchEnabled = c.ForceTouchEnabled != 0 ? 1u : 0u;
+            c.RequirePressureToActivate = c.RequirePressureToActivate != 0 ? 1u : 0u;
             c.CursorSmoothingPercent = Clamp(c.CursorSmoothingPercent, 0, 100);
             c.CursorSpeedPercent = Clamp(c.CursorSpeedPercent, 50, 200);
             c.CursorDeadzone = Clamp(c.CursorDeadzone, 0, 8);

@@ -140,6 +140,8 @@ AmtPointerConfigClamp(_Inout_ PAMT_POINTER_CONFIG Config)
     Config->ForceTapThreshold = AmtClampULong(Config->ForceTapThreshold, AMT_POINTER_THRESHOLD_MIN, AMT_POINTER_THRESHOLD_MAX);
     if (Config->ForceTapAction > AMT_POINTER_ACTION_MAX)
         Config->ForceTapAction = AMT_POINTER_ACTION_CONTEXT_MENU;
+    Config->ForceTouchEnabled = Config->ForceTouchEnabled ? 1u : 0u;
+    Config->RequirePressureToActivate = Config->RequirePressureToActivate ? 1u : 0u;
     Config->CursorSmoothingPercent = AmtClampULong(Config->CursorSmoothingPercent, AMT_POINTER_SMOOTH_MIN, AMT_POINTER_SMOOTH_MAX);
     Config->CursorSpeedPercent = AmtClampULong(Config->CursorSpeedPercent, AMT_POINTER_SPEED_MIN, AMT_POINTER_SPEED_MAX);
     Config->CursorDeadzone = AmtClampULong(Config->CursorDeadzone, AMT_POINTER_DEADZONE_MIN, AMT_POINTER_DEADZONE_MAX);
@@ -302,6 +304,8 @@ AmtPointerConfigLoadFromRegistry(
 
     AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETAP_THRESHOLD, &Config->ForceTapThreshold);
     AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETAP_ACTION,    &Config->ForceTapAction);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETOUCH_ENABLED, &Config->ForceTouchEnabled);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_REQUIRE_PRESSURE,   &Config->RequirePressureToActivate);
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_SMOOTH,      &Config->CursorSmoothingPercent);
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_SPEED,       &Config->CursorSpeedPercent);
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_DEADZONE,    &Config->CursorDeadzone);
@@ -339,6 +343,8 @@ AmtPointerConfigSaveToRegistry(
 
     AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETAP_THRESHOLD, Config->ForceTapThreshold);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETAP_ACTION,    Config->ForceTapAction);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETOUCH_ENABLED, Config->ForceTouchEnabled);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_REQUIRE_PRESSURE,   Config->RequirePressureToActivate);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_SMOOTH,      Config->CursorSmoothingPercent);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_SPEED,       Config->CursorSpeedPercent);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_DEADZONE,    Config->CursorDeadzone);

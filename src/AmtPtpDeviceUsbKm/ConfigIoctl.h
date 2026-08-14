@@ -42,6 +42,8 @@ EXTERN_C_START
 // convention as the palm values above.
 #define AMT_REG_VALUE_FORCETAP_THRESHOLD L"PointerForceTapThreshold"
 #define AMT_REG_VALUE_FORCETAP_ACTION    L"PointerForceTapAction"
+#define AMT_REG_VALUE_FORCETOUCH_ENABLED L"PointerForceTouchEnabled"
+#define AMT_REG_VALUE_REQUIRE_PRESSURE   L"PointerRequirePressureToActivate"
 #define AMT_REG_VALUE_CURSOR_SMOOTH      L"PointerCursorSmoothing"
 #define AMT_REG_VALUE_CURSOR_SPEED       L"PointerCursorSpeed"
 #define AMT_REG_VALUE_CURSOR_DEADZONE    L"PointerCursorDeadzone"

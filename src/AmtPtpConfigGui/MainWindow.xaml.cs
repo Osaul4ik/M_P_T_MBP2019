@@ -416,7 +416,7 @@ namespace AmtPtpConfigGui
                 {
                     profile.Name = string.IsNullOrWhiteSpace(profile.Name) ? "Profile" : profile.Name.Trim();
                     profile.Palm = profile.Palm.StructVersion == 0 ? PalmConfig.Default : profile.Palm.Clamped();
-                    profile.Pointer = profile.Pointer.StructVersion == 0 ? PointerConfig.Default : profile.Pointer.Clamped();
+                    profile.Pointer = NormalizePointerConfig(profile.Pointer);
                     profile.Scroll = profile.Scroll.StructVersion == 0 ? ScrollConfig.Default : profile.Scroll.Clamped();
                 }
 
@@ -458,6 +458,28 @@ namespace AmtPtpConfigGui
             {
                 MessageBox.Show(this, $"Failed to restore backup.\n\n{ex.Message}", "Backup", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        private static PointerConfig NormalizePointerConfig(PointerConfig cfg)
+        {
+            var defaults = PointerConfig.Default;
+
+            if (cfg.StructVersion == 0)
+                return defaults;
+
+            // Version 3 -> 4: old files did not contain the new Force Touch
+            // flags. Preserve all existing v3 fields and fill only the new
+            // fields from current defaults.
+            if (cfg.StructVersion < PointerConfig.CurrentVersion)
+            {
+                if (cfg.StructVersion < 4)
+                {
+                    cfg.ForceTouchEnabled = defaults.ForceTouchEnabled;
+                    cfg.RequirePressureToActivate = defaults.RequirePressureToActivate;
+                }
+            }
+
+            return cfg.Clamped();
         }
 
         private static GuiProfile CloneProfile(GuiProfile source)
@@ -1499,6 +1521,9 @@ namespace AmtPtpConfigGui
             {
                 cfg = cfg.Clamped();
                 SlForceTapThreshold.Value = cfg.ForceTapThreshold;
+                ChkForceTouchEnabled.IsChecked = cfg.ForceTouchEnabled != 0;
+                ChkRequirePressure.IsChecked = cfg.RequirePressureToActivate != 0;
+                ChkRequirePressure.IsEnabled = cfg.ForceTouchEnabled != 0;
                 SlCursorSmoothing.Value = cfg.CursorSmoothingPercent;
                 SlCursorSpeed.Value = cfg.CursorSpeedPercent;
                 SlCursorDeadzone.Value = cfg.CursorDeadzone;
@@ -1527,6 +1552,8 @@ namespace AmtPtpConfigGui
         {
             var c = PointerConfig.Default;
             c.ForceTapThreshold = (uint)SlForceTapThreshold.Value;
+            c.ForceTouchEnabled = ChkForceTouchEnabled.IsChecked == true ? 1u : 0u;
+            c.RequirePressureToActivate = ChkRequirePressure.IsChecked == true ? 1u : 0u;
             c.CursorSmoothingPercent = (uint)SlCursorSmoothing.Value;
             c.CursorSpeedPercent = (uint)SlCursorSpeed.Value;
             c.CursorDeadzone = (uint)SlCursorDeadzone.Value;
@@ -1567,6 +1594,12 @@ namespace AmtPtpConfigGui
         private void PointerAction_Changed(object sender, RoutedEventArgs e)
         {
             if (!_uiReady || _suppressPointerEvents) return;
+        }
+
+        private void ForceTouchOption_Changed(object sender, RoutedEventArgs e)
+        {
+            if (ChkForceTouchEnabled != null && ChkRequirePressure != null)
+                ChkRequirePressure.IsEnabled = ChkForceTouchEnabled.IsChecked == true;
         }
 
         // Scroll tab <-> ScrollConfig plumbing
@@ -2028,7 +2061,7 @@ namespace AmtPtpConfigGui
                         throw new InvalidDataException("Empty or invalid profile file.");
 
                     LoadConfigIntoSliders(profile.Palm.StructVersion == 0 ? PalmConfig.Default : profile.Palm.Clamped());
-                    LoadPointerConfigIntoControls(profile.Pointer.StructVersion == 0 ? PointerConfig.Default : profile.Pointer.Clamped());
+                    LoadPointerConfigIntoControls(NormalizePointerConfig(profile.Pointer));
                     LoadScrollConfigIntoControls(profile.Scroll.StructVersion == 0 ? ScrollConfig.Default : profile.Scroll.Clamped());
                     DrawPreview();
                     SetBottomStatus($"Profile (Palm + Scroll + Pointer) loaded: {dlg.FileName}. Click “Save” to write it to the driver.");

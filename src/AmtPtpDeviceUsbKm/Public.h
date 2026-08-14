@@ -95,6 +95,8 @@ typedef struct _AMT_POINTER_CONFIG
     ULONG StructVersion;   // AMT_POINTER_CONFIG_VERSION - bump on layout change
     ULONG ForceTapThreshold;
     ULONG ForceTapAction;
+    ULONG ForceTouchEnabled;
+    ULONG RequirePressureToActivate;
 
     // Cursor motion tuning. Percent values use 100 as the current/default
     // behavior. CursorSmoothingPercent: 0 = raw, 100 = strongest smoothing.
@@ -109,7 +111,7 @@ typedef struct _AMT_POINTER_CONFIG
     ULONG SmoothingAlphaNumSlow;
 } AMT_POINTER_CONFIG, *PAMT_POINTER_CONFIG;
 
-#define AMT_POINTER_CONFIG_VERSION 3
+#define AMT_POINTER_CONFIG_VERSION 4
 
 #define AMT_POINTER_SMOOTH_MIN       0
 #define AMT_POINTER_SMOOTH_MAX       100
@@ -141,6 +143,8 @@ typedef struct _AMT_POINTER_CONFIG
     AMT_POINTER_CONFIG_VERSION,                                             \
     250,                                                                    \
     AMT_POINTER_ACTION_CONTEXT_MENU,                                        \
+    1,                                                                      \
+    1,                                                                      \
     0,                                                                      \
     100,                                                                    \
     1,                                                                      \

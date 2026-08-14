@@ -282,7 +282,14 @@ PTPCore_ProcessFrame(
     for (UCHAR ci = 0; ci < candidates.Count; ci++) {
         const MATCH_CANDIDATE* cand = &candidates.Candidates[ci];
 
-        if (!cand->PalmLocal && !cand->Unconfirmed)
+        BOOLEAN pressureGatedBirth =
+            (matchResult.CorrespondingPoolIndex[ci] == MATCH_NO_CORRESPONDENCE) &&
+            pCtx->SupportsForceTouch &&
+            pCtx->PointerConfig.ForceTouchEnabled &&
+            pCtx->PointerConfig.RequirePressureToActivate &&
+            cand->Pressure == 0;
+
+        if (!pressureGatedBirth && !cand->PalmLocal && !cand->Unconfirmed)
             aliveCount++;
 
         if (!cand->PalmLocal)
@@ -423,6 +430,19 @@ PTPCore_ProcessFrame(
         if (cand->PalmLocal) continue;
         if (matchResult.CorrespondingPoolIndex[ci] != MATCH_NO_CORRESPONDENCE)
             continue; // handled in Phase C
+
+        // On force-touch-capable devices, optionally require positive pressure
+        // before creating a brand-new active contact. This suppresses the
+        // common phantom-contact state where a fingertip is hovering just
+        // above the pad and the report briefly contains a zero-pressure
+        // contact. Existing contacts are intentionally NOT gated here.
+        if (pCtx->SupportsForceTouch &&
+            pCtx->PointerConfig.ForceTouchEnabled &&
+            pCtx->PointerConfig.RequirePressureToActivate &&
+            cand->Pressure == 0)
+        {
+            continue;
+        }
 
         size_t freeIdx = AmtContactPoolFindFree(pCtx->ActiveContacts);
         if (freeIdx == MAX_CONTACTS) {
@@ -567,7 +587,7 @@ PTPCore_ProcessFrame(
 
     AmtContactPoolCheckInvariants(pCtx->ActiveContacts);
 
-    if (!pCtx->SupportsForceTouch) {
+    if (!pCtx->SupportsForceTouch || !pCtx->PointerConfig.ForceTouchEnabled) {
         pCtx->ForceTouchAnchorValid = FALSE;
         pCtx->ForceTouchDragLockout = FALSE;
         pCtx->ClickArbitrationState = ButtonDown
