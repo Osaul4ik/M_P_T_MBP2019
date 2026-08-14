@@ -7,13 +7,13 @@
         Height="820" Width="1280" MinHeight="660" MinWidth="1120"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource PageBrush}"
-        FontFamily="Segoe UI Variable Text, Segoe UI"
+        FontFamily="Segoe UI Variable Text"
         FontSize="13"
         TextOptions.TextFormattingMode="Display"
         TextOptions.TextRenderingMode="ClearType"
         ToolTipService.InitialShowDelay="700"
         ToolTipService.ShowDuration="20000"
-        ToolTipService.BetweenShowDelay="250">
+        ToolTipService.BetweenShowDelay="250" PreviewMouseWheel="Window_PreviewMouseWheel">
 
     <Window.Resources>
 
@@ -196,7 +196,9 @@
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="FontFamily" Value="Cascadia Mono, Consolas"/>
             <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource ControlFillBrush}"/>
+            <Setter Property="Margin" Value="8,0,0,0"/>
         </Style>
 
         <!-- ===================== Slider ===================== -->
@@ -515,7 +517,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Thumb">
-                        <Border x:Name="ThumbBorder" Background="{DynamicResource ScrollBarThumbBrush}" CornerRadius="5" Margin="2"/>
+                        <Border x:Name="ThumbBorder" Background="{DynamicResource ScrollBarThumbBrush}" CornerRadius="4" Margin="2"/>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="ThumbBorder" Property="Background" Value="{DynamicResource ScrollBarThumbHoverBrush}"/>
@@ -527,7 +529,7 @@
         </Style>
 
         <Style TargetType="ScrollBar">
-            <Setter Property="Width" Value="10"/>
+            <Setter Property="Width" Value="7"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -541,7 +543,7 @@
                                     <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" Focusable="False"/>
                                 </Track.IncreaseRepeatButton>
                                 <Track.Thumb>
-                                    <Thumb Style="{StaticResource ModernScrollBarThumb}" MinHeight="34"/>
+                                    <Thumb Style="{StaticResource ModernScrollBarThumb}" MinHeight="26"/>
                                 </Track.Thumb>
                             </Track>
                         </Grid>
@@ -550,7 +552,7 @@
             </Setter>
             <Style.Triggers>
                 <Trigger Property="Orientation" Value="Horizontal">
-                    <Setter Property="Height" Value="10"/>
+                    <Setter Property="Height" Value="7"/>
                     <Setter Property="Width" Value="Auto"/>
                 </Trigger>
             </Style.Triggers>
@@ -590,83 +592,51 @@
             </Setter>
         </Style>
 
-        <!-- ===================== CheckBox ===================== -->
-        <Style TargetType="CheckBox">
+        <!-- ===================== Android-style switches ===================== -->
+        <Style x:Key="AndroidSwitch" TargetType="CheckBox">
             <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="CheckBox">
-                        <StackPanel Orientation="Horizontal">
-                            <Border x:Name="Box" Width="18" Height="18" CornerRadius="4"
-                                    Background="{DynamicResource ControlFillBrush}"
-                                    BorderBrush="{DynamicResource ControlStrokeBrush}"
-                                    BorderThickness="1.4"
-                                    VerticalAlignment="Center">
-                                <Path x:Name="Check" Data="M2,7 L6,11 L14,2" Stroke="{DynamicResource AccentContentBrush}"
-                                      StrokeThickness="2" StrokeStartLineCap="Round"
-                                      StrokeEndLineCap="Round" StrokeLineJoin="Round"
-                                      Visibility="Collapsed"/>
-                            </Border>
-                            <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center"/>
-                        </StackPanel>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Box" Property="Background" Value="{DynamicResource AccentBrush}"/>
-                                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
-                                <Setter TargetName="Check" Property="Visibility" Value="Visible"/>
-                            </Trigger>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="ToggleChip" TargetType="CheckBox">
-            <Setter Property="Padding" Value="12,7"/>
-            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text"/>
+            <Setter Property="FontSize" Value="12.5"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="CheckBox">
-                        <Border x:Name="Chip" CornerRadius="8"
-                                Background="{DynamicResource ControlFillBrush}"
-                                BorderBrush="{DynamicResource ControlStrokeBrush}"
-                                BorderThickness="1"
-                                Padding="{TemplateBinding Padding}">
-                            <Grid MinWidth="132">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <Ellipse x:Name="Dot" Width="8" Height="8"
-                                             Fill="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center"/>
-                                    <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center"/>
-                                </StackPanel>
-                                <TextBlock x:Name="StateText" Grid.Column="1" Text="OFF"
-                                           FontSize="10" FontWeight="Bold"
-                                           Foreground="{DynamicResource TextTertiaryBrush}"
-                                           VerticalAlignment="Center"/>
-                            </Grid>
-                        </Border>
+                        <Grid MinWidth="118" MinHeight="26">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="28"/>
+                                <ColumnDefinition Width="42"/>
+                            </Grid.ColumnDefinitions>
+                            <ContentPresenter Grid.Column="0" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="State" Grid.Column="1" Text="OFF"
+                                       FontFamily="Segoe UI Variable Text" FontSize="10.5" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Border x:Name="Track" Grid.Column="2" Width="38" Height="22"
+                                    CornerRadius="11" Background="{DynamicResource ControlFillBrush}"
+                                    BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
+                                    HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Grid>
+                                    <Ellipse x:Name="Thumb" Width="16" Height="16" Fill="{DynamicResource TextTertiaryBrush}"
+                                             HorizontalAlignment="Left" Margin="2,0,0,0" VerticalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Chip" Property="Background" Value="{DynamicResource AccentBrush}"/>
-                                <Setter TargetName="Chip" Property="BorderBrush" Value="{DynamicResource AccentBrushHover}"/>
-                                <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AccentContentBrush}"/>
-                                <Setter TargetName="StateText" Property="Text" Value="ON"/>
-                                <Setter TargetName="StateText" Property="Foreground" Value="{DynamicResource AccentContentBrush}"/>
-                                <Setter Property="Foreground" Value="{DynamicResource AccentContentBrush}"/>
+                                <Setter TargetName="Track" Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                <Setter TargetName="Thumb" Property="Fill" Value="{DynamicResource AccentContentBrush}"/>
+                                <Setter TargetName="State" Property="Text" Value="ON"/>
+                                <Setter TargetName="State" Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Chip" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
-                                <Setter TargetName="StateText" Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                                <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Opacity" Value="0.5"/>
+                                <Setter Property="Opacity" Value="0.48"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -674,7 +644,9 @@
             </Setter>
         </Style>
 
-        <Style x:Key="ChipCheckBox" TargetType="CheckBox" BasedOn="{StaticResource ToggleChip}"/>
+        <Style TargetType="CheckBox" BasedOn="{StaticResource AndroidSwitch}"/>
+        <Style x:Key="ToggleChip" TargetType="CheckBox" BasedOn="{StaticResource AndroidSwitch}"/>
+        <Style x:Key="ChipCheckBox" TargetType="CheckBox" BasedOn="{StaticResource AndroidSwitch}"/>
 
         <Style x:Key="Pill" TargetType="Border">
             <Setter Property="CornerRadius" Value="20"/>
@@ -853,10 +825,9 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Style="{StaticResource Pill}"
-                            Background="{DynamicResource ControlFillBrush}"
+                    <Border Background="{DynamicResource ControlFillBrush}"
                             BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
-                            Padding="10,7" MinWidth="122">
+                            CornerRadius="9" Padding="10,7" MinWidth="122">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="#E5484D" VerticalAlignment="Center"/>
                             <TextBlock x:Name="StatusText" Margin="9,0,0,0" VerticalAlignment="Center"
@@ -871,14 +842,14 @@
                             <TextBlock Text="Device" Style="{StaticResource SectionCaption}" Margin="0,0,8,0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="DeviceModelText" VerticalAlignment="Center"
                                        Foreground="{DynamicResource TextPrimaryBrush}"
-                                       FontFamily="Segoe UI Variable Text, Segoe UI"
+                                       FontFamily="Segoe UI Variable Text"
                                        FontSize="12" FontWeight="SemiBold"
                                        TextTrimming="CharacterEllipsis"
                                        Text="Apple Precision Touchpad"
                                        ToolTip="Detected Mac/trackpad model"/>
                         </StackPanel>
                     </Border>
-                    <Button x:Name="BtnAppSettings" Content="⚙" Width="38" Height="38" Margin="8,0,0,0"
+                    <Button x:Name="BtnAppSettings" Content="⚙" Width="40" Height="36" Margin="8,0,0,0"
                             Padding="0" Background="{DynamicResource ControlFillBrush}"
                             BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
                             Foreground="{DynamicResource TextPrimaryBrush}"
@@ -910,7 +881,7 @@
                             Click="NewProfile_Click" ToolTip="New profile"/>
                     <Button Content="Rename" MinWidth="128" Height="34" Margin="0,0,6,0" Click="RenameProfile_Click"/>
                     <Button Content="Delete" MinWidth="90" Height="34" Style="{StaticResource DangerButton}" Click="DeleteProfile_Click"/>
-                    <CheckBox x:Name="ChkProMode" Content="Pro Mode" Style="{StaticResource ChipCheckBox}"
+                    <CheckBox x:Name="ChkProMode" Content="Pro Mode" Style="{StaticResource AndroidSwitch}"
                               Margin="14,0,0,0" VerticalAlignment="Center" Checked="ProMode_Changed" Unchecked="ProMode_Changed"/>
                 </WrapPanel>
             </Grid>
@@ -931,7 +902,7 @@
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <CheckBox x:Name="ChkLive" Style="{StaticResource ToggleChip}" Content="Live"
+                        <CheckBox x:Name="ChkLive" Style="{StaticResource AndroidSwitch}" Content="Live"
                                   VerticalAlignment="Center"
                                   Checked="Live_Changed" Unchecked="Live_Changed"/>
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
@@ -958,7 +929,7 @@
                         Background="{DynamicResource ControlFillBrush}"
                         BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
                         CornerRadius="8" Height="116">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <TextBlock x:Name="LiveCoordText" Text="Live: no active contacts"
                                    Style="{StaticResource TelemetryText}"
                                    FontFamily="Consolas" FontSize="12"
@@ -977,8 +948,8 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock x:Name="BottomStatusText" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text=""/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="Reset to defaults" Style="{StaticResource SecondaryButton}" Click="ResetDefaults_Click" Margin="0,0,8,0"/>
-                    <Button Style="{StaticResource AccentButton}" Click="Save_Click" Margin="0">
+                    <Button Content="Reset to defaults" Style="{StaticResource SecondaryButton}" Click="ResetDefaults_Click" Width="150" Height="40" Margin="0,0,8,0"/>
+                    <Button Style="{StaticResource AccentButton}" Click="Save_Click" Width="150" Height="40" Margin="0">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="✓" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center"/>
                             <TextBlock Text="Save" VerticalAlignment="Center"/>
@@ -1000,6 +971,21 @@
                 <TabItem Header="Palm" Style="{StaticResource SettingsTabItem}">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
+                    <Border Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="14,12" Margin="0,0,0,14">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Palm rejection at touchpad edges" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Text="Reject new contacts that begin inside the configured edge zones." Style="{StaticResource HintText}" Margin="0,3,0,0"/>
+                            </StackPanel>
+                            <CheckBox x:Name="ChkPalmEdgeRejection" Grid.Column="1" Style="{StaticResource AndroidSwitch}"
+                                      Content="" IsChecked="True" Checked="PalmEdgeRejection_Changed" Unchecked="PalmEdgeRejection_Changed"
+                                      VerticalAlignment="Center" Margin="16,0,0,0"/>
+                        </Grid>
+                    </Border>
 
                     <GroupBox>
                         <GroupBox.Header>
@@ -1309,14 +1295,14 @@
                         <Border Background="Transparent" Padding="4,3" Margin="12,0,0,0">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse Width="9" Height="9" Fill="{DynamicResource SuccessBrush}" VerticalAlignment="Center"/>
-                                <TextBlock Text="Normal touch" FontSize="13" FontWeight="SemiBold" Margin="7,0,0,0"
+                                <TextBlock Text="Normal touch" FontSize="12.5" FontWeight="SemiBold" Margin="7,0,0,0"
                                            Foreground="{DynamicResource SuccessBrush}" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>
                         <Border Background="Transparent" Padding="4,3" Margin="6,0,0,0">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse Width="9" Height="9" Fill="{DynamicResource DangerBrush}" VerticalAlignment="Center"/>
-                                <TextBlock Text="Palm" FontSize="13" FontWeight="SemiBold" Margin="7,0,0,0"
+                                <TextBlock Text="Palm" FontSize="12.5" FontWeight="SemiBold" Margin="7,0,0,0"
                                            Foreground="{DynamicResource DangerBrush}" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>

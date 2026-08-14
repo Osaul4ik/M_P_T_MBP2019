@@ -10,7 +10,7 @@ namespace AmtPtpConfigGui
         public bool CloseToTray { get; set; } = true;
         public bool StartWithWindows { get; set; } = false;
         public bool PalmEdgeRejectionEnabled { get; set; } = true;
-        public string Theme { get; set; } = "blue";
+        public string Theme { get; set; } = "light";
     }
 
 

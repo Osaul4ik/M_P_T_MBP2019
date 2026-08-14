@@ -179,6 +179,7 @@ namespace AmtPtpConfigGui
             _appSettings = AppSettingsStore.Load();
 
             InitializeComponent();
+            ChkPalmEdgeRejection.IsChecked = _appSettings.PalmEdgeRejectionEnabled;
             _appSettings.Theme = ThemeManager.Get(_appSettings.Theme).Id;
             ThemeManager.Apply(_appSettings.Theme, Resources);
             InitializeProfiles();
@@ -328,23 +329,8 @@ namespace AmtPtpConfigGui
                 IsChecked = _appSettings.StartWithWindows,
                 Margin = new Thickness(0, 0, 0, 10)
             };
-            var palmEdges = new CheckBox
-            {
-                Content = "Palm rejection at touchpad edges",
-                IsChecked = _appSettings.PalmEdgeRejectionEnabled,
-                Margin = new Thickness(0, 0, 0, 2)
-            };
             behaviorPanel.Children.Add(closeToTray);
             behaviorPanel.Children.Add(startup);
-            behaviorPanel.Children.Add(palmEdges);
-            behaviorPanel.Children.Add(new TextBlock
-            {
-                Text = "Edge rejection settings remain stored even when this option is disabled.",
-                Foreground = (Brush)FindResource("TextSecondaryBrush"),
-                TextWrapping = TextWrapping.Wrap,
-                FontSize = 11,
-                Margin = new Thickness(24, 3, 0, 0)
-            });
             content.Children.Add(behaviorCard);
 
             var themeCard = MakeCard(
@@ -496,14 +482,9 @@ namespace AmtPtpConfigGui
             {
                 _appSettings.CloseToTray = closeToTray.IsChecked == true;
                 _appSettings.StartWithWindows = startup.IsChecked == true;
-                var oldPalmEdges = _appSettings.PalmEdgeRejectionEnabled;
-                _appSettings.PalmEdgeRejectionEnabled = palmEdges.IsChecked == true;
                 _appSettings.Theme = ThemeManager.Get(selectedTheme).Id;
                 AppSettingsStore.Save(_appSettings);
                 UpdateStartupRegistration(_appSettings.StartWithWindows);
-
-                if (oldPalmEdges != _appSettings.PalmEdgeRejectionEnabled)
-                    ApplyPalmEdgeToggle(_appSettings.PalmEdgeRejectionEnabled);
 
                 RefreshTrayMenu();
                 SetBottomStatus("Application settings saved.");
@@ -612,6 +593,7 @@ namespace AmtPtpConfigGui
                 _appSettings.StartWithWindows = backup.AppSettings?.StartWithWindows ?? false;
                 var oldPalmEdges = _appSettings.PalmEdgeRejectionEnabled;
                 _appSettings.PalmEdgeRejectionEnabled = backup.AppSettings?.PalmEdgeRejectionEnabled ?? true;
+                ChkPalmEdgeRejection.IsChecked = _appSettings.PalmEdgeRejectionEnabled;
                 _appSettings.Theme = ThemeManager.Get(backup.AppSettings?.Theme).Id;
                 ThemeManager.Apply(_appSettings.Theme, Resources);
 
@@ -769,6 +751,31 @@ namespace AmtPtpConfigGui
                 };
                 palmEdges.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePalmEdgesFromTray));
 
+                var pointerCfg = ReadPointerConfigFromControls();
+                var forceTouch = new Forms.ToolStripMenuItem("Force Touch")
+                {
+                    Checked = pointerCfg.ForceTouchEnabled != 0,
+                    Padding = new System.Windows.Forms.Padding(10, 7, 10, 7)
+                };
+                forceTouch.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ToggleForceTouchFromTray));
+
+                var requirePressure = new Forms.ToolStripMenuItem("Require pressure to activate contact")
+                {
+                    Checked = pointerCfg.RequirePressureToActivate != 0,
+                    Padding = new System.Windows.Forms.Padding(10, 7, 10, 7)
+                };
+                requirePressure.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureGateFromTray));
+
+                var actionMenu = new Forms.ToolStripMenuItem("Force Tap action")
+                {
+                    Padding = new System.Windows.Forms.Padding(10, 7, 10, 7)
+                };
+                AddTrayActionItem(actionMenu, "Context menu", PointerConfig.ActionContextMenu, pointerCfg.ForceTapAction);
+                AddTrayActionItem(actionMenu, "Middle mouse button", PointerConfig.ActionMiddleClick, pointerCfg.ForceTapAction);
+                AddTrayActionItem(actionMenu, "Double click", PointerConfig.ActionDoubleClick, pointerCfg.ForceTapAction);
+                forceTouch.DropDownItems.Add(requirePressure);
+                forceTouch.DropDownItems.Add(actionMenu);
+
                 var open = new Forms.ToolStripMenuItem("Open application") { Padding = new System.Windows.Forms.Padding(10, 7, 10, 7) };
                 open.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ShowFromTray));
 
@@ -782,6 +789,7 @@ namespace AmtPtpConfigGui
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 menu.Items.Add(profilesItem);
                 menu.Items.Add(palmEdges);
+                menu.Items.Add(forceTouch);
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 menu.Items.Add(open);
                 menu.Items.Add(settings);
@@ -792,6 +800,48 @@ namespace AmtPtpConfigGui
             {
                 menu.ResumeLayout();
             }
+        }
+
+        private void AddTrayActionItem(Forms.ToolStripMenuItem parent, string text, uint action, uint current)
+        {
+            var item = new Forms.ToolStripMenuItem(text)
+            {
+                Checked = current == action,
+                Padding = new System.Windows.Forms.Padding(10, 7, 10, 7)
+            };
+            item.Click += (_, _) => Dispatcher.BeginInvoke(new Action(() => SetForceTapActionFromTray(action)));
+            parent.DropDownItems.Add(item);
+        }
+
+        private void ToggleForceTouchFromTray()
+        {
+            ChkForceTouchEnabled.IsChecked = ChkForceTouchEnabled.IsChecked != true;
+            Save_Click(this, new RoutedEventArgs());
+            RefreshTrayMenu();
+        }
+
+        private void TogglePressureGateFromTray()
+        {
+            ChkRequirePressure.IsChecked = ChkRequirePressure.IsChecked != true;
+            Save_Click(this, new RoutedEventArgs());
+            RefreshTrayMenu();
+        }
+
+        private void SetForceTapActionFromTray(uint action)
+        {
+            _suppressPointerEvents = true;
+            try
+            {
+                RbActionContextMenu.IsChecked = action == PointerConfig.ActionContextMenu;
+                RbActionMiddleClick.IsChecked = action == PointerConfig.ActionMiddleClick;
+                RbActionDoubleClick.IsChecked = action == PointerConfig.ActionDoubleClick;
+            }
+            finally
+            {
+                _suppressPointerEvents = false;
+            }
+            Save_Click(this, new RoutedEventArgs());
+            RefreshTrayMenu();
         }
 
         private void ActivateProfileFromTray(int index)
@@ -805,8 +855,21 @@ namespace AmtPtpConfigGui
         private void TogglePalmEdgesFromTray()
         {
             _appSettings.PalmEdgeRejectionEnabled = !_appSettings.PalmEdgeRejectionEnabled;
+            ChkPalmEdgeRejection.IsChecked = _appSettings.PalmEdgeRejectionEnabled;
             AppSettingsStore.Save(_appSettings);
             ApplyPalmEdgeToggle(_appSettings.PalmEdgeRejectionEnabled);
+            RefreshTrayMenu();
+        }
+
+        private void PalmEdgeRejection_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!_uiReady)
+                return;
+
+            bool enabled = ChkPalmEdgeRejection.IsChecked == true;
+            _appSettings.PalmEdgeRejectionEnabled = enabled;
+            AppSettingsStore.Save(_appSettings);
+            ApplyPalmEdgeToggle(enabled);
             RefreshTrayMenu();
         }
 
@@ -1195,6 +1258,30 @@ namespace AmtPtpConfigGui
                 : "geometry: estimated (device not connected)";
 
             DrawPreview();
+        }
+
+        private static ScrollViewer? FindParentScrollViewer(DependencyObject source)
+        {
+            DependencyObject current = source;
+            while (current != null)
+            {
+                if (current is ScrollViewer sv)
+                    return sv;
+                current = VisualTreeHelper.GetParent(current);
+            }
+            return null;
+        }
+
+        private void Window_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            var viewer = FindParentScrollViewer(e.OriginalSource as DependencyObject ?? this);
+            if (viewer == null || viewer.ScrollableHeight <= 0)
+                return;
+
+            double step = 28.0;
+            double delta = e.Delta > 0 ? -step : step;
+            viewer.ScrollToVerticalOffset(viewer.VerticalOffset + delta);
+            e.Handled = true;
         }
 
         // ---------------------------------------------------------------
