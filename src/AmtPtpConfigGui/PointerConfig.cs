@@ -29,7 +29,7 @@ namespace AmtPtpConfigGui.Native
         public static PointerConfig Default => new PointerConfig
         {
             StructVersion = CurrentVersion,
-            ForceTapThreshold = 240,
+            ForceTapThreshold = 250,
             ForceTapAction = ActionContextMenu,
             CursorSmoothingPercent = 0,
             CursorSpeedPercent = 100,
@@ -37,9 +37,9 @@ namespace AmtPtpConfigGui.Native
             CursorDeadzoneSlow = 4,
             CursorDeadzoneFast = 0,
             CursorSlowVelocity = 110,
-            CursorFastVelocity = 700,
+            CursorFastVelocity = 905,
             SmoothingAlphaDen = 8,
-            SmoothingAlphaNumSlow = 2,
+            SmoothingAlphaNumSlow = 3,
         };
 
         public PointerConfig Clamped()

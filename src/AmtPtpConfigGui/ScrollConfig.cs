@@ -28,7 +28,7 @@ namespace AmtPtpConfigGui.Native
             SmoothingPercent = 0,
             Deadzone = 1,
             FastVelocity = 1600,
-            ScaleNum = 8,
+            ScaleNum = 6,
             ScaleDen = 10,
             ScaleNumFast = 108,
             ScaleDenFast = 100,

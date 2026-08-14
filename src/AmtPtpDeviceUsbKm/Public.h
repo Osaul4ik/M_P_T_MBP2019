@@ -59,10 +59,10 @@ typedef struct _AMT_PALM_CONFIG
 #define AMT_PALM_CONFIG_DEFAULT_INIT                                        \
 {                                                                            \
     /* StructVersion       */ AMT_PALM_CONFIG_VERSION,                      \
-    /* EdgePermilleTop     */ 36,                                           \
-    /* EdgePermilleLeft    */ 143,                                          \
-    /* EdgePermilleRight   */ 143,                                          \
-    /* EdgePermilleBottom  */ 250,                                          \
+    /* EdgePermilleTop     */ 0,                                           \
+    /* EdgePermilleLeft    */ 70,                                          \
+    /* EdgePermilleRight   */ 70,                                          \
+    /* EdgePermilleBottom  */ 110,                                          \
     /* PalmLargeMajor      */ 380,                                          \
     /* PalmLargeRatio      */ 180,                                          \
     /* PalmScoreThresh     */ 55,                                           \
@@ -131,15 +131,15 @@ typedef struct _AMT_POINTER_CONFIG
 #define AMT_POINTER_ACTION_MIDDLE_CLICK 1   // synthetic middle-click (Button3)
 #define AMT_POINTER_ACTION_DOUBLE_CLICK 2   // synthetic double left-click (Button1 x2, e.g. "open")
 
-// Compiled-in defaults - 240 matches the previous hardcoded
-// FORCE_TOUCH_PRESSURE_THRESHOLD value, and CONTEXT_MENU matches the
+// Compiled-in defaults - tuned factory values for the current Wellspring PTP
+// experience. CONTEXT_MENU remains the default Force Tap action so a
 // previous always-right-click behavior, so a fresh install / registry-less
 // first boot behaves exactly like the driver did before this became
 // runtime-tunable.
 #define AMT_POINTER_CONFIG_DEFAULT_INIT                                    \
 {                                                                            \
     AMT_POINTER_CONFIG_VERSION,                                             \
-    240,                                                                    \
+    250,                                                                    \
     AMT_POINTER_ACTION_CONTEXT_MENU,                                        \
     0,                                                                      \
     100,                                                                    \
@@ -147,9 +147,9 @@ typedef struct _AMT_POINTER_CONFIG
     4,                                                                      \
     0,                                                                      \
     110,                                                                    \
-    700,                                                                    \
+    905,                                                                    \
     8,                                                                      \
-    2                                                                       \
+    3                                                                       \
 }
 
 // Sane clamp range - raw pressure realistically spans ~0-300, so keep the
@@ -298,7 +298,7 @@ typedef struct _AMT_SCROLL_CONFIG
     0, \
     1, \
     1600, \
-    8, \
+    6, \
     10, \
     108, \
     100, \

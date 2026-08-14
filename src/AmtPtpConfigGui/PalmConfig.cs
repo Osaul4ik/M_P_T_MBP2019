@@ -45,10 +45,10 @@ namespace AmtPtpConfigGui.Native
         public static PalmConfig Default => new PalmConfig
         {
             StructVersion = CurrentVersion,
-            EdgePermilleTop = 36,
-            EdgePermilleLeft = 143,
-            EdgePermilleRight = 143,
-            EdgePermilleBottom = 250,
+            EdgePermilleTop = 0,
+            EdgePermilleLeft = 70,
+            EdgePermilleRight = 70,
+            EdgePermilleBottom = 110,
             PalmLargeMajor = 380,
             PalmLargeRatio = 180,
             PalmScoreThresh = 55,
