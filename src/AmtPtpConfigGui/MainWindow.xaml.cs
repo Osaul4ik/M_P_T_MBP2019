@@ -1289,15 +1289,13 @@ namespace AmtPtpConfigGui
                 if (LiveToolbarCard != null) LiveToolbarCard.Effect = null;
                 if (BottomActionCard != null) BottomActionCard.Effect = null;
                 if (PreviewCard != null) PreviewCard.Effect = null;
-                if (DeviceCard != null) DeviceCard.Effect = null;
-            }
+                }
             else
             {
                 if (ProfileBarCard != null) ProfileBarCard.Effect = (Effect)FindResource("CardShadow");
                 if (LiveToolbarCard != null) LiveToolbarCard.Effect = (Effect)FindResource("CardShadow");
                 if (BottomActionCard != null) BottomActionCard.Effect = (Effect)FindResource("CardShadow");
                 if (PreviewCard != null) PreviewCard.Effect = (Effect)FindResource("CardShadow");
-                if (DeviceCard != null) DeviceCard.Effect = (Effect)FindResource("DeviceShadow");
             }
         }
 
