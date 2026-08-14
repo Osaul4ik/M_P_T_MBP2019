@@ -456,6 +456,54 @@ namespace AmtPtpConfigGui.Native
             }
         }
 
+        private bool TryIoctl(
+            uint code,
+            ScrollConfig? input,
+            ref ScrollConfig output)
+        {
+            int size =
+                Marshal.SizeOf<ScrollConfig>();
+
+            IntPtr inBuf = IntPtr.Zero;
+            IntPtr outBuf =
+                Marshal.AllocHGlobal(size);
+
+            try
+            {
+                uint inSize = 0;
+
+                if (input.HasValue)
+                {
+                    inBuf = Marshal.AllocHGlobal(size);
+                    Marshal.StructureToPtr(input.Value, inBuf, false);
+                    inSize = (uint)size;
+                }
+
+                bool ok = DeviceIoControl(
+                    _handle!,
+                    code,
+                    inBuf,
+                    inSize,
+                    outBuf,
+                    (uint)size,
+                    out uint bytesReturned,
+                    IntPtr.Zero);
+
+                if (!ok || bytesReturned < size)
+                    return false;
+
+                output = Marshal.PtrToStructure<ScrollConfig>(outBuf);
+                return true;
+            }
+            finally
+            {
+                if (inBuf != IntPtr.Zero)
+                    Marshal.FreeHGlobal(inBuf);
+
+                Marshal.FreeHGlobal(outBuf);
+            }
+        }
+
         public bool SetLiveEnabled(bool enabled)
         {
             if (!IsConnected)

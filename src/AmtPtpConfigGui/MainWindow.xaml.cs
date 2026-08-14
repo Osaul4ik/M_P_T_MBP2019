@@ -1226,7 +1226,7 @@ namespace AmtPtpConfigGui
 
                     LoadConfigIntoSliders(profile.Palm.Clamped());
                     LoadPointerConfigIntoControls(profile.Pointer.Clamped());
-                    LoadScrollConfigIntoControls(profile.Scroll == null ? ScrollConfig.Default : profile.Scroll.Clamped());
+                    LoadScrollConfigIntoControls(profile.Scroll.StructVersion == 0 ? ScrollConfig.Default : profile.Scroll.Clamped());
                     DrawPreview();
                     SetBottomStatus($"Профіль (Palm + Scroll + Pointer) завантажено: {dlg.FileName}. Натисніть «Зберегти», щоб записати на драйвер.");
                 }
