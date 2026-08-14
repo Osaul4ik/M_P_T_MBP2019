@@ -376,7 +376,7 @@ namespace AmtPtpConfigGui
                 Content = "Change theme",
                 Width = 126,
                 Height = 34,
-                Style = (Style)FindResource("GhostButton")
+                Style = (Style)FindResource("AccentButton")
             };
             Grid.SetColumn(changeTheme, 1);
             themeRow.Children.Add(changeTheme);

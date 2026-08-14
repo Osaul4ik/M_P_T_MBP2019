@@ -235,28 +235,55 @@ namespace AmtPtpConfigGui.Native
 
         public string GetDeviceModelDisplay()
         {
-            if (!TryGetDeviceInfo(out var info))
-                return string.Empty;
-
-            string model = info.ProductId switch
+            if (TryGetDeviceInfo(out var info) && info.ProductId != 0)
             {
-                0x0272 or 0x0273 or 0x0274 => "MacBookPro12,1 · 2015 13-inch",
-                0x0290 or 0x0291 => "MacBookAir6/7,x · pre-Force Touch",
-                0x0277 => "MacBookPro13,2 · 2016 15-inch",
-                0x027A => "MacBookAir8,1 · 2018",
-                0x027B => "MacBookPro15,2 · 2018 13-inch",
-                0x027C => "MacBookPro15,1 · 2018 15-inch",
-                0x027D => "MacBookPro15,4 · 2019 13-inch",
-                0x027E => "MacBookPro16,2 · 2020 13-inch",
-                0x027F => "MacBookPro16,3 · 2020 13-inch",
-                0x0280 => "MacBookAir9,1 · 2020",
-                0x0340 => "MacBookPro16,1 · 2019 16-inch",
-                _ => $"Apple Internal Trackpad · PID 0x{info.ProductId:X4}"
-            };
+                string model = info.ProductId switch
+                {
+                    0x0272 or 0x0273 or 0x0274 => "MacBookPro12,1 · 2015 13-inch",
+                    0x0290 or 0x0291 => "MacBookAir6/7,x · pre-Force Touch",
+                    0x0277 => "MacBookPro13,2 · 2016 15-inch",
+                    0x027A => "MacBookAir8,1 · 2018",
+                    0x027B => "MacBookPro15,2 · 2018 13-inch",
+                    0x027C => "MacBookPro15,1 · 2018 15-inch",
+                    0x027D => "MacBookPro15,4 · 2019 13-inch",
+                    0x027E => "MacBookPro16,2 · 2020 13-inch",
+                    0x027F => "MacBookPro16,3 · 2020 13-inch",
+                    0x0280 => "MacBookAir9,1 · 2020",
+                    0x0340 => "MacBookPro16,1 · 2019 16-inch",
+                    _ => $"Apple Internal Trackpad · PID 0x{info.ProductId:X4}"
+                };
 
-            return info.SupportsForceTouch != 0
-                ? $"{model} · Force Touch"
-                : model;
+                return info.SupportsForceTouch != 0
+                    ? $"{model} · Force Touch"
+                    : model;
+            }
+
+            // The driver-side GET_DEVICE_INFO IOCTL was added after the original
+            // GUI. Fall back to the Windows SMBIOS product name so the model is
+            // still shown when an older driver build is installed.
+            string? hostProduct = null;
+            try
+            {
+                using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                    @"HARDWARE\DESCRIPTION\System\BIOS");
+                hostProduct = key?.GetValue("SystemProductName") as string;
+            }
+            catch
+            {
+                // Keep a safe generic fallback.
+            }
+
+            return hostProduct switch
+            {
+                "MacBookPro16,1" => "MacBookPro16,1 · 2019 16-inch · Force Touch",
+                "MacBookPro16,2" => "MacBookPro16,2 · 2020 13-inch · Force Touch",
+                "MacBookPro16,3" => "MacBookPro16,3 · 2020 13-inch · Force Touch",
+                "MacBookPro15,1" => "MacBookPro15,1 · 2018 15-inch · Force Touch",
+                "MacBookPro15,2" => "MacBookPro15,2 · 2018 13-inch · Force Touch",
+                "MacBookPro15,4" => "MacBookPro15,4 · 2019 13-inch · Force Touch",
+                _ when !string.IsNullOrWhiteSpace(hostProduct) => hostProduct,
+                _ => "Apple Precision Touchpad · model unavailable"
+            };
         }
 
         public bool TryGetPalmConfig(

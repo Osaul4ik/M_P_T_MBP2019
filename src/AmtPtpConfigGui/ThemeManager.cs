@@ -33,17 +33,19 @@ namespace AmtPtpConfigGui
             string ScrollTrack,
             string ScrollThumb,
             string ScrollThumbHover,
+            string ControlHover,
+            string ControlPressed,
             string TintWarn,
             string TintError);
 
         private static readonly ThemeDefinition[] Definitions =
         {
-            new("old", "Old", "#FFFBFF", "#1A1C1E", "#E1E6F0", "#D2D9E8", "#1A1C1E", "#F6F0D4", "#F6F0D4", "#F8EEC2", "#FCFAF1", "#33141E1E", "#F6F0D4", "#4A3200", "#F6F0D4", "#5C1408", "#1E7A34", "#E8E8E8", "#C7C7C7", "#B9B9B9", "#24FFBE5A", "#1FFF5A46"),
-            new("cream", "Cream", "#FFF7E7", "#26190A", "#F2E2CC", "#E9D5B4", "#2B1C08", "#FFE7C4", "#FFE7C4", "#FCDBAA", "#FFF2DD", "#333C280A", "#FFE7C4", "#452C00", "#FFE7C4", "#5C1408", "#1E7A34", "#F5F3F0", "#D6C9B8", "#C1B09A", "#24FFB446", "#1FFF5A46"),
-            new("paper", "Paper", "#FDF6E3", "#3A3226", "#F1EBD7", "#E9E1CA", "#3A3226", "#E3DBC7", "#E3DBC7", "#DED6BE", "#F7F1DE", "#32322D14", "#E3DBC7", "#3C2C00", "#E3DBC7", "#5C1408", "#1E7A34", "#EEE8D5", "#CCC5B9", "#BCB09F", "#22D2AA28", "#1FBE503C"),
-            new("rose", "Rose", "#FFF0F6", "#3A0D21", "#F9D6E0", "#F0BFD4", "#3A0D21", "#F5B3CD", "#F5B3CD", "#EB8FBA", "#FDE9F3", "#33480A28", "#F5B3CD", "#442900", "#F5B3CD", "#5C1424", "#1E7A34", "#FFD6E8", "#F687B3", "#EC4899", "#FFFFF0F6", "#1FE63C64"),
-            new("blue", "Blue", "#EEF4FF", "#0D1B2E", "#E3EAF5", "#D6E4FF", "#0D1B2E", "#C1D3F7", "#C1D3F7", "#A9C6F3", "#E6EDFB", "#330A143C", "#C1D3F7", "#402C00", "#C1D3F7", "#5C1408", "#1E7A34", "#E6EBF3", "#C2CCDA", "#AEB9C9", "#22F2F7FF", "#1FFF5A46"),
-            new("monet", "Monet", "#FFF9F5", "#341A06", "#FFE0C2", "#FFCD9D", "#341A06", "#FFE0C0", "#FFE0C0", "#F7CDA2", "#FFF3E6", "#3346230A", "#FFE0C0", "#412A00", "#FFE0C0", "#5C1A08", "#1E7A34", "#F7F3EF", "#DEC8AA", "#D4B88E", "#1FFFF2EA", "#1FFF5A3C")
+            new("old", "Old", "#FFFBFF", "#1A1C1E", "#E1E6F0", "#D2D9E8", "#1A1C1E", "#F6F0D4", "#F6F0D4", "#F8EEC2", "#FCFAF1", "#33141E1E", "#F6F0D4", "#4A3200", "#F6F0D4", "#5C1408", "#1E7A34", "#E8E8E8", "#C7C7C7", "#B9B9B9", "#D8DDE8", "#C8CFDD", "#24FFBE5A", "#1FFF5A46"),
+            new("cream", "Cream", "#FFF7E7", "#26190A", "#F2E2CC", "#E9D5B4", "#2B1C08", "#FFE7C4", "#FFE7C4", "#FCDBAA", "#FFF2DD", "#333C280A", "#FFE7C4", "#452C00", "#FFE7C4", "#5C1408", "#1E7A34", "#F5F3F0", "#D6C9B8", "#C1B09A", "#E9D5B4", "#D9C39E", "#24FFB446", "#1FFF5A46"),
+            new("paper", "Paper", "#FDF6E3", "#3A3226", "#F1EBD7", "#E9E1CA", "#3A3226", "#E3DBC7", "#E3DBC7", "#DED6BE", "#F7F1DE", "#32322D14", "#E3DBC7", "#3C2C00", "#E3DBC7", "#5C1408", "#1E7A34", "#EEE8D5", "#CCC5B9", "#BCB09F", "#E9E1CA", "#D8D0B8", "#22D2AA28", "#1FBE503C"),
+            new("rose", "Rose", "#FFF0F6", "#3A0D21", "#F9D6E0", "#F0BFD4", "#3A0D21", "#F5B3CD", "#F5B3CD", "#EB8FBA", "#FDE9F3", "#33480A28", "#F5B3CD", "#442900", "#F5B3CD", "#5C1424", "#1E7A34", "#FFD6E8", "#F687B3", "#EC4899", "#F0BFD4", "#E5A9C4", "#FFFFF0F6", "#1FE63C64"),
+            new("blue", "Blue", "#EEF4FF", "#0D1B2E", "#E3EAF5", "#D6E4FF", "#0D1B2E", "#C1D3F7", "#C1D3F7", "#A9C6F3", "#E6EDFB", "#330A143C", "#C1D3F7", "#402C00", "#C1D3F7", "#5C1408", "#1E7A34", "#E6EBF3", "#C2CCDA", "#AEB9C9", "#D6E4FF", "#BFD1F0", "#22F2F7FF", "#1FFF5A46"),
+            new("monet", "Monet", "#FFF9F5", "#341A06", "#FFE0C2", "#FFCD9D", "#341A06", "#FFE0C0", "#FFE0C0", "#F7CDA2", "#FFF3E6", "#3346230A", "#FFE0C0", "#412A00", "#FFE0C0", "#5C1A08", "#1E7A34", "#F7F3EF", "#DEC8AA", "#D4B88E", "#FFCD9D", "#E6B681", "#1FFFF2EA", "#1FFF5A3C")
         };
 
         private const string DefaultTheme = "blue";
@@ -93,6 +95,7 @@ namespace AmtPtpConfigGui
             resources["AccentBrush"] = Brush(theme.Primary);
             resources["AccentBrushHover"] = Brush(theme.PrimaryHover);
             resources["AccentBrushPressed"] = Brush(Darken(theme.PrimaryHover));
+            resources["AccentContentBrush"] = ContrastBrush(theme.Primary);
             resources["AccentSoftBrush"] = Brush(theme.SurfaceHigh);
             resources["DangerBrush"] = Brush(theme.ErrorText);
             resources["DangerSoftBrush"] = Brush(theme.ErrorBg);
@@ -106,6 +109,8 @@ namespace AmtPtpConfigGui
             resources["ScrollBarTrackBrush"] = Brush(theme.ScrollTrack);
             resources["ScrollBarThumbBrush"] = Brush(theme.ScrollThumb);
             resources["ScrollBarThumbHoverBrush"] = Brush(theme.ScrollThumbHover);
+            resources["ControlHoverBrush"] = Brush(theme.ControlHover);
+            resources["ControlPressedBrush"] = Brush(theme.ControlPressed);
 
             if (localResources != null && !ReferenceEquals(localResources, resources))
             {
@@ -118,7 +123,7 @@ namespace AmtPtpConfigGui
                     "DangerBrush", "DangerSoftBrush", "SuccessBrush", "SuccessSoftBrush",
                     "BrandMarkBrush", "BezelBrush", "GlassShineBrush", "WarnBrush",
                     "WarnSoftBrush", "ScrollBarTrackBrush", "ScrollBarThumbBrush",
-                    "ScrollBarThumbHoverBrush"
+                    "ScrollBarThumbHoverBrush", "ControlHoverBrush", "ControlPressedBrush"
                 })
                 {
                     localResources[key] = resources[key];
@@ -169,6 +174,22 @@ namespace AmtPtpConfigGui
             };
             brush.GradientStops.Add(new GradientStop(WpfColor.FromArgb(0x40, 0xFF, 0xFF, 0xFF), 0));
             brush.GradientStops.Add(new GradientStop(WpfColor.FromArgb(0x00, 0xFF, 0xFF, 0xFF), 0.45));
+            brush.Freeze();
+            return brush;
+        }
+
+        private static SolidColorBrush ContrastBrush(string hex)
+        {
+            var c = (WpfColor)WpfColorConverter.ConvertFromString(hex)!;
+            double luminance =
+                0.2126 * (c.R / 255.0) +
+                0.7152 * (c.G / 255.0) +
+                0.0722 * (c.B / 255.0);
+
+            var brush = new SolidColorBrush(
+                luminance > 0.58
+                    ? WpfColor.FromRgb(0x1A, 0x1C, 0x1E)
+                    : WpfColor.FromRgb(0xFF, 0xFF, 0xFF));
             brush.Freeze();
             return brush;
         }
