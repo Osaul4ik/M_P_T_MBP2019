@@ -1303,10 +1303,10 @@ namespace AmtPtpConfigGui
                 //   X = rawX - XMin
                 //   Y = YMax - rawY
                 // Therefore do NOT subtract _geometry.XMin/YMin again.
-                // Live preview is horizontally mirrored relative to the
-                // device coordinate frame. Keep the driver coordinates
-                // untouched and mirror only the visual X position here.
-                double px = w - (c.X / xRange * w);
+                // Preview uses the same X direction as the normalized driver coordinates.
+                // Do not mirror X here: mirroring would also invert the physical
+                // orientation of the contact footprint.
+                double px = c.X / xRange * w;
                 double py = c.Y / yRange * h;
 
                 px = Math.Clamp(px, 0, w);
@@ -1374,10 +1374,11 @@ namespace AmtPtpConfigGui
 
                 // Major/minor are contact-size units, not X/Y coordinate units.
                 // Use one common scale so both axes grow physically consistently.
-                const double touchSizeRange = 2048.0; // BCM5974 SN_WIDTH max
-                double sizeScale = Math.Min(w, h) / touchSizeRange;
-                double majorPx = dispMajor > 0 ? Math.Max(10, dispMajor * sizeScale) : 26;
-                double minorPx = dispMinor > 0 ? Math.Max(10, dispMinor * sizeScale) : 26;
+                double sizeScaleX = w / xRange;
+                double sizeScaleY = h / yRange;
+                double sizeScale = (sizeScaleX + sizeScaleY) * 0.5;
+                double majorPx = dispMajor > 0 ? Math.Max(6, dispMajor * sizeScale) : 12;
+                double minorPx = dispMinor > 0 ? Math.Max(6, dispMinor * sizeScale) : 12;
 
                 var footprint = _liveFootprints[i];
                 footprint.Width = majorPx;
@@ -1397,7 +1398,7 @@ namespace AmtPtpConfigGui
                 double rotationDeg = 0;
                 if (c.Orientation != 16384)
                 {
-                    rotationDeg = c.Orientation * 90.0 / 16384.0;
+                    rotationDeg = -(c.Orientation * 90.0 / 16384.0);
                     while (rotationDeg <= -180) rotationDeg += 360;
                     while (rotationDeg > 180) rotationDeg -= 360;
                 }
