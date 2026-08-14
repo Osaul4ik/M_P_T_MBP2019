@@ -1281,7 +1281,10 @@ namespace AmtPtpConfigGui
                 //   X = rawX - XMin
                 //   Y = YMax - rawY
                 // Therefore do NOT subtract _geometry.XMin/YMin again.
-                double px = c.X / xRange * w;
+                // Live preview is horizontally mirrored relative to the
+                // device coordinate frame. Keep the driver coordinates
+                // untouched and mirror only the visual X position here.
+                double px = w - (c.X / xRange * w);
                 double py = c.Y / yRange * h;
 
                 px = Math.Clamp(px, 0, w);
