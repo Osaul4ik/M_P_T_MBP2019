@@ -76,6 +76,9 @@ namespace AmtPtpConfigGui
         private bool _suppressEvents;
         private bool _draggingTestPoint;
         private bool _uiReady;
+        private bool _profilesReady;
+        private readonly List<GuiProfile> _profiles = new();
+        private int _activeProfileIndex = -1;
 
         private readonly DispatcherTimer _liveTimer;
         private bool _liveEnabled;
@@ -148,6 +151,8 @@ namespace AmtPtpConfigGui
         public MainWindow()
         {
             InitializeComponent();
+            InitializeProfiles();
+            UpdateProModeVisibility();
             _uiReady = true;
 
             _liveTimer = new DispatcherTimer
@@ -161,6 +166,197 @@ namespace AmtPtpConfigGui
             _liveTimer.Tick += LiveTimer_Tick;
 
             Loaded += (_, _) => Reconnect();
+        }
+
+        // ---------------------------------------------------------------
+        // Profiles / Pro mode
+        // ---------------------------------------------------------------
+
+        private void InitializeProfiles()
+        {
+            _profiles.Clear();
+            _profiles.AddRange(ProfileStore.Load());
+
+            _profilesReady = false;
+            ProfileCombo.ItemsSource = null;
+            ProfileCombo.ItemsSource = _profiles;
+            if (_profiles.Count > 0)
+            {
+                _activeProfileIndex = 0;
+                ProfileCombo.SelectedIndex = 0;
+            }
+            _profilesReady = true;
+        }
+
+        private GuiProfile? ActiveProfile =>
+            _activeProfileIndex >= 0 && _activeProfileIndex < _profiles.Count
+                ? _profiles[_activeProfileIndex]
+                : null;
+
+        private void ProfileCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (!_profilesReady || ProfileCombo.SelectedIndex < 0 || ProfileCombo.SelectedIndex >= _profiles.Count)
+                return;
+
+            _activeProfileIndex = ProfileCombo.SelectedIndex;
+            var profile = _profiles[_activeProfileIndex];
+            LoadConfigIntoSliders(profile.Palm.Clamped());
+            LoadPointerConfigIntoControls(profile.Pointer.Clamped());
+            LoadScrollConfigIntoControls(profile.Scroll.StructVersion == 0 ? ScrollConfig.Default : profile.Scroll.Clamped());
+            DrawPreview();
+            SetBottomStatus($"Завантажено профіль «{profile.Name}». Натисніть «Зберегти», щоб застосувати його до драйвера.");
+        }
+
+        private void NewProfile_Click(object sender, RoutedEventArgs e)
+        {
+            string name = GetNextProfileName();
+            var profile = new GuiProfile
+            {
+                Name = name,
+                Palm = ReadConfigFromSliders(),
+                Pointer = ReadPointerConfigFromControls(),
+                Scroll = ReadScrollConfigFromControls(),
+            };
+
+            _profilesReady = false;
+            _profiles.Add(profile);
+            ProfileCombo.ItemsSource = null;
+            ProfileCombo.ItemsSource = _profiles;
+            ProfileCombo.SelectedIndex = _profiles.Count - 1;
+            _activeProfileIndex = _profiles.Count - 1;
+            _profilesReady = true;
+
+            ProfileStore.Save(_profiles);
+            SetBottomStatus($"Створено «{name}». Натисніть «Зберегти», щоб записати його як поточний профіль і застосувати до драйвера.");
+        }
+
+        private void RenameProfile_Click(object sender, RoutedEventArgs e)
+        {
+            var profile = ActiveProfile;
+            if (profile == null)
+                return;
+
+            string? name = PromptText("Перейменувати профіль", "Назва профілю:", profile.Name);
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+
+            name = name.Trim();
+            if (_profiles.Any(p => !ReferenceEquals(p, profile) && string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                MessageBox.Show(this, "Профіль з такою назвою вже існує.", "Профілі", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            profile.Name = name;
+            ProfileCombo.Items.Refresh();
+            ProfileStore.Save(_profiles);
+            SetBottomStatus($"Профіль перейменовано на «{name}».");
+        }
+
+        private void DeleteProfile_Click(object sender, RoutedEventArgs e)
+        {
+            if (_profiles.Count <= 1)
+            {
+                MessageBox.Show(this, "Має залишатися хоча б один профіль.", "Профілі", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var profile = ActiveProfile;
+            if (profile == null)
+                return;
+
+            var result = MessageBox.Show(
+                this,
+                $"Видалити профіль «{profile.Name}»?",
+                "Видалення профілю",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (result != MessageBoxResult.Yes)
+                return;
+
+            int nextIndex = Math.Min(_activeProfileIndex, _profiles.Count - 2);
+            _profilesReady = false;
+            _profiles.RemoveAt(_activeProfileIndex);
+            ProfileCombo.ItemsSource = null;
+            ProfileCombo.ItemsSource = _profiles;
+            ProfileCombo.SelectedIndex = nextIndex;
+            _activeProfileIndex = nextIndex;
+            _profilesReady = true;
+
+            ProfileStore.Save(_profiles);
+            var current = ActiveProfile;
+            if (current != null)
+            {
+                LoadConfigIntoSliders(current.Palm.Clamped());
+                LoadPointerConfigIntoControls(current.Pointer.Clamped());
+                LoadScrollConfigIntoControls(current.Scroll.StructVersion == 0 ? ScrollConfig.Default : current.Scroll.Clamped());
+                DrawPreview();
+            }
+            SetBottomStatus("Профіль видалено.");
+        }
+
+        private string GetNextProfileName()
+        {
+            int i = 1;
+            while (_profiles.Any(p => string.Equals(p.Name, $"Профіль {i}", StringComparison.OrdinalIgnoreCase)))
+                i++;
+            return $"Профіль {i}";
+        }
+
+        private static string? PromptText(string title, string caption, string initialValue)
+        {
+            var dialog = new Window
+            {
+                Title = title,
+                Width = 380,
+                Height = 165,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ResizeMode = ResizeMode.NoResize,
+                WindowStyle = WindowStyle.ToolWindow,
+                ShowInTaskbar = false,
+            };
+
+            var root = new Grid { Margin = new Thickness(18) };
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            root.Children.Add(new TextBlock { Text = caption, Margin = new Thickness(0, 0, 0, 8), FontWeight = FontWeights.SemiBold });
+            var text = new TextBox { Text = initialValue, Height = 32 };
+            Grid.SetRow(text, 1);
+            root.Children.Add(text);
+
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 14, 0, 0) };
+            var cancel = new Button { Content = "Скасувати", Padding = new Thickness(14, 7, 14, 7), Margin = new Thickness(0, 0, 8, 0), IsCancel = true };
+            var ok = new Button { Content = "OK", Padding = new Thickness(18, 7, 18, 7), IsDefault = true };
+            ok.Click += (_, _) => { dialog.DialogResult = true; dialog.Close(); };
+            buttons.Children.Add(cancel);
+            buttons.Children.Add(ok);
+            Grid.SetRow(buttons, 3);
+            root.Children.Add(buttons);
+
+            dialog.Content = root;
+            dialog.Owner = Application.Current?.MainWindow;
+            text.SelectAll();
+            text.Focus();
+
+            return dialog.ShowDialog() == true ? text.Text : null;
+        }
+
+        private void ProMode_Changed(object sender, RoutedEventArgs e)
+        {
+            UpdateProModeVisibility();
+        }
+
+        private void UpdateProModeVisibility()
+        {
+            if (ScrollAdvancedPanel == null || PointerAdvancedPanel == null || ChkProMode == null)
+                return;
+
+            var visibility = ChkProMode.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+            ScrollAdvancedPanel.Visibility = visibility;
+            PointerAdvancedPanel.Visibility = visibility;
         }
 
         // ---------------------------------------------------------------
@@ -1127,31 +1323,57 @@ namespace AmtPtpConfigGui
             var requestedPointer = ReadPointerConfigFromControls();
             var requestedScroll = ReadScrollConfigFromControls();
 
+            bool palmOk = false, pointerOk = false, scrollOk = false;
+            if (_device.IsConnected)
+            {
+                palmOk = _device.TrySetPalmConfig(requestedPalm, out var appliedPalm);
+                if (palmOk)
+                {
+                    requestedPalm = appliedPalm;
+                    LoadConfigIntoSliders(appliedPalm);
+                    DrawPreview();
+                }
+
+                pointerOk = _device.TrySetPointerConfig(requestedPointer, out var appliedPointer);
+                if (pointerOk)
+                {
+                    requestedPointer = appliedPointer;
+                    LoadPointerConfigIntoControls(appliedPointer);
+                }
+
+                scrollOk = _device.TrySetScrollConfig(requestedScroll, out var appliedScroll);
+                if (scrollOk)
+                {
+                    requestedScroll = appliedScroll;
+                    LoadScrollConfigIntoControls(appliedScroll);
+                }
+            }
+
+            var profile = ActiveProfile;
+            if (profile != null)
+            {
+                profile.Palm = requestedPalm.Clamped();
+                profile.Pointer = requestedPointer.Clamped();
+                profile.Scroll = requestedScroll.StructVersion == 0 ? ScrollConfig.Default : requestedScroll.Clamped();
+                ProfileStore.Save(_profiles);
+            }
+
             if (!_device.IsConnected)
             {
-                SetBottomStatus("Пристрій не підключено — налаштування не збережено на драйвері (лише попередній перегляд).");
-                return;
+                SetBottomStatus("Профіль збережено локально. Пристрій не підключено — на драйвер налаштування не записані.");
             }
-
-            bool palmOk = _device.TrySetPalmConfig(requestedPalm, out var appliedPalm);
-            if (palmOk)
+            else if (palmOk && pointerOk && scrollOk)
             {
-                LoadConfigIntoSliders(appliedPalm);
-                DrawPreview();
+                SetBottomStatus($"«{profile?.Name ?? "Поточний профіль"}» збережено і застосовано до драйвера.");
             }
-
-            bool pointerOk = _device.TrySetPointerConfig(requestedPointer, out var appliedPointer);
-            if (pointerOk) LoadPointerConfigIntoControls(appliedPointer);
-
-            bool scrollOk = _device.TrySetScrollConfig(requestedScroll, out var appliedScroll);
-            if (scrollOk) LoadScrollConfigIntoControls(appliedScroll);
-
-            if (palmOk && pointerOk && scrollOk)
-                SetBottomStatus("Збережено в реєстрі драйвера (Palm + Scroll + Pointer).");
             else if (!palmOk && !pointerOk && !scrollOk)
-                SetBottomStatus("Не вдалося зберегти налаштування (помилка DeviceIoControl).");
+            {
+                SetBottomStatus("Профіль збережено локально, але DeviceIoControl не дозволив записати його на драйвер.");
+            }
             else
-                SetBottomStatus("Частину налаштувань не вдалося зберегти (помилка DeviceIoControl).");
+            {
+                SetBottomStatus("Профіль збережено локально. Частину налаштувань не вдалося записати на драйвер.");
+            }
         }
 
         private void ResetDefaults_Click(object sender, RoutedEventArgs e)
@@ -1176,6 +1398,14 @@ namespace AmtPtpConfigGui
                 SetBottomStatus("Показано значення за замовчуванням (пристрій не підключено).");
 
             DrawPreview();
+            var active = ActiveProfile;
+            if (active != null)
+            {
+                active.Palm = ReadConfigFromSliders();
+                active.Pointer = ReadPointerConfigFromControls();
+                active.Scroll = ReadScrollConfigFromControls();
+                ProfileStore.Save(_profiles);
+            }
         }
 
         private void SaveProfile_Click(object sender, RoutedEventArgs e)

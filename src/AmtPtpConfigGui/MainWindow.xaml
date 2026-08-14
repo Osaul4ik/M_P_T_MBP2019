@@ -555,6 +555,31 @@
             </Grid>
         </Border>
 
+        <!-- ===================== Profiles ===================== -->
+        <Border DockPanel.Dock="Top" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="250"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,14,0">
+                    <TextBlock Text="Профіль" FontWeight="SemiBold" FontSize="12.5"/>
+                    <TextBlock Text="Налаштування Pointer / Scroll / Palm" Style="{StaticResource SectionCaption}"/>
+                </StackPanel>
+                <ComboBox x:Name="ProfileCombo" Grid.Column="1" Height="34" VerticalContentAlignment="Center"
+                          SelectionChanged="ProfileCombo_SelectionChanged"/>
+                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="＋" Width="42" MinWidth="42" Click="NewProfile_Click" ToolTip="Новий профіль"/>
+                    <Button Content="Перейменувати" Click="RenameProfile_Click"/>
+                    <Button Content="Видалити" Style="{StaticResource GhostButton}" Click="DeleteProfile_Click"/>
+                    <CheckBox x:Name="ChkProMode" Content="Pro Mode" Style="{StaticResource ChipCheckBox}"
+                              Margin="14,0,0,0" VerticalAlignment="Center" Checked="ProMode_Changed" Unchecked="ProMode_Changed"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
         <!-- ===================== Toolbar: Live monitor + diagnostics ===================== -->
         <Border DockPanel.Dock="Top" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,14" Effect="{StaticResource CardShadow}">
             <Grid>
@@ -610,8 +635,6 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
                     <Button Content="Скинути за замовчуванням" Style="{StaticResource GhostButton}" Click="ResetDefaults_Click"/>
                     <Border Width="1" Margin="10,4" Background="{StaticResource DividerBrush}"/>
-                    <Button Content="Завантажити профіль…" Click="LoadProfile_Click"/>
-                    <Button Content="Експорт профілю…" Click="SaveProfile_Click"/>
                     <Button Style="{StaticResource AccentButton}" Click="Save_Click">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="✓" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="White"/>
@@ -761,52 +784,48 @@
                             <GroupBox>
                                 <GroupBox.Header>
                                     <StackPanel>
-                                        <TextBlock Text="Швидкість прокрутки" Style="{StaticResource SectionTitle}"/>
-                                        <TextBlock Text="SCROLL · основна та швидка прокрутка" Style="{StaticResource SectionCaption}"/>
+                                        <TextBlock Text="Прокрутка" Style="{StaticResource SectionTitle}"/>
+                                        <TextBlock Text="SCROLL · основні налаштування" Style="{StaticResource SectionCaption}"/>
                                     </StackPanel>
                                 </GroupBox.Header>
                                 <StackPanel>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Швидкість"/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Швидкість прокрутки"/>
                                         <TextBlock x:Name="LblScrollSpeed" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollSpeed" Minimum="20" Maximum="200" ValueChanged="ScrollSlider_Changed"/>
-
+                                    <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Плавність"/>
+                                        <TextBlock x:Name="LblScrollSmoothing" Grid.Column="1" Style="{StaticResource SliderValue}"/>
+                                    </Grid>
+                                    <Slider x:Name="SlScrollSmoothing" Minimum="0" Maximum="100" ValueChanged="ScrollSlider_Changed"/>
+                                    <TextBlock Style="{StaticResource HintText}" Text="Більша швидкість робить двопальцеву прокрутку швидшою, а більша плавність прибирає дрібні ривки."/>
+                                </StackPanel>
+                            </GroupBox>
+                            <GroupBox x:Name="ScrollAdvancedPanel" Visibility="Collapsed">
+                                <GroupBox.Header>
+                                    <StackPanel>
+                                        <TextBlock Text="Scroll · Pro" Style="{StaticResource SectionTitle}"/>
+                                        <TextBlock Text="PRO · технічне налаштування поведінки жесту" Style="{StaticResource SectionCaption}"/>
+                                    </StackPanel>
+                                </GroupBox.Header>
+                                <StackPanel>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Style="{StaticResource SliderLabel}" Text="Швидкість швидкого руху"/>
                                         <TextBlock x:Name="LblScrollFastSpeed" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollFastSpeed" Minimum="20" Maximum="250" ValueChanged="ScrollSlider_Changed"/>
-                                </StackPanel>
-                            </GroupBox>
-
-                            <GroupBox>
-                                <GroupBox.Header>
-                                    <StackPanel>
-                                        <TextBlock Text="Згладжування" Style="{StaticResource SectionTitle}"/>
-                                        <TextBlock Text="FILTER · менше ривків, більше інерції" Style="{StaticResource SectionCaption}"/>
-                                    </StackPanel>
-                                </GroupBox.Header>
-                                <StackPanel>
-                                    <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Згладжування"/>
-                                        <TextBlock x:Name="LblScrollSmoothing" Grid.Column="1" Style="{StaticResource SliderValue}"/>
-                                    </Grid>
-                                    <Slider x:Name="SlScrollSmoothing" Minimum="0" Maximum="100" ValueChanged="ScrollSlider_Changed"/>
-
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Style="{StaticResource SliderLabel}" Text="Мертва зона"/>
                                         <TextBlock x:Name="LblScrollDeadzone" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollDeadzone" Minimum="0" Maximum="8" ValueChanged="ScrollSlider_Changed"/>
-
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Style="{StaticResource SliderLabel}" Text="Поріг швидкого руху"/>
                                         <TextBlock x:Name="LblScrollFastVelocity" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlScrollFastVelocity" Minimum="500" Maximum="4000" ValueChanged="ScrollSlider_Changed"/>
-
-                                    <TextBlock Style="{StaticResource HintText}" Text="Зміни прокрутки впливають на двопальцевий жест. 100% — поточна базова швидкість без додаткового прискорення."/>
+                                    <TextBlock Style="{StaticResource HintText}" Text="Fast Velocity визначає момент переходу в швидкий режим прокрутки."/>
                                 </StackPanel>
                             </GroupBox>
                         </StackPanel>
@@ -816,93 +835,64 @@
                 <TabItem Header="Pointer" Style="{StaticResource SettingsTabItem}">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel>
-
                             <GroupBox>
                                 <GroupBox.Header>
                                     <StackPanel>
                                         <TextBlock Text="Курсор" Style="{StaticResource SectionTitle}"/>
-                                        <TextBlock Text="POINTER · згладжування та швидкість" Style="{StaticResource SectionCaption}"/>
+                                        <TextBlock Text="POINTER · основні налаштування" Style="{StaticResource SectionCaption}"/>
                                     </StackPanel>
                                 </GroupBox.Header>
                                 <StackPanel>
-                                    <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Згладжування"/>
-                                        <TextBlock x:Name="LblCursorSmoothing" Grid.Column="1" Style="{StaticResource SliderValue}"/>
-                                    </Grid>
-                                    <Slider x:Name="SlCursorSmoothing" Minimum="0" Maximum="100" ValueChanged="PointerSlider_Changed"/>
-
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Style="{StaticResource SliderLabel}" Text="Швидкість курсора"/>
                                         <TextBlock x:Name="LblCursorSpeed" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorSpeed" Minimum="50" Maximum="200" ValueChanged="PointerSlider_Changed"/>
-
+                                    <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Плавність"/>
+                                        <TextBlock x:Name="LblCursorSmoothing" Grid.Column="1" Style="{StaticResource SliderValue}"/>
+                                    </Grid>
+                                    <Slider x:Name="SlCursorSmoothing" Minimum="0" Maximum="100" ValueChanged="PointerSlider_Changed"/>
+                                    <TextBlock Style="{StaticResource HintText}" Text="Швидкість змінює масштаб переміщення курсора, а плавність прибирає дрібні ривки."/>
+                                </StackPanel>
+                            </GroupBox>
+                            <GroupBox x:Name="PointerAdvancedPanel" Visibility="Collapsed">
+                                <GroupBox.Header>
+                                    <StackPanel>
+                                        <TextBlock Text="Pointer · Pro" Style="{StaticResource SectionTitle}"/>
+                                        <TextBlock Text="PRO · технічні пороги, deadzone і Force Touch" Style="{StaticResource SectionCaption}"/>
+                                    </StackPanel>
+                                </GroupBox.Header>
+                                <StackPanel>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Style="{StaticResource SliderLabel}" Text="Мертва зона"/>
                                         <TextBlock x:Name="LblCursorDeadzone" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorDeadzone" Minimum="0" Maximum="8" ValueChanged="PointerSlider_Changed"/>
-
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Style="{StaticResource SliderLabel}" Text="Поріг повільного руху"/>
                                         <TextBlock x:Name="LblCursorSlowVelocity" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorSlowVelocity" Minimum="20" Maximum="300" ValueChanged="PointerSlider_Changed"/>
-
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Style="{StaticResource SliderLabel}" Text="Поріг швидкого руху"/>
                                         <TextBlock x:Name="LblCursorFastVelocity" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorFastVelocity" Minimum="200" Maximum="2000" ValueChanged="PointerSlider_Changed"/>
-                                </StackPanel>
-                            </GroupBox>
-
-                            <GroupBox>
-                                <GroupBox.Header>
-                                    <StackPanel>
-                                        <TextBlock Text="Force Tap (сильний дотик)" Style="{StaticResource SectionTitle}"/>
-                                        <TextBlock Text="FORCE TAP · поріг тиску" Style="{StaticResource SectionCaption}"/>
-                                    </StackPanel>
-                                </GroupBox.Header>
-                                <StackPanel>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Style="{StaticResource SliderLabel}" Text="Сила натискання"/>
                                         <TextBlock x:Name="LblForceTapThreshold" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlForceTapThreshold" Minimum="200" Maximum="400" ValueChanged="PointerSlider_Changed"/>
-
-                                    <TextBlock Style="{StaticResource HintText}"
-                                               Text="Менше значення — легше спрацьовує (достатньо легшого натискання). Більше значення — потрібен сильніший тиск."/>
-                                </StackPanel>
-                            </GroupBox>
-
-                            <GroupBox>
-                                <GroupBox.Header>
+                                    <TextBlock Text="Дія при Force Tap" Style="{StaticResource SliderLabel}" Margin="0,10,0,6"/>
                                     <StackPanel>
-                                        <TextBlock Text="Дія при Force Tap" Style="{StaticResource SectionTitle}"/>
-                                        <TextBlock Text="ACTION" Style="{StaticResource SectionCaption}"/>
+                                        <RadioButton x:Name="RbActionContextMenu" Content="Контекстне меню" GroupName="ForceTapAction" Margin="0,4" Checked="PointerAction_Changed"/>
+                                        <RadioButton x:Name="RbActionMiddleClick" Content="Середня кнопка миші" GroupName="ForceTapAction" Margin="0,4" Checked="PointerAction_Changed"/>
+                                        <RadioButton x:Name="RbActionDoubleClick" Content="Подвійний клік" GroupName="ForceTapAction" Margin="0,4" Checked="PointerAction_Changed"/>
                                     </StackPanel>
-                                </GroupBox.Header>
-                                <StackPanel>
-                                    <RadioButton x:Name="RbActionContextMenu" GroupName="ForceTapAction"
-                                                 Content="Контекстне меню (правий клік)"
-                                                 Foreground="{StaticResource TextPrimaryBrush}"
-                                                 Margin="0,4" Checked="PointerAction_Changed"/>
-                                    <RadioButton x:Name="RbActionMiddleClick" GroupName="ForceTapAction"
-                                                 Content="Середня кнопка миші"
-                                                 Foreground="{StaticResource TextPrimaryBrush}"
-                                                 Margin="0,4" Checked="PointerAction_Changed"/>
-                                    <RadioButton x:Name="RbActionDoubleClick" GroupName="ForceTapAction"
-                                                 Content="Подвійний клік (відкриття)"
-                                                 Foreground="{StaticResource TextPrimaryBrush}"
-                                                 Margin="0,4" Checked="PointerAction_Changed"/>
-
-                                    <TextBlock Style="{StaticResource HintText}" Margin="0,8,0,0"
-                                               Text="Що саме виконується, коли сильний дотик відпускається — замість звичайного кліку."/>
+                                    <TextBlock Style="{StaticResource HintText}" Margin="0,8,0,0" Text="Slow/Fast Velocity визначають режим руху, а Force Tap — поріг сильного натискання."/>
                                 </StackPanel>
                             </GroupBox>
-
-
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
