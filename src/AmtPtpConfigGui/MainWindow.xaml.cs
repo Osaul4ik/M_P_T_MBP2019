@@ -511,7 +511,6 @@ namespace AmtPtpConfigGui
                 ForeColor = System.Drawing.Color.FromArgb(30, 34, 40),
                 Renderer = new ModernTrayRenderer(),
                 DropShadowEnabled = true,
-                ItemPadding = new System.Windows.Forms.Padding(10, 7, 10, 7),
                 ShowItemToolTips = true
             };
 
@@ -532,34 +531,36 @@ namespace AmtPtpConfigGui
             {
                 menu.Items.Clear();
 
-                var profilesItem = new Forms.ToolStripMenuItem("Profile") { ToolTipText = "Select active profile" };
+                var profilesItem = new Forms.ToolStripMenuItem("Profile") { ToolTipText = "Select active profile", Padding = new System.Windows.Forms.Padding(10, 7, 10, 7) };
                 for (int i = 0; i < _profiles.Count; i++)
                 {
                     int index = i;
                     var item = new Forms.ToolStripMenuItem(_profiles[i].Name)
                     {
                         Checked = i == _activeProfileIndex,
-                        CheckOnClick = false
+                        CheckOnClick = false,
+                        Padding = new System.Windows.Forms.Padding(10, 7, 10, 7)
                     };
                     item.Click += (_, _) => Dispatcher.BeginInvoke(new Action(() => ActivateProfileFromTray(index)));
                     profilesItem.DropDownItems.Add(item);
                 }
                 if (_profiles.Count == 0)
-                    profilesItem.DropDownItems.Add(new Forms.ToolStripMenuItem("No profiles") { Enabled = false });
+                    profilesItem.DropDownItems.Add(new Forms.ToolStripMenuItem("No profiles") { Enabled = false, Padding = new System.Windows.Forms.Padding(10, 7, 10, 7) });
 
                 var palmEdges = new Forms.ToolStripMenuItem("Palm rejection at edges")
                 {
-                    Checked = _appSettings.PalmEdgeRejectionEnabled
+                    Checked = _appSettings.PalmEdgeRejectionEnabled,
+                    Padding = new System.Windows.Forms.Padding(10, 7, 10, 7)
                 };
                 palmEdges.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePalmEdgesFromTray));
 
-                var open = new Forms.ToolStripMenuItem("Open application");
+                var open = new Forms.ToolStripMenuItem("Open application") { Padding = new System.Windows.Forms.Padding(10, 7, 10, 7) };
                 open.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ShowFromTray));
 
-                var settings = new Forms.ToolStripMenuItem("Settings");
+                var settings = new Forms.ToolStripMenuItem("Settings") { Padding = new System.Windows.Forms.Padding(10, 7, 10, 7) };
                 settings.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ShowAppSettingsDialog));
 
-                var exit = new Forms.ToolStripMenuItem("Exit");
+                var exit = new Forms.ToolStripMenuItem("Exit") { Padding = new System.Windows.Forms.Padding(10, 7, 10, 7) };
                 exit.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ExitApplication));
 
                 menu.Items.Add(profilesItem);
@@ -1082,7 +1083,7 @@ namespace AmtPtpConfigGui
                 if (LiveCoordPanel != null) LiveCoordPanel.Visibility = Visibility.Collapsed;
                 if (LiveCornerText != null) LiveCornerText.Visibility = Visibility.Collapsed;
                 LiveCoordText.Text = "Live: coordinates —";
-                LiveCornerText.Text = "Corners: TL 0 | TR 0 | BL 0 | BR 0";
+                if (LiveCornerText != null) LiveCornerText.Text = "Corners: TL 0 | TR 0 | BL 0 | BR 0";
                 SetLiveDot(active: null); // error - solid red, no pulse
                 HideAllLiveOverlayElements();
                 return;
@@ -1108,7 +1109,7 @@ namespace AmtPtpConfigGui
                 if (LiveCoordPanel != null) LiveCoordPanel.Visibility = Visibility.Collapsed;
                 if (LiveCornerText != null) LiveCornerText.Visibility = Visibility.Collapsed;
                 LiveCoordText.Text = "Live: coordinates —";
-                LiveCornerText.Text = "Corners: TL 0 | TR 0 | BL 0 | BR 0";
+                if (LiveCornerText != null) LiveCornerText.Text = "Corners: TL 0 | TR 0 | BL 0 | BR 0";
                 SetLiveDot(active: false);
                 HideAllLiveOverlayElements();
                 DrawPreview();
