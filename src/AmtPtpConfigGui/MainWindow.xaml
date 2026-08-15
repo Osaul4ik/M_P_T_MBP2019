@@ -971,7 +971,6 @@
                     <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <TextBlock x:Name="LiveCoordText" Text="Live: no active contacts"
                                    Style="{StaticResource TelemetryText}"
-                                   FontFamily="Consolas" FontSize="12"
                                    TextWrapping="NoWrap"/>
                     </ScrollViewer>
                 </Border>

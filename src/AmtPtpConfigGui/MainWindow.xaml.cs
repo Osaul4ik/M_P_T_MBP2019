@@ -2403,6 +2403,21 @@ namespace AmtPtpConfigGui
         [DllImport("user32.dll")]
         private static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool redraw);
 
+        // Corner radius is authored at 96 DPI and scaled to the strip's
+        // actual DPI so the corner reads the same size relative to the
+        // padding/font at 100%, 150%, 200% etc. A fixed pixel radius looked
+        // proportionally too small/flat on scaled displays, which is what
+        // read as "crooked" - the rounding didn't match the rest of the
+        // chrome (buttons, cards) that already scale with DPI via WPF.
+        private const int BaseRadiusAt96Dpi = 16;
+
+        // Corner radius used for each item's own selection/press highlight.
+        // Kept in sync with what ModernTrayRenderer draws so the highlight
+        // never shows square corners inside the rounded strip.
+        internal const int ItemHighlightRadius = 6;
+
+        private int CurrentRadius => Math.Max(4, (int)Math.Round(BaseRadiusAt96Dpi * DeviceDpi / 96.0));
+
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
@@ -2416,12 +2431,20 @@ namespace AmtPtpConfigGui
                 ApplyRoundedRegion();
         }
 
+        protected override void OnDpiChangedAfterParent(EventArgs e)
+        {
+            base.OnDpiChangedAfterParent(e);
+            if (IsHandleCreated)
+                ApplyRoundedRegion();
+        }
+
         private void ApplyRoundedRegion()
         {
             if (!IsHandleCreated || Width <= 0 || Height <= 0)
                 return;
 
-            IntPtr region = CreateRoundRectRgn(0, 0, Width + 1, Height + 1, 16, 16);
+            int radius = CurrentRadius;
+            IntPtr region = CreateRoundRectRgn(0, 0, Width + 1, Height + 1, radius, radius);
             if (region != IntPtr.Zero)
                 SetWindowRgn(Handle, region, true);
         }
@@ -2466,6 +2489,38 @@ namespace AmtPtpConfigGui
         {
             RoundedEdges = true;
             _accent = ThemeManager.TrayColors(themeId).Accent;
+        }
+
+        // The base renderer paints a flat, square-cornered rectangle for the
+        // hovered/pressed item. Inside RoundedContextMenuStrip that square
+        // block visibly clashes with the strip's rounded outline - most
+        // obviously on the first/last item, where the highlight's sharp
+        // corner sits right next to the strip's rounded corner. Draw the
+        // highlight as a rounded rect instead (Windows 11 menu style) so it
+        // matches the container everywhere, not just at the edges.
+        protected override void OnRenderMenuItemBackground(Forms.ToolStripItemRenderEventArgs e)
+        {
+            if (e.Item is not Forms.ToolStripMenuItem { Enabled: true } item || (!item.Selected && !item.Pressed))
+            {
+                base.OnRenderMenuItemBackground(e);
+                return;
+            }
+
+            var bounds = new System.Drawing.Rectangle(System.Drawing.Point.Empty, e.Item.Size);
+            bounds.Inflate(-4, -1);
+            if (bounds.Width <= 0 || bounds.Height <= 0)
+                return;
+
+            var g = e.Graphics;
+            var oldHint = g.SmoothingMode;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+
+            var colors = (Colors)ColorTable;
+            using (var brush = new System.Drawing.SolidBrush(colors.Selected))
+            using (var path = RoundedRect(bounds, RoundedContextMenuStrip.ItemHighlightRadius))
+                g.FillPath(brush, path);
+
+            g.SmoothingMode = oldHint;
         }
 
         // ShowCheckMargin reserves space for the checkmark, but the default
