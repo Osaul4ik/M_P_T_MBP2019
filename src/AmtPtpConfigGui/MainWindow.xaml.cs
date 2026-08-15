@@ -752,7 +752,7 @@ namespace AmtPtpConfigGui
                 Text = text,
                 AutoSize = false,
                 Dock = Forms.DockStyle.Fill,
-                TextAlign = System.Drawing.ContentAlignment.MiddleCenter,
+                TextAlign = System.Drawing.ContentAlignment.MiddleLeft,
                 Font = font,
                 ForeColor = trayColors.Fore,
                 // A "transparent" Label hosted inside a ToolStripControlHost
@@ -766,7 +766,8 @@ namespace AmtPtpConfigGui
                 // the label with the strip's actual background color
                 // avoids depending on that transparency support at all.
                 BackColor = trayColors.Back,
-                AutoEllipsis = true
+                AutoEllipsis = true,
+                Padding = new System.Windows.Forms.Padding(34, 0, 10, 0)
             };
 
             // ToolStripDropDownMenu stretches every item to the strip's
@@ -894,6 +895,18 @@ namespace AmtPtpConfigGui
                     };
                     smallReject.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ToggleSmallContactRejectionFromTray));
                     menu.Items.Add(smallReject);
+
+                    if (smallContactRejectionOn)
+                    {
+                        var requireM = new Forms.ToolStripMenuItem("Require M:50/30 continuously")
+                        {
+                            Checked = pointerCfg.SmallContactRejectionStrict != 0,
+                            Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
+                            ToolTipText = "Ignore a non-Force-Touch contact on every frame unless Major is at least 50 and Minor is at least 30."
+                        };
+                        requireM.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ToggleSmallContactStrictFromTray));
+                        menu.Items.Add(requireM);
+                    }
                 }
 
                 // Force Touch controls now live directly in the main menu instead of
@@ -999,6 +1012,13 @@ namespace AmtPtpConfigGui
         private void ToggleSmallContactRejectionFromTray()
         {
             ChkSmallContactRejection.IsChecked = ChkSmallContactRejection.IsChecked != true;
+            Save_Click(this, new RoutedEventArgs());
+            RefreshTrayMenu();
+        }
+
+        private void ToggleSmallContactStrictFromTray()
+        {
+            ChkSmallContactRejectionStrict.IsChecked = ChkSmallContactRejectionStrict.IsChecked != true;
             Save_Click(this, new RoutedEventArgs());
             RefreshTrayMenu();
         }
@@ -2759,18 +2779,11 @@ namespace AmtPtpConfigGui
             {
                 ShowImageMargin = false,
                 ShowCheckMargin = true,
-                // Keep the flyout visually attached to the parent item.
-                // WinForms ToolStripDropDown has no HorizontalOffset/VerticalOffset
-                // properties; zero margin removes the extra separation that can
-                // otherwise be introduced by the custom rounded popup chrome.
-                Margin = new System.Windows.Forms.Padding(0),
                 Padding = new System.Windows.Forms.Padding(2, 4, 2, 4)
             };
             SyncChrome(dropDown);
-            // The owning strip's theme/renderer can change after this
-            // flyout is created (theme switch, refresh), so re-sync every
-            // time it's about to open rather than only once at creation.
             dropDown.Opening += (_, _) => SyncChrome(dropDown);
+            dropDown.Opened += (_, _) => PositionDropDown(dropDown);
             return dropDown;
         }
 
@@ -2782,6 +2795,16 @@ namespace AmtPtpConfigGui
             dropDown.BackColor = Owner.BackColor;
             dropDown.ForeColor = Owner.ForeColor;
             dropDown.Renderer = Owner.Renderer;
+        }
+
+        private void PositionDropDown(Forms.ToolStripDropDown dropDown)
+        {
+            if (Owner == null || !dropDown.IsHandleCreated)
+                return;
+
+            var screenPoint = Owner.PointToScreen(
+                new System.Drawing.Point(Bounds.Right - 1, Bounds.Top));
+            dropDown.Location = screenPoint;
         }
     }
 
@@ -2799,7 +2822,7 @@ namespace AmtPtpConfigGui
         // proportionally too small/flat on scaled displays, which is what
         // read as "crooked" - the rounding didn't match the rest of the
         // chrome (buttons, cards) that already scale with DPI via WPF.
-        private const int BaseRadiusAt96Dpi = 16;
+        private const int BaseRadiusAt96Dpi = 12;
 
         // Corner radius used for each item's own selection/press highlight.
         // Kept in sync with what ModernTrayRenderer draws so the highlight
@@ -2834,7 +2857,7 @@ namespace AmtPtpConfigGui
                 return;
 
             int radius = CurrentRadius;
-            IntPtr region = CreateRoundRectRgn(0, 0, Width + 1, Height + 1, radius, radius);
+            IntPtr region = CreateRoundRectRgn(1, 1, Math.Max(1, Width - 1), Math.Max(1, Height - 1), radius, radius);
             if (region != IntPtr.Zero)
                 SetWindowRgn(Handle, region, true);
         }
@@ -2927,14 +2950,16 @@ namespace AmtPtpConfigGui
             if (checkBounds.Width <= 0)
                 checkBounds = new System.Drawing.Rectangle(0, 0, 20, e.Item.Height);
 
-            // WinForms' check rectangle can be vertically biased because it is
-            // computed from the native menu metrics. Center the actual glyph
-            // against the full item row instead of the native rectangle's Y.
+            // Center the glyph on the full row and keep it close to the label.
             int size = Math.Min(14, Math.Max(8, e.Item.Height - 8));
+            const int gap = 6;
+            int rightEdge = e.TextRectangle.X - gap;
+            int x = Math.Max(checkBounds.X, rightEdge - size);
             var box = new System.Drawing.Rectangle(
-                checkBounds.X + Math.Max(0, (checkBounds.Width - size) / 2),
+                x,
                 Math.Max(0, (e.Item.Height - size) / 2),
-                size, size);
+                size,
+                size);
 
             using var accentBrush = new System.Drawing.SolidBrush(_accent);
             using var pen = new System.Drawing.Pen(System.Drawing.Color.White, 1.6f)
