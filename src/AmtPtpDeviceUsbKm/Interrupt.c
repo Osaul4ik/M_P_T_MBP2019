@@ -274,6 +274,20 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     AmtReportCheckInvariants(&Report);
 
+    // BUG FIX: forceTouchClick only fires the release-frame edge from
+    // PTPCore_ProcessFrame - it does not by itself arm the delivery state
+    // machine. Without this call ForceTouchDeliveryState never leaves IDLE,
+    // so the mouse-delivery block below always computes edgeButtonState ==
+    // FALSE and Force Click silently never sends a button pulse. Still
+    // under StateLock, matching every other ForceTouchDeliveryState/
+    // PendingForceTouchClickCount mutation in this file.
+    if (forceTouchClick) {
+        UCHAR clickCount =
+            (pCtx->PointerConfig.ForceTapAction == AMT_POINTER_ACTION_DOUBLE_CLICK)
+                ? 2 : 1;
+        AmtForceTouchClickEnqueue(pCtx, clickCount);
+    }
+
     // Capture force-touch delivery state while StateLock is held.
     BOOLEAN needMouseDelivery =
         forceTouchClick ||
