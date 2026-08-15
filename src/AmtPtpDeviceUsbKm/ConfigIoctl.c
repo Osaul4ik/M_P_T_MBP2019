@@ -11,6 +11,12 @@
 #include "Driver.h"
 #include "ConfigIoctl.h"
 
+#ifdef ALLOC_PRAGMA
+#pragma alloc_text (PAGE, AmtPalmConfigLoadFromRegistry)
+#pragma alloc_text (PAGE, AmtPointerConfigLoadFromRegistry)
+#pragma alloc_text (PAGE, AmtScrollConfigLoadFromRegistry)
+#endif
+
 // ----------------------------------------------------------------------------
 // Clamp helper - shared by the SET IOCTL and the registry loader, so a
 // corrupt registry value can never do anything worse than "silently
@@ -497,6 +503,16 @@ AmtPtpGetPadGeometry(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     status = WdfRequestRetrieveOutputBuffer(
         Request, sizeof(AMT_PAD_GEOMETRY), (PVOID*)&pOutGeometry, &outLen);
     if (!NT_SUCCESS(status)) {
+        goto exit;
+    }
+
+    // WdfRequestRetrieveOutputBuffer already enforced outLen >=
+    // sizeof(AMT_PAD_GEOMETRY) at runtime, but that relationship isn't
+    // visible to static analysis from outLen alone - check it explicitly
+    // so PREfast can see the RtlZeroMemory/writes below are in-bounds
+    // (fixes C6386 buffer-overrun warning on pOutGeometry).
+    if (outLen < sizeof(AMT_PAD_GEOMETRY)) {
+        status = STATUS_BUFFER_TOO_SMALL;
         goto exit;
     }
 

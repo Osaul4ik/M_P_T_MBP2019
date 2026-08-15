@@ -323,8 +323,13 @@ NTSTATUS AmtPtpSetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
 NTSTATUS AmtPtpResetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+_IRQL_requires_max_(DISPATCH_LEVEL)
 NTSTATUS AmtPtpGetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
 NTSTATUS AmtPtpSetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
 NTSTATUS AmtPtpResetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
 
 // Best-effort registry persistence under the device's driver-software key
@@ -358,7 +363,10 @@ _IRQL_requires_max_(DISPATCH_LEVEL)
 VOID AmtPointerConfigSaveToRegistry(_In_ WDFDEVICE Device, _In_ const AMT_POINTER_CONFIG* Config);
 
 VOID AmtPointerConfigClamp(_Inout_ PAMT_POINTER_CONFIG Config);
+
+_IRQL_requires_(PASSIVE_LEVEL)
 VOID AmtScrollConfigLoadFromRegistry(_In_ WDFDEVICE Device, _Inout_ PAMT_SCROLL_CONFIG Config);
+
 VOID AmtScrollConfigSaveToRegistry(_In_ WDFDEVICE Device, _In_ const AMT_SCROLL_CONFIG* Config);
 VOID AmtScrollConfigClamp(_Inout_ PAMT_SCROLL_CONFIG Config);
 
