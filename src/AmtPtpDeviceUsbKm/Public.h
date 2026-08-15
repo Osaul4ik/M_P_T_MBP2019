@@ -7,25 +7,8 @@
 
 #pragma once
 
-// Device interface GUID for app communication.
-
-DEFINE_GUID (GUID_DEVINTERFACE_AmtPtpDeviceUsbKm,
-    0x4aa332cc,0x5777,0x4afd,0xaa,0x4e,0x95,0x38,0x73,0x30,0x61,0x2a);
-// {4aa332cc-5777-4afd-aa4e-95387330612a}
-
 // ============================================================================
 // Palm-rejection runtime configuration - shared wire format.
-//
-// This mirrors (and, at runtime, replaces) the tuning constants that used
-// to be hardcoded #defines in Palm.c. A user-mode control panel
-// (AmtPtpConfigGui) can read/write this struct live via the custom IOCTLs
-// below, the same way Elan's/Synaptics' OEM control panels expose palm
-// rejection / edge-zone sliders.
-//
-// All fields are plain ULONG so the struct is trivially blittable from C#
-// (Marshal.SizeOf / [StructLayout(LayoutKind.Sequential)]) with no padding
-// surprises - every field is the same size, so no compiler will insert
-// alignment padding between them on either x86 or x64.
 // ============================================================================
 
 typedef struct _AMT_PALM_CONFIG
@@ -82,12 +65,6 @@ typedef struct _AMT_PALM_CONFIG
 
 // ============================================================================
 // Pointer runtime configuration - Force Tap (force touch) tuning.
-//
-// Mirrors (and, at runtime, replaces) FORCE_TOUCH_PRESSURE_THRESHOLD, which
-// used to be a hardcoded #define in include/hid/HidCommon.h, plus the
-// synthetic action a qualifying press fires on release - previously always
-// a hardcoded right-click (Button2) in Interrupt.c. Same wire-format
-// conventions as AMT_PALM_CONFIG above (plain ULONGs, blittable from C#).
 // ============================================================================
 
 typedef struct _AMT_POINTER_CONFIG
@@ -166,11 +143,6 @@ typedef struct _AMT_POINTER_CONFIG
 
 // ============================================================================
 // Live touch monitor
-//
-// Live monitoring is explicitly opt-in. When LiveEnabled == FALSE the
-// interrupt hot path does not build/copy a live snapshot. The GUI enables
-// it with IOCTL_AMT_PTP_SET_LIVE_ENABLED and polls the latest snapshot with
-// IOCTL_AMT_PTP_GET_LIVE_FRAME.
 // ============================================================================
 
 #define AMT_LIVE_FRAME_VERSION 3
@@ -213,12 +185,6 @@ typedef struct _AMT_LIVE_FRAME
 
 // ============================================================================
 // Custom IOCTLs for AmtPtpConfigGui <-> driver communication.
-//
-// FILE_DEVICE_UNKNOWN + METHOD_BUFFERED + FILE_ANY_ACCESS: standard,
-// conservative choice for a small buffered get/set pair - no direct
-// pointers cross the user/kernel boundary, and any authenticated user can
-// open the device interface (matches how the rest of this driver's HID
-// surface is exposed).
 // ============================================================================
 
 #define AMT_PTP_IOCTL_INDEX 0x900
