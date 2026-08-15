@@ -725,23 +725,49 @@ namespace AmtPtpConfigGui
         // read as off-center rather than a centered title.
         private Forms.ToolStripItem BuildTrayHeaderItem(string text, (System.Drawing.Color Back, System.Drawing.Color Fore, System.Drawing.Color Selected, System.Drawing.Color Border, System.Drawing.Color Accent) trayColors)
         {
+            var font = ResolveTrayFont(9F, System.Drawing.FontStyle.Bold);
             var label = new Forms.Label
             {
                 Text = text,
                 AutoSize = false,
                 Dock = Forms.DockStyle.Fill,
                 TextAlign = System.Drawing.ContentAlignment.MiddleCenter,
-                Font = ResolveTrayFont(9F, System.Drawing.FontStyle.Bold),
+                Font = font,
                 ForeColor = trayColors.Fore,
-                BackColor = System.Drawing.Color.Transparent
+                // A "transparent" Label hosted inside a ToolStripControlHost
+                // doesn't reliably paint the strip's real (theme-colored)
+                // background - in practice it falls back to an opaque
+                // system-default control face. On the light theme that
+                // fallback is pale enough to be unnoticed; on the dark
+                // theme it renders as a near-white box, and the equally
+                // near-white theme text color painted on top of it is what
+                // made the title unreadable ("nothing visible"). Painting
+                // the label with the strip's actual background color
+                // avoids depending on that transparency support at all.
+                BackColor = trayColors.Back,
+                AutoEllipsis = true
             };
+
+            // ToolStripDropDownMenu stretches every item to the strip's
+            // final width, but that stretch happens *after* the Label has
+            // already decided how to lay out its text at its initial
+            // preferred size. Longer titles like "Wellspring Control
+            // Center" don't fit the small default width a fresh
+            // ToolStripControlHost starts with, so the Label wraps onto a
+            // second line before the stretch ever happens - and the fixed,
+            // single-line host height then clips that second line.
+            // Measuring the text up front and sizing the host to it avoids
+            // that intermediate wrap; AutoEllipsis above is just a safety
+            // net if a future theme/DPI combination still runs short.
+            var textSize = Forms.TextRenderer.MeasureText(text, font);
+            int width = textSize.Width + 40;
 
             var host = new Forms.ToolStripControlHost(label)
             {
                 AutoSize = false,
                 Margin = System.Windows.Forms.Padding.Empty,
                 Padding = System.Windows.Forms.Padding.Empty,
-                Height = label.Font.Height + 16
+                Size = new System.Drawing.Size(width, font.Height + 16)
             };
             return host;
         }
