@@ -24,7 +24,6 @@ namespace AmtPtpConfigGui
         private static readonly string FilePath = Path.Combine(DirectoryPath, "profiles.json");
         private static readonly string TempFilePath = FilePath + ".tmp";
         private static readonly string BackupFilePath = FilePath + ".bak";
-        private static readonly string CorruptBackupFilePath = FilePath + ".corrupt";
         private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -159,6 +158,14 @@ namespace AmtPtpConfigGui
                     {
                         old.ForceTouchEnabled = defaults.ForceTouchEnabled;
                         old.RequirePressureToActivate = defaults.RequirePressureToActivate;
+                    }
+
+                    // Version 4 → 5: add non-Force-Touch small-contact
+                    // rejection. Preserve existing v4 tuning while adopting
+                    // the factory behavior for the new field.
+                    if (p.Pointer.StructVersion < 5)
+                    {
+                        old.SmallContactRejectionEnabled = defaults.SmallContactRejectionEnabled;
                     }
 
                     if (p.Pointer.StructVersion < 3)

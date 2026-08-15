@@ -118,7 +118,6 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
     }
 
     WdfDeviceInitSetExclusive(controlInit, FALSE);
-    WdfDeviceInitSetExecutionLevel(controlInit, WdfExecutionLevelPassive);
 
     // Wire up EvtFileClose so a handle closing for ANY reason - including
     // the GUI process dying without running its own cleanup - is caught by
@@ -146,6 +145,7 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
         &controlAttributes,
         AMT_CONFIG_CONTROL_CONTEXT);
     controlAttributes.EvtCleanupCallback = AmtPtpConfigControlEvtConfigControlCleanup;
+    controlAttributes.ExecutionLevel = WdfExecutionLevelPassive;
 
     status = WdfDeviceCreate(
         &controlInit,
@@ -428,9 +428,6 @@ AmtPtpEvtDeviceD0Entry(
     pDeviceContext->PrevButtonClicked    = FALSE;
     pDeviceContext->ForceTouchAnchorValid = FALSE;
     pDeviceContext->ForceTouchDragLockout = FALSE;
-    RtlZeroMemory(
-        pDeviceContext->SmallContactRejectPassed,
-        sizeof(pDeviceContext->SmallContactRejectPassed));
     // Drop pending/in-flight force-touch clicks from the previous power
     // session - nothing was delivered to a live HID client across a D0
     // transition, so there's no in-flight UP to worry about orphaning.

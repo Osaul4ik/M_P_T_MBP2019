@@ -232,52 +232,12 @@ PTPCore_ProcessFrame(
     OutResult->LargePalmBlanked = FALSE;
 
     // Build candidates (palm + tip-debounce).
-    // On non-Force-Touch devices optionally suppress tiny contacts until they
-    // reach the admission threshold. Once a slot crosses Major >= 100 OR
-    // Minor >= 80, the slot stays admitted for the rest of that contact even
-    // if its size later falls back below the threshold.
-    RAW_FRAME filteredRaw = *RawFrame;
-    if (!pCtx->SupportsForceTouch && pCtx->PointerConfig.SmallContactRejectionEnabled)
-    {
-        BOOLEAN slotSeen[PTP_MAX_CONTACT_POINTS] = { 0 };
-        UCHAR writeCount = 0;
-
-        for (UCHAR i = 0; i < RawFrame->ContactCount; i++)
-        {
-            const RAW_CONTACT* raw = &RawFrame->Contacts[i];
-            USHORT slot = raw->SlotIndex;
-            BOOLEAN admit = TRUE;
-
-            if (slot < PTP_MAX_CONTACT_POINTS)
-            {
-                slotSeen[slot] = TRUE;
-                if (!pCtx->SmallContactRejectPassed[slot])
-                {
-                    if (raw->Major >= 100 || raw->Minor >= 80)
-                        pCtx->SmallContactRejectPassed[slot] = TRUE;
-                    else
-                        admit = FALSE;
-                }
-            }
-
-            if (admit)
-                filteredRaw.Contacts[writeCount++] = *raw;
-        }
-
-        filteredRaw.ContactCount = writeCount;
-
-        for (UCHAR slot = 0; slot < PTP_MAX_CONTACT_POINTS; slot++)
-        {
-            if (!slotSeen[slot])
-                pCtx->SmallContactRejectPassed[slot] = FALSE;
-        }
-    }
-    else
-    {
-        RtlZeroMemory(
-            pCtx->SmallContactRejectPassed,
-            sizeof(pCtx->SmallContactRejectPassed));
-    }
+    // Small-contact rejection follows the same admission model as
+    // RequirePressureToActivate on Force-Touch devices: it is checked only
+    // when a brand-new contact is about to be born. Once a candidate has
+    // correspondence with an existing active contact, it is allowed through
+    // regardless of later size changes. This avoids a separate raw-frame
+    // latch and relies on the existing contact-pool lifecycle.
 
     MATCH_CANDIDATE_SET candidates;
     BOOLEAN              largePalm = FALSE;
@@ -328,14 +288,27 @@ PTPCore_ProcessFrame(
     for (UCHAR ci = 0; ci < candidates.Count; ci++) {
         const MATCH_CANDIDATE* cand = &candidates.Candidates[ci];
 
+        BOOLEAN isNewContact =
+            (matchResult.CorrespondingPoolIndex[ci] == MATCH_NO_CORRESPONDENCE);
+
         BOOLEAN pressureGatedBirth =
-            (matchResult.CorrespondingPoolIndex[ci] == MATCH_NO_CORRESPONDENCE) &&
+            isNewContact &&
             pCtx->SupportsForceTouch &&
             pCtx->PointerConfig.ForceTouchEnabled &&
             pCtx->PointerConfig.RequirePressureToActivate &&
             cand->Pressure == 0;
 
-        if (!pressureGatedBirth && !cand->PalmLocal && !cand->Unconfirmed)
+        BOOLEAN smallContactGatedBirth =
+            isNewContact &&
+            !pCtx->SupportsForceTouch &&
+            pCtx->PointerConfig.SmallContactRejectionEnabled &&
+            cand->Major < 100 &&
+            cand->Minor < 80;
+
+        if (!pressureGatedBirth &&
+            !smallContactGatedBirth &&
+            !cand->PalmLocal &&
+            !cand->Unconfirmed)
             aliveCount++;
 
         if (!cand->PalmLocal)
@@ -477,15 +450,23 @@ PTPCore_ProcessFrame(
         if (matchResult.CorrespondingPoolIndex[ci] != MATCH_NO_CORRESPONDENCE)
             continue; // handled in Phase C
 
-        // On force-touch-capable devices, optionally require positive pressure
-        // before creating a brand-new active contact. This suppresses the
-        // common phantom-contact state where a fingertip is hovering just
-        // above the pad and the report briefly contains a zero-pressure
-        // contact. Existing contacts are intentionally NOT gated here.
-        if (pCtx->SupportsForceTouch &&
-            pCtx->PointerConfig.ForceTouchEnabled &&
-            pCtx->PointerConfig.RequirePressureToActivate &&
-            cand->Pressure == 0)
+        // Admission gates apply ONLY when creating a brand-new contact.
+        // Once a candidate has corresponded to an existing active contact,
+        // Phase C updates/reports it without re-applying these gates.
+        //
+        // Force-Touch devices: require positive pressure when configured.
+        // Non-Force-Touch devices: require Major >= 100 OR Minor >= 80 when
+        // Small Contact Rejection is enabled.
+        if (pCtx->SupportsForceTouch) {
+            if (pCtx->PointerConfig.ForceTouchEnabled &&
+                pCtx->PointerConfig.RequirePressureToActivate &&
+                cand->Pressure == 0)
+            {
+                continue;
+            }
+        } else if (pCtx->PointerConfig.SmallContactRejectionEnabled &&
+                   cand->Major < 100 &&
+                   cand->Minor < 80)
         {
             continue;
         }
