@@ -594,9 +594,13 @@
                                       StrokeLineJoin="Round" Opacity="0"/>
                             </Border>
                             <ContentPresenter Grid.Column="1"
-                                               TextElement.FontSize="{TemplateBinding FontSize}"
-                                               TextBlock.TextWrapping="Wrap"
-                                               VerticalAlignment="Center"/>
+                                               VerticalAlignment="Center">
+                                <ContentPresenter.Resources>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="TextWrapping" Value="Wrap"/>
+                                    </Style>
+                                </ContentPresenter.Resources>
+                            </ContentPresenter>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
