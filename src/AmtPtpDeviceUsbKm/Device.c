@@ -118,7 +118,6 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
     }
 
     WdfDeviceInitSetExclusive(controlInit, FALSE);
-    WdfDeviceInitSetExecutionLevel(controlInit, WdfExecutionLevelPassive);
 
     // Wire up EvtFileClose so a handle closing for ANY reason - including
     // the GUI process dying without running its own cleanup - is caught by
@@ -146,6 +145,7 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
         &controlAttributes,
         AMT_CONFIG_CONTROL_CONTEXT);
     controlAttributes.EvtCleanupCallback = AmtPtpConfigControlEvtConfigControlCleanup;
+    controlAttributes.ExecutionLevel = WdfExecutionLevelPassive;
 
     status = WdfDeviceCreate(
         &controlInit,
