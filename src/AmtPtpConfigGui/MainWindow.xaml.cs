@@ -345,14 +345,14 @@ namespace AmtPtpConfigGui
                 IsChecked = _appSettings.CloseToTray,
                 Margin = new Thickness(0, 0, 0, 10)
             };
-            closeToTray.SetResourceReference(Control.ForegroundProperty, "TextPrimaryBrush");
+            closeToTray.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TextPrimaryBrush");
             var startup = new CheckBox
             {
                 Content = "Start the GUI with Windows",
                 IsChecked = _appSettings.StartWithWindows,
                 Margin = new Thickness(0, 0, 0, 10)
             };
-            startup.SetResourceReference(Control.ForegroundProperty, "TextPrimaryBrush");
+            startup.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TextPrimaryBrush");
             behaviorPanel.Children.Add(closeToTray);
             behaviorPanel.Children.Add(startup);
             content.Children.Add(behaviorCard);
