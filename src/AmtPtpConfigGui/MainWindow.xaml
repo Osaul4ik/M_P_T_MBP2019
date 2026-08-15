@@ -872,7 +872,7 @@
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Border Background="{DynamicResource ControlFillBrush}"
                             BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
-                            CornerRadius="7" Padding="10,7" MinWidth="132" Height="34">
+                            CornerRadius="7" Padding="10,7" MinWidth="132" Height="36">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="{DynamicResource StatusOfflineBrush}" VerticalAlignment="Center"/>
                             <TextBlock x:Name="StatusText" Margin="9,0,0,0" VerticalAlignment="Center"
@@ -882,7 +882,7 @@
                     <Border Margin="8,0,0,0"
                             Background="{DynamicResource CardBrush}"
                             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
-                            CornerRadius="7" Padding="10,7" MinWidth="250" MaxWidth="460" Height="34">
+                            CornerRadius="7" Padding="10,7" MinWidth="250" MaxWidth="460" Height="36">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="Device" Style="{StaticResource SectionCaption}" Margin="0,0,8,0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="DeviceModelText" VerticalAlignment="Center"
@@ -893,7 +893,7 @@
                                        ToolTip="Detected Mac/trackpad model"/>
                         </StackPanel>
                     </Border>
-                    <Button x:Name="BtnAppSettings" Content="⚙" Width="40" Height="34" MinWidth="40" Margin="8,0,0,0"
+                    <Button x:Name="BtnAppSettings" Content="⚙" Width="40" Height="36" MinWidth="40" Margin="8,0,0,0"
                             Padding="0" Background="{DynamicResource ControlFillBrush}"
                             BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
                             Foreground="{DynamicResource TextPrimaryBrush}"
@@ -918,10 +918,10 @@
                 <ComboBox x:Name="ProfileCombo" Grid.Column="1"
                           SelectionChanged="ProfileCombo_SelectionChanged"/>
                 <WrapPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
-                    <Button Content="＋" Width="38" Height="34" Padding="0" Margin="0,0,6,0"
+                    <Button Content="＋" Width="38" Height="36" Padding="0" Margin="0,0,6,0"
                             Click="NewProfile_Click" ToolTip="New profile"/>
-                    <Button Content="Rename" MinWidth="128" Height="34" Margin="0,0,6,0" Click="RenameProfile_Click"/>
-                    <Button Content="Delete" MinWidth="90" Height="34" Click="DeleteProfile_Click"/>
+                    <Button Content="Rename" MinWidth="128" Height="36" Margin="0,0,6,0" Click="RenameProfile_Click"/>
+                    <Button Content="Delete" MinWidth="90" Height="36" Click="DeleteProfile_Click"/>
                     <CheckBox x:Name="ChkProMode" Content="Pro Mode" Style="{StaticResource AndroidSwitch}"
                               Margin="14,0,0,0" VerticalAlignment="Center" Checked="ProMode_Changed" Unchecked="ProMode_Changed"/>
                 </WrapPanel>
@@ -956,8 +956,19 @@
                     </StackPanel>
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Button Content="Export log .txt" Height="34" Click="SaveErrors_Click"/>
-                        <Button Height="34" Click="Reconnect_Click">
+                        <Button Content="Export log .txt" Height="36" Click="SaveErrors_Click"/>
+                        <!-- Expands/collapses the live touch-contact list below.
+                             Only meaningful (and only shown) while Live is on;
+                             starts collapsed every time Live is (re)enabled so
+                             the toolbar stays compact by default. -->
+                        <Button x:Name="BtnToggleLiveDetails" Width="36" Height="36" Padding="0"
+                                MinWidth="36" FontSize="11"
+                                HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                Visibility="Collapsed" Click="ToggleLiveDetails_Click"
+                                ToolTip="Show/hide live touch details">
+                            <TextBlock x:Name="BtnToggleLiveDetailsIcon" Text="&#x25BE;" FontSize="12" VerticalAlignment="Center"/>
+                        </Button>
+                        <Button Height="36" Click="Reconnect_Click">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="↻" FontSize="14" Margin="0,0,7,0" VerticalAlignment="Center"/>
                                 <TextBlock Text="Reconnect" VerticalAlignment="Center"/>
@@ -979,35 +990,30 @@
             </Grid>
         </Border>
 
-        <!-- ===================== Bottom action bar ===================== -->
-        <Border x:Name="BottomActionCard" DockPanel.Dock="Bottom" Style="{StaticResource Card}" Padding="18,14" Margin="0,14,0,0">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock x:Name="BottomStatusText" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text=""/>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="Reset to defaults" Style="{StaticResource SecondaryButton}" Click="ResetDefaults_Click" Width="150" Height="40" Margin="0,0,8,0"/>
-                    <Button Style="{StaticResource AccentButton}" Click="Save_Click" Width="150" Height="40" Margin="0">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="✓" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                            <TextBlock Text="Save" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
-            </Grid>
-        </Border>
-
-        <!-- ===================== Main content: settings (left, scrollable) + live preview (right) ===================== -->
+        <!-- ===================== Main content: settings (left, scrollable) + live preview & actions (right) =====================
+             The Save/Reset bar used to be a separate full-width DockPanel.Dock="Bottom"
+             strip, stretching under both the settings list and the touchpad
+             preview even though its buttons only ever sit at the strip's
+             right edge. It now lives inside this Grid as its own row, sized
+             to exactly the touchpad preview's column (Grid.Column="2") -
+             and the settings list (Grid.Column="0"), no longer needing to
+             leave headroom for a full-width footer beneath it, spans both
+             rows so it gets that reclaimed height instead. -->
         <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="400"/>
+                <ColumnDefinition Width="460"/>
                 <ColumnDefinition Width="16"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <TabControl Grid.Column="0" Style="{StaticResource SettingsTabControl}">
+            <!-- Spans both rows: with the Save/Reset bar narrowed to just the
+                 preview column's width, the settings list now extends down
+                 into the height that bar used to reserve underneath it. -->
+            <TabControl Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Style="{StaticResource SettingsTabControl}">
                 <TabItem Header="Palm" Style="{StaticResource SettingsTabItem}">
             <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
@@ -1323,7 +1329,7 @@
             </TabControl>
 
             <!-- ===================== Live visualization ===================== -->
-            <Border x:Name="PreviewCard" Grid.Column="2" Style="{StaticResource Card}" Margin="0">
+            <Border x:Name="PreviewCard" Grid.Column="2" Grid.Row="0" Style="{StaticResource Card}" Margin="0">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -1390,6 +1396,28 @@
                             <TextBlock x:Name="GeometrySourceText" Margin="20,0,0,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
                         </StackPanel>
                     </Border>
+                </Grid>
+            </Border>
+
+            <!-- ===================== Bottom action bar =====================
+                 Same width as the touchpad preview above it (same column),
+                 rather than stretching under the settings list too. -->
+            <Border x:Name="BottomActionCard" Grid.Column="2" Grid.Row="1" Style="{StaticResource Card}" Padding="18,14" Margin="0,14,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="BottomStatusText" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Text="" TextTrimming="CharacterEllipsis"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Content="Reset to defaults" Style="{StaticResource SecondaryButton}" Click="ResetDefaults_Click" Width="150" Height="40" Margin="0,0,8,0"/>
+                        <Button Style="{StaticResource AccentButton}" Click="Save_Click" Width="150" Height="40" Margin="0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="✓" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="Save" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
                 </Grid>
             </Border>
         </Grid>

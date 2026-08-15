@@ -131,6 +131,10 @@ namespace AmtPtpConfigGui
         private LiveFrame _latestLiveFrame;
         private bool _hasLatestLiveFrame;
         private bool _liveEnabled;
+        // Whether the detailed live touch-contact list (LiveCoordPanel) is
+        // expanded. Reset to false every time Live is (re)enabled so the
+        // panel always starts collapsed by default.
+        private bool _liveDetailsExpanded;
         private uint _lastLiveSequence;
         private int _liveTelemetryTickCounter;
         private bool _liveShadowsSuppressed;
@@ -268,12 +272,14 @@ namespace AmtPtpConfigGui
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             var heading = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
-            heading.Children.Add(new TextBlock
+            var headingTitle = new TextBlock
             {
                 Text = "Application settings",
                 FontSize = 20,
                 FontWeight = FontWeights.SemiBold
-            });
+            };
+            headingTitle.SetResourceReference(TextBlock.ForegroundProperty, "TextPrimaryBrush");
+            heading.Children.Add(headingTitle);
             var headingSub = new TextBlock
             {
                 Text = "Configure Wellspring Control Center behavior and appearance.",
@@ -305,12 +311,14 @@ namespace AmtPtpConfigGui
                     Margin = new Thickness(0, 0, 0, 12)
                 };
                 var panel = new StackPanel();
-                panel.Children.Add(new TextBlock
+                var titleText = new TextBlock
                 {
                     Text = title,
                     FontSize = 14,
                     FontWeight = FontWeights.SemiBold
-                });
+                };
+                titleText.SetResourceReference(TextBlock.ForegroundProperty, "TextPrimaryBrush");
+                panel.Children.Add(titleText);
                 var captionText = new TextBlock
                 {
                     Text = caption,
@@ -337,12 +345,14 @@ namespace AmtPtpConfigGui
                 IsChecked = _appSettings.CloseToTray,
                 Margin = new Thickness(0, 0, 0, 10)
             };
+            closeToTray.SetResourceReference(Control.ForegroundProperty, "TextPrimaryBrush");
             var startup = new CheckBox
             {
                 Content = "Start the GUI with Windows",
                 IsChecked = _appSettings.StartWithWindows,
                 Margin = new Thickness(0, 0, 0, 10)
             };
+            startup.SetResourceReference(Control.ForegroundProperty, "TextPrimaryBrush");
             behaviorPanel.Children.Add(closeToTray);
             behaviorPanel.Children.Add(startup);
             content.Children.Add(behaviorCard);
@@ -360,6 +370,7 @@ namespace AmtPtpConfigGui
                 FontWeight = FontWeights.SemiBold,
                 FontSize = 13
             };
+            themeName.SetResourceReference(TextBlock.ForegroundProperty, "TextPrimaryBrush");
             var themeSub = new TextBlock
             {
                 FontSize = 11,
@@ -818,7 +829,7 @@ namespace AmtPtpConfigGui
                 // subject to that MenuItem-specific text layout, so it can
                 // genuinely center across the whole row instead of just
                 // looking centered-ish inside the leftover space.
-                var header = BuildTrayHeaderItem("Wellspring Control Center", trayColors);
+                var header = BuildTrayHeaderItem("WellspringPTP", trayColors);
 
                 // Bold labels previously hardcoded "Segoe UI" while every
                 // other row went through ResolveTrayFont (which prefers
@@ -1523,6 +1534,7 @@ namespace AmtPtpConfigGui
                 LiveStatusText.Text = "Live: device not connected";
                 if (LiveCoordPanel != null) LiveCoordPanel.Visibility = Visibility.Collapsed;
                 if (LiveCornerText != null) LiveCornerText.Visibility = Visibility.Collapsed;
+                SetLiveDetailsToggleVisible(false);
                 SetLiveDot(active: false);
                 HideAllLiveOverlayElements();
                 return;
@@ -1539,6 +1551,7 @@ namespace AmtPtpConfigGui
                 if (LiveCornerText != null) LiveCornerText.Visibility = Visibility.Collapsed;
                 LiveCoordText.Text = "Live: coordinates —";
                 if (LiveCornerText != null) LiveCornerText.Text = "Corners: TL 0 | TR 0 | BL 0 | BR 0";
+                SetLiveDetailsToggleVisible(false);
                 SetLiveDot(active: null); // error - solid red, no pulse
                 HideAllLiveOverlayElements();
                 return;
@@ -1554,8 +1567,13 @@ namespace AmtPtpConfigGui
                 StartLivePolling();
                 _liveRenderTimer.Start();
                 LiveStatusText.Text = "Live: waiting… | corners: collecting";
-                if (LiveCoordPanel != null) LiveCoordPanel.Visibility = Visibility.Visible;
+                // The contact-detail list always starts collapsed when Live
+                // is (re)enabled; the toggle button next to "Export log
+                // .txt" is what reveals it.
+                _liveDetailsExpanded = false;
+                if (LiveCoordPanel != null) LiveCoordPanel.Visibility = Visibility.Collapsed;
                 if (LiveCornerText != null) LiveCornerText.Visibility = Visibility.Visible;
+                SetLiveDetailsToggleVisible(true);
                 SetLiveDot(active: true);
             }
             else
@@ -1567,10 +1585,33 @@ namespace AmtPtpConfigGui
                 if (LiveCornerText != null) LiveCornerText.Visibility = Visibility.Collapsed;
                 LiveCoordText.Text = "Live: coordinates —";
                 if (LiveCornerText != null) LiveCornerText.Text = "Corners: TL 0 | TR 0 | BL 0 | BR 0";
+                SetLiveDetailsToggleVisible(false);
                 SetLiveDot(active: false);
                 HideAllLiveOverlayElements();
                 DrawPreview();
             }
+        }
+
+        private void SetLiveDetailsToggleVisible(bool visible)
+        {
+            if (BtnToggleLiveDetails == null) return;
+            BtnToggleLiveDetails.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            if (!visible) UpdateLiveDetailsToggleIcon();
+        }
+
+        private void UpdateLiveDetailsToggleIcon()
+        {
+            if (BtnToggleLiveDetailsIcon == null) return;
+            // ▾ collapsed (click to expand) / ▴ expanded (click to collapse).
+            BtnToggleLiveDetailsIcon.Text = _liveDetailsExpanded ? "\u25B4" : "\u25BE";
+        }
+
+        private void ToggleLiveDetails_Click(object sender, RoutedEventArgs e)
+        {
+            _liveDetailsExpanded = !_liveDetailsExpanded;
+            if (LiveCoordPanel != null)
+                LiveCoordPanel.Visibility = _liveDetailsExpanded ? Visibility.Visible : Visibility.Collapsed;
+            UpdateLiveDetailsToggleIcon();
         }
 
         // Drives the small dot next to "Live: ..." in the header toolbar:
@@ -2500,7 +2541,14 @@ namespace AmtPtpConfigGui
             {
                 ShowImageMargin = false,
                 ShowCheckMargin = true,
-                Padding = new System.Windows.Forms.Padding(8, 8, 8, 8)
+                // A submenu (e.g. the Profile list) opens flush against the
+                // parent item's edge, so the same generous 8px padding used
+                // on the top-level strip (there, to keep content clear of
+                // the outer rounded corners) instead reads as a wide gap
+                // between the main menu and the flyout's actual content.
+                // A slimmer padding keeps the rounded corners clear without
+                // pushing the item list away from the parent menu.
+                Padding = new System.Windows.Forms.Padding(4, 6, 4, 6)
             };
             SyncChrome(dropDown);
             // The owning strip's theme/renderer can change after this
@@ -2688,6 +2736,28 @@ namespace AmtPtpConfigGui
             var p3 = new System.Drawing.PointF(box.X + box.Width * 0.80f, box.Y + box.Height * 0.28f);
             g.DrawLines(pen, new[] { p1, p2, p3 });
             g.SmoothingMode = oldHint;
+        }
+
+        // The base ToolStripProfessionalRenderer computes its text rectangle
+        // from the item's Height and Padding, but with ShowCheckMargin
+        // enabled and no image margin, that computed rectangle ends up
+        // shorter than the item's actual row height - so the default
+        // vertical-center flag centers the text within a rectangle that
+        // doesn't reach the row's true bottom edge, and the text reads as
+        // pinned toward the top instead of centered. Draw it ourselves
+        // against the full item height so it centers correctly every time.
+        protected override void OnRenderItemText(Forms.ToolStripItemTextRenderEventArgs e)
+        {
+            var bounds = new System.Drawing.Rectangle(
+                e.TextRectangle.X, 0,
+                e.TextRectangle.Width, e.Item.Height);
+
+            var flags = Forms.TextFormatFlags.Left
+                        | Forms.TextFormatFlags.VerticalCenter
+                        | Forms.TextFormatFlags.EndEllipsis
+                        | Forms.TextFormatFlags.SingleLine;
+
+            Forms.TextRenderer.DrawText(e.Graphics, e.Text, e.TextFont, bounds, e.TextColor, flags);
         }
 
         private static System.Drawing.Drawing2D.GraphicsPath RoundedRect(System.Drawing.Rectangle bounds, int radius)
