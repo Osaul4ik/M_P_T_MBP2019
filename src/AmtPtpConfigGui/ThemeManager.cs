@@ -148,14 +148,15 @@ namespace AmtPtpConfigGui
             }
         }
 
-        public static (System.Drawing.Color Back, System.Drawing.Color Fore, System.Drawing.Color Selected, System.Drawing.Color Border) TrayColors(string? id)
+        public static (System.Drawing.Color Back, System.Drawing.Color Fore, System.Drawing.Color Selected, System.Drawing.Color Border, System.Drawing.Color Accent) TrayColors(string? id)
         {
             var theme = Get(id);
             return (
                 DrawingColor(theme.Surface),
                 DrawingColor(theme.OnBg),
                 DrawingColor(theme.SurfaceHover),
-                DrawingColor(theme.Outline));
+                DrawingColor(theme.Outline),
+                DrawingColor(theme.Primary));
         }
 
         private static SolidColorBrush Brush(string hex) => Brush(hex, 0xFF);

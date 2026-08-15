@@ -690,7 +690,7 @@ namespace AmtPtpConfigGui
             var menu = new RoundedContextMenuStrip
             {
                 ShowImageMargin = false,
-                ShowCheckMargin = false,
+                ShowCheckMargin = true,
                 AutoClose = true,
                 Padding = new System.Windows.Forms.Padding(8, 8, 8, 8),
                 Font = new System.Drawing.Font("Segoe UI Variable Text, Segoe UI", 9F),
@@ -754,29 +754,36 @@ namespace AmtPtpConfigGui
                 palmEdges.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePalmEdgesFromTray));
 
                 var pointerCfg = ReadPointerConfigFromControls();
+                bool forceTouchOn = pointerCfg.ForceTouchEnabled != 0;
+
+                // Force Touch controls now live directly in the main menu instead of
+                // being buried inside a nested "Force Touch" submenu.
                 var forceTouch = new Forms.ToolStripMenuItem("Force Touch")
                 {
-                    Checked = pointerCfg.ForceTouchEnabled != 0,
-                    Padding = new System.Windows.Forms.Padding(10, 7, 10, 7)
+                    Checked = forceTouchOn,
+                    Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
+                    ToolTipText = "Enable Force Touch click arbitration on trackpads that support it."
                 };
                 forceTouch.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ToggleForceTouchFromTray));
 
                 var requirePressure = new Forms.ToolStripMenuItem("Require pressure to activate contact")
                 {
                     Checked = pointerCfg.RequirePressureToActivate != 0,
+                    Enabled = forceTouchOn,
                     Padding = new System.Windows.Forms.Padding(10, 7, 10, 7)
                 };
                 requirePressure.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureGateFromTray));
 
+                // Dedicated item that expands into the list of Force Tap button types.
                 var actionMenu = new Forms.ToolStripMenuItem("Force Tap action")
                 {
-                    Padding = new System.Windows.Forms.Padding(10, 7, 10, 7)
+                    Enabled = forceTouchOn,
+                    Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
+                    ToolTipText = "Choose what a hard press sends: context menu, middle click, or double click."
                 };
                 AddTrayActionItem(actionMenu, "Context menu", PointerConfig.ActionContextMenu, pointerCfg.ForceTapAction);
                 AddTrayActionItem(actionMenu, "Middle mouse button", PointerConfig.ActionMiddleClick, pointerCfg.ForceTapAction);
                 AddTrayActionItem(actionMenu, "Double click", PointerConfig.ActionDoubleClick, pointerCfg.ForceTapAction);
-                forceTouch.DropDownItems.Add(requirePressure);
-                forceTouch.DropDownItems.Add(actionMenu);
 
                 var open = new Forms.ToolStripMenuItem("Open application") { Padding = new System.Windows.Forms.Padding(10, 7, 10, 7) };
                 open.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ShowFromTray));
@@ -790,8 +797,11 @@ namespace AmtPtpConfigGui
                 menu.Items.Add(header);
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 menu.Items.Add(profilesItem);
+                menu.Items.Add(new Forms.ToolStripSeparator());
                 menu.Items.Add(palmEdges);
                 menu.Items.Add(forceTouch);
+                menu.Items.Add(requirePressure);
+                menu.Items.Add(actionMenu);
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 menu.Items.Add(open);
                 menu.Items.Add(settings);
@@ -2374,12 +2384,14 @@ namespace AmtPtpConfigGui
                 Fore = palette.Fore;
                 Selected = palette.Selected;
                 Border = palette.Border;
+                Accent = palette.Accent;
             }
 
             public System.Drawing.Color MenuBack { get; }
             public System.Drawing.Color Fore { get; }
             public System.Drawing.Color Selected { get; }
             public System.Drawing.Color Border { get; }
+            public System.Drawing.Color Accent { get; }
 
             public override System.Drawing.Color MenuBorder => Border;
             public override System.Drawing.Color MenuItemBorder => Border;
@@ -2394,9 +2406,65 @@ namespace AmtPtpConfigGui
             public override System.Drawing.Color SeparatorLight => MenuBack;
         }
 
+        private readonly System.Drawing.Color _accent;
+
         public ModernTrayRenderer(string themeId) : base(new Colors(themeId))
         {
             RoundedEdges = true;
+            _accent = ThemeManager.TrayColors(themeId).Accent;
+        }
+
+        // ShowCheckMargin reserves space for the checkmark, but the default
+        // renderer draws almost nothing visible against a flat, image-margin-less
+        // menu. Paint an explicit, theme-accented checkmark so toggled items
+        // (active profile, Force Touch, Require pressure, Force Tap action) are
+        // actually distinguishable from unchecked ones.
+        protected override void OnRenderItemCheck(Forms.ToolStripItemImageRenderEventArgs e)
+        {
+            if (e.Item is not Forms.ToolStripMenuItem { Checked: true })
+                return;
+
+            var bounds = e.ImageRectangle;
+            if (bounds.Width <= 0 || bounds.Height <= 0)
+                bounds = new System.Drawing.Rectangle(6, 2, 16, e.Item.Height - 4);
+
+            int size = Math.Min(bounds.Height, 16);
+            var box = new System.Drawing.Rectangle(
+                bounds.X + Math.Max(0, (bounds.Width - size) / 2),
+                bounds.Y + Math.Max(0, (bounds.Height - size) / 2),
+                size, size);
+
+            using var accentBrush = new System.Drawing.SolidBrush(_accent);
+            using var pen = new System.Drawing.Pen(System.Drawing.Color.White, 1.6f)
+            {
+                StartCap = System.Drawing.Drawing2D.LineCap.Round,
+                EndCap = System.Drawing.Drawing2D.LineCap.Round,
+                LineJoin = System.Drawing.Drawing2D.LineJoin.Round
+            };
+
+            var g = e.Graphics;
+            var oldHint = g.SmoothingMode;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (var path = RoundedRect(box, 4))
+                g.FillPath(accentBrush, path);
+
+            var p1 = new System.Drawing.PointF(box.X + box.Width * 0.22f, box.Y + box.Height * 0.55f);
+            var p2 = new System.Drawing.PointF(box.X + box.Width * 0.42f, box.Y + box.Height * 0.75f);
+            var p3 = new System.Drawing.PointF(box.X + box.Width * 0.80f, box.Y + box.Height * 0.28f);
+            g.DrawLines(pen, new[] { p1, p2, p3 });
+            g.SmoothingMode = oldHint;
+        }
+
+        private static System.Drawing.Drawing2D.GraphicsPath RoundedRect(System.Drawing.Rectangle bounds, int radius)
+        {
+            int d = radius * 2;
+            var path = new System.Drawing.Drawing2D.GraphicsPath();
+            path.AddArc(bounds.X, bounds.Y, d, d, 180, 90);
+            path.AddArc(bounds.Right - d, bounds.Y, d, d, 270, 90);
+            path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
+            path.AddArc(bounds.X, bounds.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
         }
     }
 
