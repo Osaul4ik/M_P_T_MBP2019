@@ -153,6 +153,11 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
         &controlDevice);
 
     if (!NT_SUCCESS(status)) {
+        // controlInit came from WdfControlDeviceInitAllocate (not from
+        // EvtDriverDeviceAdd), so on a failed WdfDeviceCreate the driver -
+        // not the framework - owns freeing it. Missing this leaked the
+        // WDFDEVICE_INIT structure on this error path.
+        WdfDeviceInitFree(controlInit);
         return status;
     }
 
