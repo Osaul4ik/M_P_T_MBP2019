@@ -114,6 +114,10 @@ namespace AmtPtpConfigGui
             resources["AccentBrushPressed"] = Brush(Darken(theme.PrimaryHover));
             resources["AccentContentBrush"] = ContrastBrush(theme.Primary);
             resources["AccentSoftBrush"] = Brush(theme.SurfaceHigh);
+            resources["AccentHaloBrush"] = Brush(theme.Primary, 0x14);
+            resources["StatusOnlineBrush"] = Brush(theme.SuccessText);
+            resources["StatusOfflineBrush"] = Brush(theme.ErrorText);
+            resources["StatusIdleBrush"] = Brush(theme.OnSurface, 0x99);
             resources["DangerBrush"] = Brush(theme.ErrorText);
             resources["DangerSoftBrush"] = Brush(theme.ErrorBg);
             resources["SuccessBrush"] = Brush(theme.SuccessText);
@@ -137,6 +141,8 @@ namespace AmtPtpConfigGui
                     "TextSecondaryBrush", "TextTertiaryBrush", "DividerBrush",
                     "ControlFillBrush", "ControlStrokeBrush", "AccentBrush",
                     "AccentBrushHover", "AccentBrushPressed", "AccentSoftBrush",
+                    "AccentHaloBrush", "StatusOnlineBrush", "StatusOfflineBrush",
+                    "StatusIdleBrush",
                     "DangerBrush", "DangerSoftBrush", "SuccessBrush", "SuccessSoftBrush",
                     "BrandMarkBrush", "BezelBrush", "GlassShineBrush", "WarnBrush",
                     "WarnSoftBrush", "ScrollBarTrackBrush", "ScrollBarThumbBrush",

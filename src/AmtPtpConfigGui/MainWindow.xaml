@@ -39,6 +39,10 @@
         <SolidColorBrush x:Key="AccentBrushHover"    Color="#1F45A6"/>
         <SolidColorBrush x:Key="AccentBrushPressed"  Color="#163578"/>
         <SolidColorBrush x:Key="AccentSoftBrush"     Color="#E8EEFC"/>
+        <SolidColorBrush x:Key="AccentHaloBrush"     Color="#142554C7"/>
+        <SolidColorBrush x:Key="StatusOnlineBrush"   Color="#1D9A6C"/>
+        <SolidColorBrush x:Key="StatusOfflineBrush"  Color="#E5484D"/>
+        <SolidColorBrush x:Key="StatusIdleBrush"     Color="#996B7280"/>
         <SolidColorBrush x:Key="CardBrush"           Color="#FFFFFF"/>
         <SolidColorBrush x:Key="CardBorderBrush"     Color="#E7E9EC"/>
         <SolidColorBrush x:Key="PageBrush"           Color="#F4F5F7"/>
@@ -207,7 +211,7 @@
                     <ControlTemplate TargetType="Thumb">
                         <Grid>
                             <Ellipse x:Name="Halo" Width="24" Height="24"
-                                     Fill="#140067C0" Opacity="0"/>
+                                     Fill="{DynamicResource AccentHaloBrush}" Opacity="0"/>
                             <Ellipse Width="18" Height="18"
                                      Fill="White"
                                      Stroke="{DynamicResource AccentBrush}"
@@ -421,95 +425,7 @@
             </Setter>
         </Style>
 
-        <!-- ===================== Modern ComboBox / ScrollBars ===================== -->
-        <Style TargetType="ComboBox">
-            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
-            <Setter Property="Background" Value="{DynamicResource ControlFillBrush}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeBrush}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="10,0"/>
-            <Setter Property="Height" Value="36"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ComboBox">
-                        <Grid>
-                            <Border x:Name="ComboBorder"
-                                    Background="{TemplateBinding Background}"
-                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}"
-                                    CornerRadius="8"/>
-                            <ContentPresenter Margin="{TemplateBinding Padding}"
-                                              VerticalAlignment="Center"
-                                              HorizontalAlignment="Left"
-                                              Content="{TemplateBinding SelectionBoxItem}"
-                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
-                                              ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"/>
-                            <Path HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0"
-                                  Data="M0,0 L4,4 L8,0" Stroke="{DynamicResource TextSecondaryBrush}"
-                                  StrokeThickness="1.6" StrokeLineJoin="Round"/>
-                            <Popup x:Name="PART_Popup"
-                                   Placement="Bottom"
-                                   AllowsTransparency="True"
-                                   Focusable="False"
-                                   IsOpen="{TemplateBinding IsDropDownOpen}"
-                                   PopupAnimation="Fade">
-                                <Border MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
-                                        Margin="0,5,0,0"
-                                        Background="{DynamicResource CardBrush}"
-                                        BorderBrush="{DynamicResource ControlStrokeBrush}"
-                                        BorderThickness="1"
-                                        CornerRadius="9"
-                                        Padding="4"
-                                        Effect="{StaticResource CardShadow}">
-                                    <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" MaxHeight="320" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
-                                    </ScrollViewer>
-                                </Border>
-                            </Popup>
-                        </Grid>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="ComboBorder" Property="Background" Value="{DynamicResource ControlHoverBrush}"/>
-                                <Setter TargetName="ComboBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
-                            </Trigger>
-                            <Trigger Property="IsDropDownOpen" Value="True">
-                                <Setter TargetName="ComboBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
-                                <Setter TargetName="ComboBorder" Property="Background" Value="{DynamicResource ControlHoverBrush}"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Opacity" Value="0.5"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style TargetType="ComboBoxItem">
-            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
-            <Setter Property="Padding" Value="10,8"/>
-            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ComboBoxItem">
-                        <Border x:Name="ItemBorder" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource ControlHoverBrush}"/>
-                            </Trigger>
-                            <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource AccentSoftBrush}"/>
-                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
-                                <Setter TargetName="ItemBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
+        <!-- ===================== ScrollBars ===================== -->
         <Style x:Key="ModernScrollBarThumb" TargetType="Thumb">
             <Setter Property="Template">
                 <Setter.Value>
@@ -643,8 +559,107 @@
         </Style>
 
         <Style TargetType="CheckBox" BasedOn="{StaticResource AndroidSwitch}"/>
-        <Style x:Key="ToggleChip" TargetType="CheckBox" BasedOn="{StaticResource AndroidSwitch}"/>
-        <Style x:Key="ChipCheckBox" TargetType="CheckBox" BasedOn="{StaticResource AndroidSwitch}"/>
+
+        <!-- ===================== Sentence-length option checkboxes =====================
+             AndroidSwitch (above) is the default CheckBox look, and it's the
+             right one for a short on/off label like "Live" or "Pro Mode".
+             But three checkboxes in this window carry a full descriptive
+             sentence ("New contact (birth) - not a continuation...",
+             "Require pressure to activate contact"), and a fixed-width
+             34+42px switch track has no room for wrapped text - the
+             AndroidSwitch template would clip or overflow it. OptionCheckBox
+             keeps the same accent color and corner language as the rest of
+             the app, but as a conventional wrapping checkbox instead of a
+             toggle, so long labels render the way they read. -->
+        <Style x:Key="OptionCheckBox" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="VerticalContentAlignment" Value="Top"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="Box" Grid.Column="0" Width="18" Height="18"
+                                    CornerRadius="5" Margin="0,1,10,0"
+                                    Background="{DynamicResource ControlFillBrush}"
+                                    BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1.4"
+                                    VerticalAlignment="Top">
+                                <Path x:Name="Check" Data="M2,6.5 L6,10.5 L14,2"
+                                      Stroke="{DynamicResource AccentContentBrush}" StrokeThickness="2"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round" Opacity="0"/>
+                            </Border>
+                            <ContentPresenter Grid.Column="1"
+                                               TextElement.FontSize="{TemplateBinding FontSize}"
+                                               TextBlock.TextWrapping="Wrap"
+                                               VerticalAlignment="Center"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Box" Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                <Setter TargetName="Check" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Radio buttons were the one remaining native/unstyled Win32
+             control in the window (used for the Force Tap action choice),
+             sitting directly below Android-style switches and looking
+             completely out of place. Same visual language as
+             OptionCheckBox above, just a circular indicator instead of a
+             checkmark. -->
+        <Style TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="Circle" Grid.Column="0" Width="18" Height="18"
+                                    CornerRadius="9" Margin="0,0,10,0"
+                                    Background="{DynamicResource ControlFillBrush}"
+                                    BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1.4"
+                                    VerticalAlignment="Center">
+                                <Ellipse x:Name="Dot" Width="8" Height="8"
+                                         Fill="{DynamicResource AccentContentBrush}" Opacity="0"/>
+                            </Border>
+                            <ContentPresenter Grid.Column="1" VerticalAlignment="Center"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Circle" Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                <Setter TargetName="Circle" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                <Setter TargetName="Dot" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Circle" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
         <Style x:Key="Pill" TargetType="Border">
             <Setter Property="CornerRadius" Value="20"/>
@@ -717,6 +732,19 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Every ComboBox in the app used to be styled twice: once by the
+             implicit TargetType="ComboBox" style and again by this explicit
+             "ModernComboBox" style whenever a XAML author remembered to set
+             it. The two templates had drifted slightly (different corner
+             radius, different popup shadow), so which one you got depended
+             on whether Style="{StaticResource ModernComboBox}" was typed on
+             that particular control. ModernComboBox is now the single
+             source of truth and also the implicit default, so every
+             ComboBox/ComboBoxItem looks the same whether or not it opts in
+             explicitly. -->
+        <Style TargetType="ComboBox" BasedOn="{StaticResource ModernComboBox}"/>
+        <Style TargetType="ComboBoxItem" BasedOn="{StaticResource ModernComboBoxItem}"/>
 
         <!-- ===================== Settings tabs (Palm / Scroll / Pointer) =====================
              A flat, segmented-control look (all tab headers in one rounded
@@ -828,7 +856,7 @@
                             BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
                             CornerRadius="7" Padding="10,7" MinWidth="132" Height="34">
                         <StackPanel Orientation="Horizontal">
-                            <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="#E5484D" VerticalAlignment="Center"/>
+                            <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="{DynamicResource StatusOfflineBrush}" VerticalAlignment="Center"/>
                             <TextBlock x:Name="StatusText" Margin="9,0,0,0" VerticalAlignment="Center"
                                        Text="Disconnected"/>
                         </StackPanel>
@@ -847,7 +875,7 @@
                                        ToolTip="Detected Mac/trackpad model"/>
                         </StackPanel>
                     </Border>
-                    <Button x:Name="BtnAppSettings" Content="⚙" Width="40" Height="36" Margin="8,0,0,0"
+                    <Button x:Name="BtnAppSettings" Content="⚙" Width="40" Height="34" Margin="8,0,0,0"
                             Padding="0" Background="{DynamicResource ControlFillBrush}"
                             BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
                             Foreground="{DynamicResource TextPrimaryBrush}"
@@ -868,12 +896,8 @@
                     <TextBlock Text="Profile" FontWeight="SemiBold" FontSize="12.5"/>
                     <TextBlock Text="Pointer / Scroll / Palm settings" Style="{StaticResource SectionCaption}"/>
                 </StackPanel>
-                <ComboBox x:Name="ProfileCombo" Grid.Column="1" Style="{StaticResource ModernComboBox}"
-                          SelectionChanged="ProfileCombo_SelectionChanged">
-                    <ComboBox.ItemContainerStyle>
-                        <Style TargetType="ComboBoxItem" BasedOn="{StaticResource ModernComboBoxItem}"/>
-                    </ComboBox.ItemContainerStyle>
-                </ComboBox>
+                <ComboBox x:Name="ProfileCombo" Grid.Column="1"
+                          SelectionChanged="ProfileCombo_SelectionChanged"/>
                 <WrapPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <Button Content="＋" Width="38" Height="34" Padding="0" Margin="0,0,6,0"
                             Click="NewProfile_Click" ToolTip="New profile"/>
@@ -904,7 +928,7 @@
                                   VerticalAlignment="Center"
                                   Checked="Live_Changed" Unchecked="Live_Changed"/>
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
-                            <Ellipse x:Name="LiveDot" Width="7" Height="7" Fill="#9AA1AC" VerticalAlignment="Center"/>
+                            <Ellipse x:Name="LiveDot" Width="7" Height="7" Fill="{DynamicResource StatusIdleBrush}" VerticalAlignment="Center"/>
                             <TextBlock x:Name="LiveStatusText" Text="Live: disabled"
                                        Style="{StaticResource TelemetryText}" Margin="7,0,0,0"/>
                         </StackPanel>
@@ -913,8 +937,8 @@
                     </StackPanel>
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Button Content="Export log .txt" Click="SaveErrors_Click"/>
-                        <Button Click="Reconnect_Click">
+                        <Button Content="Export log .txt" Height="34" Click="SaveErrors_Click"/>
+                        <Button Height="34" Click="Reconnect_Click">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="↻" FontSize="14" Margin="0,0,7,0" VerticalAlignment="Center"/>
                                 <TextBlock Text="Reconnect" VerticalAlignment="Center"/>
@@ -969,7 +993,7 @@
                 <TabItem Header="Palm" Style="{StaticResource SettingsTabItem}">
             <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
-                    <Border Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="14,12" Margin="0,0,0,14">
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -1094,7 +1118,8 @@
                             </Grid>
                             <Slider x:Name="SlTestY" Minimum="0" Maximum="100" Value="50" ValueChanged="Slider_Changed"/>
 
-                            <CheckBox x:Name="ChkIsBirth" Content="New contact (birth) — not a continuation of an existing contact" IsChecked="True"
+                            <CheckBox x:Name="ChkIsBirth" Style="{StaticResource OptionCheckBox}"
+                                      Content="New contact (birth) — not a continuation of an existing contact" IsChecked="True"
                                       Margin="0,8,0,0" Checked="Slider_Changed" Unchecked="Slider_Changed"/>
                             <TextBlock Style="{StaticResource HintText}"
                                        Text="Drag the point directly on the map to verify the contact position."/>
@@ -1196,7 +1221,7 @@
                                     </Grid>
                                     <Slider x:Name="SlCursorSpeed" Minimum="50" Maximum="200" ValueChanged="PointerSlider_Changed"/>
                                     <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Smoothing" ToolTip="Two-finger scroll smoothing. Higher values blend more history into the current delta, reducing jitter and abrupt changes but making direction changes feel less immediate."/>
+                                        <TextBlock Style="{StaticResource SliderLabel}" Text="Smoothing" ToolTip="Cursor movement smoothing. Higher values blend more history into the current delta, reducing jitter and abrupt changes but making pointer movement feel less immediate."/>
                                         <TextBlock x:Name="LblCursorSmoothing" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlCursorSmoothing" Minimum="0" Maximum="100" ValueChanged="PointerSlider_Changed"/>
@@ -1217,8 +1242,8 @@
                                         <TextBlock x:Name="LblForceTapThreshold" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
                                     <Slider x:Name="SlForceTapThreshold" Minimum="200" Maximum="400" ValueChanged="PointerSlider_Changed"/>
-                                    <CheckBox x:Name="ChkForceTouchEnabled" Margin="0,10,0,4" Content="Enable Force Touch" Checked="ForceTouchOption_Changed" Unchecked="ForceTouchOption_Changed" ToolTip="Enables Force Touch click arbitration on trackpads that support it. On standard trackpads the driver ignores this setting."/>
-                                    <CheckBox x:Name="ChkRequirePressure" Margin="0,4,0,8" Content="Require pressure to activate contact" Checked="ForceTouchOption_Changed" Unchecked="ForceTouchOption_Changed" ToolTip="For Force Touch-capable trackpads, a brand-new contact with zero pressure is ignored until pressure becomes positive. Existing contacts are unaffected."/>
+                                    <CheckBox x:Name="ChkForceTouchEnabled" Style="{StaticResource OptionCheckBox}" Margin="0,10,0,4" Content="Enable Force Touch" Checked="ForceTouchOption_Changed" Unchecked="ForceTouchOption_Changed" ToolTip="Enables Force Touch click arbitration on trackpads that support it. On standard trackpads the driver ignores this setting."/>
+                                    <CheckBox x:Name="ChkRequirePressure" Style="{StaticResource OptionCheckBox}" Margin="0,4,0,8" Content="Require pressure to activate contact" Checked="ForceTouchOption_Changed" Unchecked="ForceTouchOption_Changed" ToolTip="For Force Touch-capable trackpads, a brand-new contact with zero pressure is ignored until pressure becomes positive. Existing contacts are unaffected."/>
                                     <TextBlock Text="Force Tap action" Style="{StaticResource SliderLabel}" Margin="0,10,0,6" ToolTip="Action emitted when Force Touch is recognized. Choose the mouse action that best matches how you want a hard press to behave."/>
                                     <StackPanel>
                                         <RadioButton x:Name="RbActionContextMenu" Content="Context menu" GroupName="ForceTapAction" Margin="0,4" Checked="PointerAction_Changed" ToolTip="Open the context menu, equivalent to a right-click."/>

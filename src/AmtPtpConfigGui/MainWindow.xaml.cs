@@ -50,9 +50,20 @@ namespace AmtPtpConfigGui
             return brush;
         }
 
-        private static readonly SolidColorBrush ConnectedBrush = Frozen(0xFF, 0x1D, 0x9A, 0x6C);
-        private static readonly SolidColorBrush DisconnectedBrush = Frozen(0xFF, 0xE5, 0x48, 0x4D);
-        private static readonly SolidColorBrush LiveDotIdleBrush = Frozen(0xFF, 0x9A, 0xA1, 0xAC);
+        // Status-dot colors follow the active theme (Light/Dark) instead of a
+        // fixed palette, so StatusDot/LiveDot never clash with the rest of
+        // the themed chrome after a theme switch. Falls back to the frozen
+        // light-theme tone only if the resource lookup fails (e.g. resource
+        // dictionary not yet initialized).
+        private static Brush ConnectedBrush =>
+            System.Windows.Application.Current?.Resources["StatusOnlineBrush"] as Brush
+                ?? Frozen(0xFF, 0x1D, 0x9A, 0x6C);
+        private static Brush DisconnectedBrush =>
+            System.Windows.Application.Current?.Resources["StatusOfflineBrush"] as Brush
+                ?? Frozen(0xFF, 0xE5, 0x48, 0x4D);
+        private static Brush LiveDotIdleBrush =>
+            System.Windows.Application.Current?.Resources["StatusIdleBrush"] as Brush
+                ?? Frozen(0xFF, 0x9A, 0xA1, 0xAC);
         private static readonly LinearGradientBrush GlassPadBrush = CreateGlassPadBrush();
 
         private static LinearGradientBrush CreateGlassPadBrush()
