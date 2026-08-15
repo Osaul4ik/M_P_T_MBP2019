@@ -47,12 +47,23 @@ AmtQ32ProductToIntRound(_In_ LONGLONG Product)
 
 static inline USHORT
 AmtContactSmoothCoord(_In_ USHORT rawVal, _In_ USHORT prevVal, _In_ INT alphaNum,
-    _In_ INT alphaDen)
+    _In_ INT alphaDen, _In_ LONGLONG invAlphaDenQ32)
 {
     // Blend the new sample with the previous report.
-    INT blended = ((INT)rawVal * alphaNum +
-                   (INT)prevVal * (alphaDen - alphaNum)) /
-                  alphaDen;
+    //
+    // MICRO-OPT: was `numerator / alphaDen` - a genuine runtime division,
+    // per coordinate (X and Y), per active contact, every non-gesture
+    // frame - the one spot in the hot path that violated this file's own
+    // "interrupt path never performs percent division" invariant.
+    // alphaDen is a config-runtime value (SET_POINTER_CONFIG only), so
+    // its reciprocal is precomputed once in AmtPointerRuntimeRebuild
+    // (CursorSmoothingInvAlphaDenQ32) and reused here via the same
+    // multiply+shift pattern (AmtMulQ32Round) already used everywhere
+    // else in this file. alphaDen itself is still needed for the
+    // (alphaDen - alphaNum) blend weight below - only the division BY
+    // alphaDen is replaced.
+    INT numerator = (INT)rawVal * alphaNum + (INT)prevVal * (alphaDen - alphaNum);
+    INT blended = AmtMulQ32Round(numerator, invAlphaDenQ32);
     return (USHORT)blended;
 }
 
@@ -425,9 +436,11 @@ AmtContactCommitSample(
                            ((alphaNum < userAlpha) ? alphaNum : userAlpha);
 
             repX = AmtContactSmoothCoord(candX, Contact->ReportX, effAlpha,
-                                         PointerRuntime->CursorSmoothingAlphaDen);
+                                         PointerRuntime->CursorSmoothingAlphaDen,
+                                         PointerRuntime->CursorSmoothingInvAlphaDenQ32);
             repY = AmtContactSmoothCoord(candY, Contact->ReportY, effAlpha,
-                                         PointerRuntime->CursorSmoothingAlphaDen);
+                                         PointerRuntime->CursorSmoothingAlphaDen,
+                                         PointerRuntime->CursorSmoothingInvAlphaDenQ32);
 
             if (PointerRuntime->CursorSpeedQ32 != AMT_RUNTIME_FIXED_ONE) {
                 INT moveX = (INT)repX - (INT)Contact->ReportX;

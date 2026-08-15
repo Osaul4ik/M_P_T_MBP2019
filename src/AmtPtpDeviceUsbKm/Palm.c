@@ -63,8 +63,20 @@ AmtPalmClassify(
     // suppress accidental edge touches, not just wide palm-shaped ones.
     // Contacts already being tracked that merely move through the zone are
     // NOT affected - only IsBirth is checked here.
-    if (IsBirth && AmtPalmInEdgeZone(DevInfo, Runtime, NormX, NormY)) {
-        return PALM_LOCAL;
+    //
+    // MICRO-OPT: cache the result instead of letting the soft edge bonus
+    // below recompute the identical AmtPalmInEdgeZone(DevInfo, Runtime,
+    // NormX, NormY) call. When IsBirth is TRUE and we get past this block,
+    // inEdgeZone is already known FALSE (a TRUE would have returned
+    // above), so the soft-bonus check below reuses it as-is. When IsBirth
+    // is FALSE this block never computes it - unchanged from before,
+    // still only evaluated below if major > 130.
+    BOOLEAN inEdgeZone = FALSE;
+    if (IsBirth) {
+        inEdgeZone = AmtPalmInEdgeZone(DevInfo, Runtime, NormX, NormY);
+        if (inEdgeZone) {
+            return PALM_LOCAL;
+        }
     }
 
     INT major = AmtRawToSignedInt(Major);
@@ -115,8 +127,14 @@ AmtPalmClassify(
     // Soft edge bonus for continuations (or births that weren't caught by
     // the hard-reject above, e.g. a birth reported with major==0 for one
     // frame). Kept as a secondary signal on top of the hard reject.
-    if (major > 130 && AmtPalmInEdgeZone(DevInfo, Runtime, NormX, NormY))
-        score += 10;
+    if (major > 130) {
+        if (!IsBirth) {
+            inEdgeZone = AmtPalmInEdgeZone(DevInfo, Runtime, NormX, NormY);
+        }
+        // else: IsBirth==TRUE - inEdgeZone already known FALSE (see above).
+        if (inEdgeZone)
+            score += 10;
+    }
 
     return (score >= palmScoreThresh) ? PALM_LOCAL : PALM_NONE;
 }

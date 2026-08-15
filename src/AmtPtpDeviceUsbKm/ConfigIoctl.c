@@ -65,6 +65,14 @@ AmtPointerRuntimeRebuild(
     Runtime->CursorSmoothingAlphaNumSlow = (INT)Config->SmoothingAlphaNumSlow;
     Runtime->CursorSmoothingAlphaDen = (INT)Config->SmoothingAlphaDen;
 
+    // Reciprocal of AlphaDen, Q32 - lets AmtContactSmoothCoord (hot path,
+    // per contact/per coordinate/every frame) replace a runtime division
+    // by AlphaDen with a multiply+shift. AlphaDen only changes here (on
+    // SET_POINTER_CONFIG), never per-frame, so this is the right place
+    // to pay the one division needed to produce the reciprocal.
+    Runtime->CursorSmoothingInvAlphaDenQ32 =
+        AmtRatioToQ32(1, Config->SmoothingAlphaDen);
+
     {
         ULONG span = Config->SmoothingAlphaDen - Config->SmoothingAlphaNumSlow;
         Runtime->CursorSmoothingSlopeQ32 =

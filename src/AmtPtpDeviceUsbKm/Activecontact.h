@@ -21,6 +21,15 @@ typedef struct _AMT_POINTER_RUNTIME
     INT  CursorSmoothingAlphaNumSlow;
     INT  CursorSmoothingAlphaDen;
     LONGLONG CursorSmoothingSlopeQ32;
+
+    // Reciprocal of CursorSmoothingAlphaDen, Q32 (1/AlphaDen). Lets the
+    // hot-path blend in AmtContactSmoothCoord replace a per-contact,
+    // per-frame runtime division by AlphaDen with a multiply+shift,
+    // consistent with "the interrupt path never performs percent
+    // division" above - AlphaDen is a config-runtime value (changes only
+    // on SET_POINTER_CONFIG), so its reciprocal only needs recomputing
+    // here, not every frame.
+    LONGLONG CursorSmoothingInvAlphaDenQ32;
 } AMT_POINTER_RUNTIME, *PAMT_POINTER_RUNTIME;
 
 typedef struct _AMT_SCROLL_RUNTIME
