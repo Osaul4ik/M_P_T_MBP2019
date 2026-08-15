@@ -7,7 +7,7 @@
         Height="820" Width="1280" MinHeight="660" MinWidth="1120"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource PageBrush}"
-        FontFamily="Segoe UI Variable Text"
+        FontFamily="Segoe UI Variable Text, Segoe UI"
         FontSize="13"
         TextOptions.TextFormattingMode="Display"
         TextOptions.TextRenderingMode="ClearType"
@@ -594,7 +594,7 @@
         <!-- ===================== Android-style switches ===================== -->
         <Style x:Key="AndroidSwitch" TargetType="CheckBox">
             <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
-            <Setter Property="FontFamily" Value="Segoe UI Variable Text"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
             <Setter Property="FontSize" Value="12.5"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -684,9 +684,11 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Field" Property="Background" Value="{DynamicResource ControlHoverBrush}"/>
                                 <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                             </Trigger>
                             <Trigger Property="IsDropDownOpen" Value="True">
+                                <Setter TargetName="Field" Property="Background" Value="{DynamicResource ControlHoverBrush}"/>
                                 <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -821,7 +823,7 @@
                     </Border>
                     <StackPanel VerticalAlignment="Center" Margin="12,0,0,0">
                         <TextBlock Text="Wellspring PTP" Style="{StaticResource TitleText}"/>
-                        <TextBlock Text="Palm rejection calibration" Style="{StaticResource SubtitleText}"/>
+                        <TextBlock Text="Calibration settings" Style="{StaticResource SubtitleText}"/>
                     </StackPanel>
                 </StackPanel>
 
@@ -843,10 +845,10 @@
                             <TextBlock Text="Device" Style="{StaticResource SectionCaption}" Margin="0,0,8,0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="DeviceModelText" VerticalAlignment="Center"
                                        Foreground="{DynamicResource TextPrimaryBrush}"
-                                       FontFamily="Segoe UI Variable Text"
+                                       FontFamily="Segoe UI Variable Text, Segoe UI"
                                        FontSize="12" FontWeight="SemiBold"
                                        TextTrimming="CharacterEllipsis"
-                                       Text="Apple Precision Touchpad"
+                                       Text="No device detected"
                                        ToolTip="Detected Mac/trackpad model"/>
                         </StackPanel>
                     </Border>

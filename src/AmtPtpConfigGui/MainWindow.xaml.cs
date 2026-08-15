@@ -1247,6 +1247,7 @@ namespace AmtPtpConfigGui
             {
                 StatusDot.Fill = DisconnectedBrush;
                 StatusText.Text = "Disconnected";
+                DeviceModelText.Text = "No device detected";
                 LoadConfigIntoSliders(PalmConfig.Default);
                 LoadPointerConfigIntoControls(PointerConfig.Default);
                 LoadScrollConfigIntoControls(ScrollConfig.Default);
@@ -1581,7 +1582,9 @@ namespace AmtPtpConfigGui
             if (sender is not System.Windows.Controls.ScrollViewer scrollViewer)
                 return;
 
-            const double pixelsPerNotch = 18.0;
+            // Increased from 18.0: the previous rate felt noticeably slower than a
+            // native scroll, so it's bumped by 50% to keep pace with the mouse wheel.
+            const double pixelsPerNotch = 27.0;
 
             double delta =
                 e.Delta / 120.0 * pixelsPerNotch;
@@ -2315,7 +2318,8 @@ namespace AmtPtpConfigGui
 
             // One mouse-wheel notch = a deliberately small movement.
             // WPF's default line/page behavior is too aggressive for this dense settings UI.
-            const double pixelsPerNotch = 18.0;
+            // Increased from 18.0 by 50% - the original rate felt sluggish.
+            const double pixelsPerNotch = 27.0;
             double notches = e.Delta / (double)System.Windows.Input.Mouse.MouseWheelDeltaForOneLine;
             viewer.ScrollToVerticalOffset(viewer.VerticalOffset - notches * pixelsPerNotch);
             e.Handled = true;
