@@ -2950,16 +2950,15 @@ namespace AmtPtpConfigGui
             if (checkBounds.Width <= 0)
                 checkBounds = new System.Drawing.Rectangle(0, 0, 20, e.Item.Height);
 
-            // Center the glyph on the full row and keep it close to the label.
+            // ToolStripItemImageRenderEventArgs has no TextRectangle.
+            // ImageRectangle is the reserved check/image column, so keep the
+            // checkmark at its right edge (closest to the label) and center it
+            // against the actual menu row height.
             int size = Math.Min(14, Math.Max(8, e.Item.Height - 8));
-            const int gap = 6;
-            int rightEdge = e.TextRectangle.X - gap;
-            int x = Math.Max(checkBounds.X, rightEdge - size);
-            var box = new System.Drawing.Rectangle(
-                x,
-                Math.Max(0, (e.Item.Height - size) / 2),
-                size,
-                size);
+            const int rightGap = 2;
+            int x = Math.Max(checkBounds.X, checkBounds.Right - rightGap - size);
+            int y = Math.Max(0, (e.Item.Height - size) / 2);
+            var box = new System.Drawing.Rectangle(x, y, size, size);
 
             using var accentBrush = new System.Drawing.SolidBrush(_accent);
             using var pen = new System.Drawing.Pen(System.Drawing.Color.White, 1.6f)
