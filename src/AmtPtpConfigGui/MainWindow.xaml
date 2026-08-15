@@ -689,7 +689,20 @@
                                     <Path Data="M 0 0 L 4 4 L 8 0" Stroke="{DynamicResource TextSecondaryBrush}" StrokeThickness="1.5" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0"/>
                                 </Grid>
                             </Border>
-                            <ToggleButton x:Name="DropDownToggle" Background="Transparent" BorderThickness="0" Focusable="False" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+                            <!-- Hit-test layer for opening/closing the popup, laid on top of
+                                 the visible Field border. It carries no Style, so without an
+                                 explicit Template it inherits the OS theme's default ToggleButton
+                                 chrome (Aero2/Fluent) - which paints its own blue hover/pressed
+                                 highlight rectangle on top of everything else, regardless of the
+                                 Background/BorderThickness set here. Giving it a blank
+                                 ControlTemplate makes it purely a transparent click target. -->
+                            <ToggleButton x:Name="DropDownToggle" Focusable="False" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="Transparent"/>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
                             <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True" Focusable="False" IsOpen="{TemplateBinding IsDropDownOpen}" PopupAnimation="Fade" VerticalOffset="5">
                                 <Border Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="4" SnapsToDevicePixels="True">
                                     <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" MaxHeight="320" VerticalScrollBarVisibility="Auto">
