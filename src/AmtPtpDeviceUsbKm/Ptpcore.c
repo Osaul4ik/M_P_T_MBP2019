@@ -242,7 +242,7 @@ PTPCore_ProcessFrame(
     MATCH_CANDIDATE_SET candidates;
     BOOLEAN              largePalm = FALSE;
 
-    AmtMatchBuildCandidates(&filteredRaw, pCtx->DeviceInfo, &pCtx->PalmConfig,
+    AmtMatchBuildCandidates(RawFrame, pCtx->DeviceInfo, &pCtx->PalmConfig,
                             &pCtx->PalmRuntime, pCtx->ActiveContacts, &candidates, &largePalm);
 
     // Palm session: suppress candidates when palm active. Contacts that go
