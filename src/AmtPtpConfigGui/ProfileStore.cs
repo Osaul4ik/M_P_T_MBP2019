@@ -24,6 +24,7 @@ namespace AmtPtpConfigGui
         private static readonly string FilePath = Path.Combine(DirectoryPath, "profiles.json");
         private static readonly string TempFilePath = FilePath + ".tmp";
         private static readonly string BackupFilePath = FilePath + ".bak";
+        private static readonly string CorruptBackupFilePath = FilePath + ".corrupt";
         private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
         {
             WriteIndented = true,
