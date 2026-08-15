@@ -144,20 +144,11 @@ AmtContactBirthWithRetapSmoothing(
     _In_    USHORT          slotHint
 );
 
-// Check whether a down event is near a recent lift.
+// Recent-lift window/distance thresholds. Consumed by the actual
+// slot-independent retap check - AmtRecentLiftFindNearby in PTPCore.c/.h,
+// which operates over the RECENT_LIFT_RING instead of a single lift sample.
 #define RETAP_WINDOW_100NS      (150LL * 10000LL)  // was 700 ms
 #define RETAP_MAX_DISTANCE      200                 // was 600 (normalized units)
-
-BOOLEAN
-AmtContactIsRecentLiftNearby(
-    _In_ LONGLONG LiftQpc,
-    _In_ USHORT   LiftX,
-    _In_ USHORT   LiftY,
-    _In_ LONGLONG NowQpc,
-    _In_ LONGLONG PerfFrequencyHz,
-    _In_ USHORT   CandX,
-    _In_ USHORT   CandY
-);
 
 // Lift a contact and return its last state.
 VOID
