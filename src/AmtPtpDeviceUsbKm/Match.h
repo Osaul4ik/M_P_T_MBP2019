@@ -68,6 +68,8 @@ AmtMatchBuildCandidates(
     _In_  const struct BCM5974_CONFIG*             DevInfo,
     _In_  const AMT_PALM_CONFIG*                   PalmConfig,
     _In_  const AMT_PALM_RUNTIME*                  PalmRuntime,
+    _In_  const AMT_POINTER_CONFIG*                PointerConfig,
+    _In_  BOOLEAN                                   SupportsForceTouch,
     _In_reads_(MAX_CONTACTS) const ACTIVE_CONTACT* Pool,
     _Out_ MATCH_CANDIDATE_SET*                     OutCandidates,
     _Out_ BOOLEAN*                                 LargePalmDetected

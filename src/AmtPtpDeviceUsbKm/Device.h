@@ -97,7 +97,7 @@ typedef struct _DEVICE_CONTEXT
 
     // Opt-in live monitor state. FALSE is the normal/idle state and the
     // interrupt path does not copy any live-monitor data when it is false.
-    BOOLEAN         LiveEnabled;
+    volatile LONG   LiveEnabled;
     WDFFILEOBJECT   LiveOwnerFileObject;
     ULONG           LiveSequence;
     AMT_LIVE_FRAME  LiveFrame[2];
