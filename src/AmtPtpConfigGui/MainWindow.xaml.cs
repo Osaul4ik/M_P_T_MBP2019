@@ -656,9 +656,9 @@ namespace AmtPtpConfigGui
             if (cfg.StructVersion == 0)
                 return defaults;
 
-            // Version 3 -> 4: old files did not contain the new Force Touch
-            // flags. Preserve all existing v3 fields and fill only the new
-            // fields from current defaults.
+            // Older files used smaller PointerConfig layouts. Fields added
+            // after the serialized version must be filled from current defaults
+            // because the missing tail arrives as zero.
             if (cfg.StructVersion < PointerConfig.CurrentVersion)
             {
                 if (cfg.StructVersion < 4)
@@ -666,6 +666,9 @@ namespace AmtPtpConfigGui
                     cfg.ForceTouchEnabled = defaults.ForceTouchEnabled;
                     cfg.RequirePressureToActivate = defaults.RequirePressureToActivate;
                 }
+
+                if (cfg.StructVersion < 5)
+                    cfg.SmallContactRejectionEnabled = defaults.SmallContactRejectionEnabled;
             }
 
             return cfg.Clamped();
@@ -864,6 +867,7 @@ namespace AmtPtpConfigGui
 
                 var pointerCfg = ReadPointerConfigFromControls();
                 bool forceTouchOn = pointerCfg.ForceTouchEnabled != 0;
+                bool smallContactRejectionOn = pointerCfg.SmallContactRejectionEnabled != 0;
 
                 menu.Items.Add(header);
                 menu.Items.Add(new Forms.ToolStripSeparator());
@@ -871,13 +875,25 @@ namespace AmtPtpConfigGui
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 menu.Items.Add(palmEdges);
 
+                // On non-Force-Touch trackpads expose the small-contact filter in
+                // the tray exactly like the Force Touch toggle. The driver ignores
+                // this setting on Force Touch-capable hardware.
+                if (!_forceTouchSupported)
+                {
+                    var smallReject = new Forms.ToolStripMenuItem("Small-contact rejection")
+                    {
+                        Checked = smallContactRejectionOn,
+                        Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
+                        ToolTipText = "Reject tiny contacts on trackpads without Force Touch until M:100/80 is reached."
+                    };
+                    smallReject.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ToggleSmallContactRejectionFromTray));
+                    menu.Items.Add(smallReject);
+                }
+
                 // Force Touch controls now live directly in the main menu instead of
                 // being buried inside a nested "Force Touch" submenu - but only on
                 // trackpads that actually have Force Touch hardware. On older/non-
-                // Force-Touch models (see _forceTouchSupported, set from
-                // DeviceIo.GetDeviceModelDisplay) these three items are omitted
-                // entirely rather than shown disabled, matching the Pointer tab
-                // where the whole "Force Touch" settings group is hidden.
+                // Force-Touch models these items are omitted.
                 if (_forceTouchSupported)
                 {
                     var forceTouch = new Forms.ToolStripMenuItem("Force Touch")
@@ -954,6 +970,13 @@ namespace AmtPtpConfigGui
         private void TogglePressureGateFromTray()
         {
             ChkRequirePressure.IsChecked = ChkRequirePressure.IsChecked != true;
+            Save_Click(this, new RoutedEventArgs());
+            RefreshTrayMenu();
+        }
+
+        private void ToggleSmallContactRejectionFromTray()
+        {
+            ChkSmallContactRejection.IsChecked = ChkSmallContactRejection.IsChecked != true;
             Save_Click(this, new RoutedEventArgs());
             RefreshTrayMenu();
         }
@@ -1290,6 +1313,8 @@ namespace AmtPtpConfigGui
 
             if (ForceTouchGroup != null)
                 ForceTouchGroup.Visibility = _forceTouchSupported ? Visibility.Visible : Visibility.Collapsed;
+            if (SmallContactRejectionGroup != null)
+                SmallContactRejectionGroup.Visibility = _forceTouchSupported ? Visibility.Collapsed : Visibility.Visible;
 
             // The tray context menu is rebuilt on demand from RefreshTrayMenu,
             // but if it's already open/cached it should reflect the change
@@ -1964,6 +1989,7 @@ namespace AmtPtpConfigGui
                 SlForceTapThreshold.Value = cfg.ForceTapThreshold;
                 ChkForceTouchEnabled.IsChecked = cfg.ForceTouchEnabled != 0;
                 ChkRequirePressure.IsChecked = cfg.RequirePressureToActivate != 0;
+                ChkSmallContactRejection.IsChecked = cfg.SmallContactRejectionEnabled != 0;
                 ChkRequirePressure.IsEnabled = cfg.ForceTouchEnabled != 0;
                 SlCursorSmoothing.Value = cfg.CursorSmoothingPercent;
                 SlCursorSpeed.Value = cfg.CursorSpeedPercent;
@@ -1995,6 +2021,7 @@ namespace AmtPtpConfigGui
             c.ForceTapThreshold = (uint)SlForceTapThreshold.Value;
             c.ForceTouchEnabled = ChkForceTouchEnabled.IsChecked == true ? 1u : 0u;
             c.RequirePressureToActivate = ChkRequirePressure.IsChecked == true ? 1u : 0u;
+            c.SmallContactRejectionEnabled = ChkSmallContactRejection.IsChecked == true ? 1u : 0u;
             c.CursorSmoothingPercent = (uint)SlCursorSmoothing.Value;
             c.CursorSpeedPercent = (uint)SlCursorSpeed.Value;
             c.CursorDeadzone = (uint)SlCursorDeadzone.Value;
@@ -2041,6 +2068,11 @@ namespace AmtPtpConfigGui
         {
             if (ChkForceTouchEnabled != null && ChkRequirePressure != null)
                 ChkRequirePressure.IsEnabled = ChkForceTouchEnabled.IsChecked == true;
+        }
+
+        private void SmallContactRejectionOption_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!_uiReady || _suppressPointerEvents) return;
         }
 
         // Scroll tab <-> ScrollConfig plumbing

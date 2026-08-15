@@ -86,9 +86,15 @@ typedef struct _AMT_POINTER_CONFIG
     ULONG CursorFastVelocity;
     ULONG SmoothingAlphaDen;
     ULONG SmoothingAlphaNumSlow;
+
+    // Reject small contacts on trackpads without Force Touch. A contact is
+    // initially rejected while Major < 100 AND Minor < 80; once it reaches
+    // Major >= 100 OR Minor >= 80 it stays accepted until the hardware slot
+    // disappears. Ignored on Force Touch-capable devices.
+    ULONG SmallContactRejectionEnabled;
 } AMT_POINTER_CONFIG, *PAMT_POINTER_CONFIG;
 
-#define AMT_POINTER_CONFIG_VERSION 4
+#define AMT_POINTER_CONFIG_VERSION 5
 
 #define AMT_POINTER_SMOOTH_MIN       0
 #define AMT_POINTER_SMOOTH_MAX       100
@@ -130,7 +136,8 @@ typedef struct _AMT_POINTER_CONFIG
     110,                                                                    \
     905,                                                                    \
     8,                                                                      \
-    3                                                                       \
+    3,                                                                      \
+    1                                                                       \
 }
 
 // Sane clamp range - raw pressure realistically spans ~0-300, so keep the

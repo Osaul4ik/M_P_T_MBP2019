@@ -1253,6 +1253,19 @@
                                 </StackPanel>
                             </GroupBox>
 
+                            <GroupBox x:Name="SmallContactRejectionGroup" Margin="0,12,0,0">
+                                <GroupBox.Header>
+                                    <StackPanel>
+                                        <TextBlock Text="Contact Rejection" Style="{StaticResource SectionTitle}"/>
+                                        <TextBlock Text="NON-FORCE TOUCH · small-contact filter" Style="{StaticResource SectionCaption}"/>
+                                    </StackPanel>
+                                </GroupBox.Header>
+                                <StackPanel>
+                                    <CheckBox x:Name="ChkSmallContactRejection" Style="{StaticResource OptionCheckBox}" Margin="0,10,0,8" Content="Enable small-contact rejection" Checked="SmallContactRejectionOption_Changed" Unchecked="SmallContactRejectionOption_Changed" ToolTip="On trackpads without Force Touch, ignore contacts while Major is below 100 and Minor is below 80. Once a contact reaches Major 100 or Minor 80, it remains accepted until that contact is lifted."/>
+                                    <TextBlock Style="{StaticResource HintText}" Text="Below M:100/80 the contact is suppressed. At M:100/80 or above it is admitted and its size is no longer checked for the rest of that contact."/>
+                                </StackPanel>
+                            </GroupBox>
+
                             <GroupBox x:Name="ForceTouchGroup" Margin="0,12,0,0">
                                 <GroupBox.Header>
                                     <StackPanel>

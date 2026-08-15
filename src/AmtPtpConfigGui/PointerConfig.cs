@@ -19,8 +19,9 @@ namespace AmtPtpConfigGui.Native
         public uint CursorFastVelocity;
         public uint SmoothingAlphaDen;
         public uint SmoothingAlphaNumSlow;
+        public uint SmallContactRejectionEnabled;
 
-        public const uint CurrentVersion = 4;
+        public const uint CurrentVersion = 5;
         public const uint ActionContextMenu = 0;
         public const uint ActionMiddleClick = 1;
         public const uint ActionDoubleClick = 2;
@@ -44,6 +45,7 @@ namespace AmtPtpConfigGui.Native
             CursorFastVelocity = 905,
             SmoothingAlphaDen = 8,
             SmoothingAlphaNumSlow = 3,
+            SmallContactRejectionEnabled = 1,
         };
 
         public PointerConfig Clamped()
@@ -54,6 +56,7 @@ namespace AmtPtpConfigGui.Native
             if (c.ForceTapAction > ActionMax) c.ForceTapAction = ActionContextMenu;
             c.ForceTouchEnabled = c.ForceTouchEnabled != 0 ? 1u : 0u;
             c.RequirePressureToActivate = c.RequirePressureToActivate != 0 ? 1u : 0u;
+            c.SmallContactRejectionEnabled = c.SmallContactRejectionEnabled != 0 ? 1u : 0u;
             c.CursorSmoothingPercent = Clamp(c.CursorSmoothingPercent, 0, 100);
             c.CursorSpeedPercent = Clamp(c.CursorSpeedPercent, 50, 200);
             c.CursorDeadzone = Clamp(c.CursorDeadzone, 0, 8);

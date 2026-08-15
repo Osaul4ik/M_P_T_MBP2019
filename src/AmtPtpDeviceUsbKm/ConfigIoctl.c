@@ -156,6 +156,7 @@ AmtPointerConfigClamp(_Inout_ PAMT_POINTER_CONFIG Config)
         Config->ForceTapAction = AMT_POINTER_ACTION_CONTEXT_MENU;
     Config->ForceTouchEnabled = Config->ForceTouchEnabled ? 1u : 0u;
     Config->RequirePressureToActivate = Config->RequirePressureToActivate ? 1u : 0u;
+    Config->SmallContactRejectionEnabled = Config->SmallContactRejectionEnabled ? 1u : 0u;
     Config->CursorSmoothingPercent = AmtClampULong(Config->CursorSmoothingPercent, AMT_POINTER_SMOOTH_MIN, AMT_POINTER_SMOOTH_MAX);
     Config->CursorSpeedPercent = AmtClampULong(Config->CursorSpeedPercent, AMT_POINTER_SPEED_MIN, AMT_POINTER_SPEED_MAX);
     Config->CursorDeadzone = AmtClampULong(Config->CursorDeadzone, AMT_POINTER_DEADZONE_MIN, AMT_POINTER_DEADZONE_MAX);
@@ -329,6 +330,7 @@ AmtPointerConfigLoadFromRegistry(
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_FAST_VEL,    &Config->CursorFastVelocity);
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_ALPHA_DEN,   &Config->SmoothingAlphaDen);
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_ALPHA_SLOW,  &Config->SmoothingAlphaNumSlow);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_SMALL_CONTACT_REJECTION, &Config->SmallContactRejectionEnabled);
 
     WdfRegistryClose(key);
 
@@ -368,6 +370,7 @@ AmtPointerConfigSaveToRegistry(
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_FAST_VEL,    Config->CursorFastVelocity);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_ALPHA_DEN,   Config->SmoothingAlphaDen);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_ALPHA_SLOW,  Config->SmoothingAlphaNumSlow);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_SMALL_CONTACT_REJECTION, Config->SmallContactRejectionEnabled);
 
     WdfRegistryClose(key);
 }

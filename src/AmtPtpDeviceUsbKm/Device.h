@@ -155,6 +155,13 @@ typedef struct _DEVICE_CONTEXT
     USHORT  ForceTouchAnchorY;
     BOOLEAN ForceTouchDragLockout;
 
+    // Per-hardware-slot latch for non-Force-Touch small-contact rejection.
+    // FALSE means the slot is still below the admission threshold. Once the
+    // slot reaches Major >= 100 OR Minor >= 80, it becomes TRUE and remains
+    // admitted until that slot disappears from a frame. Ignored on Force Touch
+    // devices and when PointerConfig.SmallContactRejectionEnabled is disabled.
+    BOOLEAN SmallContactRejectPassed[PTP_MAX_CONTACT_POINTS];
+
     // Force-touch click delivery state - see FORCE_TOUCH_DELIVERY_STATE
     // above for the full rationale.
 #define PENDING_FORCE_TOUCH_CLICK_CAPACITY 8 // queued (not-yet-started) clicks

@@ -231,11 +231,58 @@ PTPCore_ProcessFrame(
     OutResult->ContactCount     = 0;
     OutResult->LargePalmBlanked = FALSE;
 
-    // Build candidates (palm + tip-debounce)
+    // Build candidates (palm + tip-debounce).
+    // On non-Force-Touch devices optionally suppress tiny contacts until they
+    // reach the admission threshold. Once a slot crosses Major >= 100 OR
+    // Minor >= 80, the slot stays admitted for the rest of that contact even
+    // if its size later falls back below the threshold.
+    RAW_FRAME filteredRaw = *RawFrame;
+    if (!pCtx->SupportsForceTouch && pCtx->PointerConfig.SmallContactRejectionEnabled)
+    {
+        BOOLEAN slotSeen[PTP_MAX_CONTACT_POINTS] = { 0 };
+        UCHAR writeCount = 0;
+
+        for (UCHAR i = 0; i < RawFrame->ContactCount; i++)
+        {
+            const RAW_CONTACT* raw = &RawFrame->Contacts[i];
+            USHORT slot = raw->SlotIndex;
+            BOOLEAN admit = TRUE;
+
+            if (slot < PTP_MAX_CONTACT_POINTS)
+            {
+                slotSeen[slot] = TRUE;
+                if (!pCtx->SmallContactRejectPassed[slot])
+                {
+                    if (raw->Major >= 100 || raw->Minor >= 80)
+                        pCtx->SmallContactRejectPassed[slot] = TRUE;
+                    else
+                        admit = FALSE;
+                }
+            }
+
+            if (admit)
+                filteredRaw.Contacts[writeCount++] = *raw;
+        }
+
+        filteredRaw.ContactCount = writeCount;
+
+        for (UCHAR slot = 0; slot < PTP_MAX_CONTACT_POINTS; slot++)
+        {
+            if (!slotSeen[slot])
+                pCtx->SmallContactRejectPassed[slot] = FALSE;
+        }
+    }
+    else
+    {
+        RtlZeroMemory(
+            pCtx->SmallContactRejectPassed,
+            sizeof(pCtx->SmallContactRejectPassed));
+    }
+
     MATCH_CANDIDATE_SET candidates;
     BOOLEAN              largePalm = FALSE;
 
-    AmtMatchBuildCandidates(RawFrame, pCtx->DeviceInfo, &pCtx->PalmConfig,
+    AmtMatchBuildCandidates(&filteredRaw, pCtx->DeviceInfo, &pCtx->PalmConfig,
                             &pCtx->PalmRuntime, pCtx->ActiveContacts, &candidates, &largePalm);
 
     // Palm session: suppress candidates when palm active. Contacts that go
