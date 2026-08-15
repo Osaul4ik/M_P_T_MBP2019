@@ -2760,11 +2760,10 @@ namespace AmtPtpConfigGui
                 ShowImageMargin = false,
                 ShowCheckMargin = true,
                 // Keep the flyout visually attached to the parent item.
-                // The default WinForms submenu offset leaves a noticeable
-                // gap on some Windows 10 themes, especially with a custom
-                // rounded region. A tiny overlap makes it read as one menu.
-                HorizontalOffset = -1,
-                VerticalOffset = -1,
+                // WinForms ToolStripDropDown has no HorizontalOffset/VerticalOffset
+                // properties; zero margin removes the extra separation that can
+                // otherwise be introduced by the custom rounded popup chrome.
+                Margin = new System.Windows.Forms.Padding(0),
                 Padding = new System.Windows.Forms.Padding(2, 4, 2, 4)
             };
             SyncChrome(dropDown);
