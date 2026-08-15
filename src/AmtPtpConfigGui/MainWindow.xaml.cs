@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -696,6 +697,26 @@ namespace AmtPtpConfigGui
             }
         }
 
+        // System.Drawing.Font does NOT understand WPF-style comma-separated
+        // fallback lists ("Segoe UI Variable Text, Segoe UI") - GDI+ treats
+        // the whole string as a single family name. When that exact combined
+        // name isn't a registered family (always, since no such family
+        // exists) it silently substitutes a generic default font with
+        // different metrics, which is what made the tray menu's text and
+        // row spacing look off. Resolve to a real installed family instead,
+        // preferring the Windows 11 variable font but always falling back to
+        // plain "Segoe UI", which ships on every supported Windows version.
+        private static System.Drawing.Font ResolveTrayFont(float size, System.Drawing.FontStyle style = System.Drawing.FontStyle.Regular)
+        {
+            const string preferred = "Segoe UI Variable Text";
+            const string fallback = "Segoe UI";
+
+            bool preferredInstalled = System.Drawing.FontFamily.Families
+                .Any(f => string.Equals(f.Name, preferred, StringComparison.OrdinalIgnoreCase));
+
+            return new System.Drawing.Font(preferredInstalled ? preferred : fallback, size, style);
+        }
+
         private Forms.ContextMenuStrip BuildTrayMenu()
         {
             var menu = new RoundedContextMenuStrip
@@ -704,7 +725,7 @@ namespace AmtPtpConfigGui
                 ShowCheckMargin = true,
                 AutoClose = true,
                 Padding = new System.Windows.Forms.Padding(8, 8, 8, 8),
-                Font = new System.Drawing.Font("Segoe UI Variable Text, Segoe UI", 9F),
+                Font = ResolveTrayFont(9F),
                 BackColor = System.Drawing.Color.FromArgb(250, 251, 253),
                 ForeColor = System.Drawing.Color.FromArgb(30, 34, 40),
                 Renderer = new ModernTrayRenderer(ThemeManager.CurrentThemeId),
@@ -731,7 +752,7 @@ namespace AmtPtpConfigGui
                 menu.BackColor = trayColors.Back;
                 menu.ForeColor = trayColors.Fore;
                 menu.Renderer = new ModernTrayRenderer(ThemeManager.CurrentThemeId);
-                menu.Font = new System.Drawing.Font("Segoe UI Variable Text, Segoe UI", 9F, System.Drawing.FontStyle.Regular);
+                menu.Font = ResolveTrayFont(9F);
                 menu.Items.Clear();
 
                 var header = new Forms.ToolStripMenuItem("Wellspring PTP")

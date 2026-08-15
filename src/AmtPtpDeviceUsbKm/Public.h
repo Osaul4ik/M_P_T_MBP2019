@@ -232,6 +232,28 @@ typedef struct _AMT_LIVE_FRAME
 #define IOCTL_AMT_PTP_RESET_SCROLL_CONFIG \
     CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 11, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// Vendor/product id plus whether the connected trackpad's packet format
+// actually carries a pressure channel (TYPE4/TYPE5 - see
+// DEVICE_CONTEXT::SupportsForceTouch in Device.h/AppleDefinition.h). The GUI
+// uses this to hide Force Touch settings entirely on hardware that has no
+// pressure sensor (e.g. pre-2015 MacBook Air / WELLSPRING8) instead of
+// showing controls the driver would just ignore. Read-only, no input buffer.
+#define IOCTL_AMT_PTP_GET_DEVICE_INFO \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 12, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+typedef struct _AMT_DEVICE_INFO
+{
+    ULONG  StructVersion;
+    USHORT VendorId;
+    USHORT ProductId;
+    UCHAR  SupportsForceTouch;
+    UCHAR  Reserved0;
+    UCHAR  Reserved1;
+    UCHAR  Reserved2;
+} AMT_DEVICE_INFO, *PAMT_DEVICE_INFO;
+
+#define AMT_DEVICE_INFO_VERSION 1
+
 typedef struct _AMT_SCROLL_CONFIG
 {
     ULONG StructVersion;

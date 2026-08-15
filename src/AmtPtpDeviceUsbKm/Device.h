@@ -332,6 +332,9 @@ NTSTATUS AmtPtpSetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
 _IRQL_requires_max_(DISPATCH_LEVEL)
 NTSTATUS AmtPtpResetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
 
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS AmtPtpGetDeviceInfo(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);
+
 // Best-effort registry persistence under the device's driver-software key
 // (HKLM\SYSTEM\...\Enum\...\Device Parameters, via WdfDeviceOpenRegistryKey).
 // Failure to read/write the registry is never fatal - PalmConfig always

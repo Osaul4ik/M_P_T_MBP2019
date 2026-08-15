@@ -301,6 +301,20 @@ namespace AmtPtpConfigGui.Native
                 case "MacBookPro15,4":
                     supportsForceTouch = true;
                     return $"{hostProduct} · {DescribeSmbiosModel(hostProduct)} · Force Touch";
+                // Known pre-Force-Touch hardware: report false explicitly
+                // instead of falling into the "unknown -> assume supported"
+                // default below. Without this, a MacBook Air (or an older
+                // pre-2015 Retina Pro) whose installed driver predates the
+                // GET_DEVICE_INFO IOCTL would fall through to "unknown" and
+                // the Force Touch group/tray items would incorrectly show,
+                // even though the SMBIOS name already tells us the hardware
+                // has no Force Touch trackpad.
+                case "MacBookAir6,1":
+                case "MacBookAir6,2":
+                case "MacBookAir7,1":
+                case "MacBookAir7,2":
+                    supportsForceTouch = false;
+                    return $"{hostProduct} · pre-Force Touch";
                 default:
                     supportsForceTouch = null;
                     return !string.IsNullOrWhiteSpace(hostProduct)

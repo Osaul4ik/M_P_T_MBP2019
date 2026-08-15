@@ -721,6 +721,46 @@ AmtPtpResetScrollConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     return STATUS_SUCCESS;
 }
 
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+AmtPtpGetDeviceInfo(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
+{
+    NTSTATUS         status;
+    PDEVICE_CONTEXT  pDeviceContext;
+    PAMT_DEVICE_INFO pOutInfo;
+    size_t           outLen = 0;
+
+    pDeviceContext = DeviceGetContext(Device);
+
+    status = WdfRequestRetrieveOutputBuffer(
+        Request, sizeof(AMT_DEVICE_INFO), (PVOID*)&pOutInfo, &outLen);
+    if (!NT_SUCCESS(status)) {
+        goto exit;
+    }
+
+    if (outLen < sizeof(AMT_DEVICE_INFO)) {
+        status = STATUS_BUFFER_TOO_SMALL;
+        goto exit;
+    }
+
+    RtlZeroMemory(pOutInfo, sizeof(AMT_DEVICE_INFO));
+    pOutInfo->StructVersion = AMT_DEVICE_INFO_VERSION;
+    // VendorId/ProductId are 0 (and SupportsForceTouch left FALSE) if
+    // EvtDevicePrepareHardware hasn't run yet - the GUI already treats
+    // ProductId==0 as "no device info" and falls back to the SMBIOS-name
+    // path, so this is a safe default rather than dereferencing anything
+    // that might not be populated yet.
+    pOutInfo->VendorId = pDeviceContext->DeviceDescriptor.idVendor;
+    pOutInfo->ProductId = pDeviceContext->DeviceDescriptor.idProduct;
+    pOutInfo->SupportsForceTouch = pDeviceContext->SupportsForceTouch ? 1 : 0;
+
+    WdfRequestSetInformation(Request, sizeof(AMT_DEVICE_INFO));
+    status = STATUS_SUCCESS;
+
+exit:
+    return status;
+}
+
 // ----------------------------------------------------------------------------
 // Control-device dispatch - called for IOCTLs arriving through
 // \\.\\AmtPtpDeviceUsbKm. The control device itself has no DEVICE_CONTEXT;
@@ -801,6 +841,10 @@ AmtPtpConfigControlEvtIoDeviceControl(
 
     case IOCTL_AMT_PTP_GET_LIVE_FRAME:
         status = AmtPtpGetLiveFrame(controlDevice, Request);
+        break;
+
+    case IOCTL_AMT_PTP_GET_DEVICE_INFO:
+        status = AmtPtpGetDeviceInfo(targetDevice, Request);
         break;
 
     default:
