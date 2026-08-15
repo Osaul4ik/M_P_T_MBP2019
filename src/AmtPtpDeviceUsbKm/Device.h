@@ -47,9 +47,23 @@ typedef enum _FORCE_TOUCH_DELIVERY_STATE
 typedef struct _AMT_CONFIG_CONTROL_CONTEXT
 {
     // The PnP filter device that owns the actual palm/geometry state.
-    // This is a WDF handle, not a raw WDM pointer.
+    // This is a WDF handle, not a raw WDM pointer. The control device holds
+    // an explicit WDF reference to keep TargetDevice alive until cleanup.
     WDFDEVICE TargetDevice;
 } AMT_CONFIG_CONTROL_CONTEXT, *PAMT_CONFIG_CONTROL_CONTEXT;
+
+typedef struct _AMT_CONFIG_CONTROL_FILE_CONTEXT
+{
+    // Only the file object that successfully enabled Live owns the active
+    // live session. Closing another handle must never disable another
+    // client's session.
+    BOOLEAN LiveOwner;
+} AMT_CONFIG_CONTROL_FILE_CONTEXT, *PAMT_CONFIG_CONTROL_FILE_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(
+    AMT_CONFIG_CONTROL_FILE_CONTEXT,
+    AmtConfigControlFileGetContext
+)
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(
     AMT_CONFIG_CONTROL_CONTEXT,
@@ -62,10 +76,19 @@ typedef struct _DEVICE_CONTEXT
     // Protect shared frame-processing state across concurrent USB completions.
     WDFSPINLOCK     StateLock;
 
+    // Live-monitor state has its own short lock so the USB frame-processing
+    // critical section does not include live snapshot publication.
+    WDFSPINLOCK     LiveLock;
+
     // USB - touched every interrupt/report cycle.
     WDFUSBDEVICE    UsbDevice;
     WDFUSBPIPE      InterruptPipe;
+
+    // Separate HID read queues for the digitizer and the force-touch mouse
+    // top-level collections. Queue.c classifies READ_REPORT requests by the
+    // caller-provided output-buffer size before forwarding them.
     WDFQUEUE        InputQueue;
+    WDFQUEUE        MouseInputQueue;
 
     // User-mode configuration endpoint. This is a separate KMDF control
     // device; the PnP FDO remains a lower filter and does not expose the
@@ -75,8 +98,10 @@ typedef struct _DEVICE_CONTEXT
     // Opt-in live monitor state. FALSE is the normal/idle state and the
     // interrupt path does not copy any live-monitor data when it is false.
     BOOLEAN         LiveEnabled;
+    WDFFILEOBJECT   LiveOwnerFileObject;
     ULONG           LiveSequence;
-    AMT_LIVE_FRAME  LiveFrame;
+    AMT_LIVE_FRAME  LiveFrame[2];
+    volatile LONG    LiveFrameIndex;
 
     // Device config
     const struct BCM5974_CONFIG* DeviceInfo;
@@ -258,6 +283,7 @@ EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL AmtPtpConfigControlEvtIoDeviceControl;
 // force LiveEnabled back off so the interrupt hot path never keeps building
 // live snapshots for a monitor that no longer exists.
 EVT_WDF_FILE_CLOSE AmtPtpConfigControlEvtFileClose;
+EVT_WDF_OBJECT_CONTEXT_CLEANUP AmtPtpConfigControlEvtConfigControlCleanup;
 
 NTSTATUS
 AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request);

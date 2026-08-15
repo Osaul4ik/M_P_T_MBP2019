@@ -2,7 +2,6 @@
 
 #include "Driver.h"
 #include "PTPCore.h"
-#include "PTPCore.tmh"
 #include "ActiveContact.h"
 #include "Match.h"
 
@@ -53,8 +52,8 @@ AmtRecentLiftFindNearby(
         return FALSE;
     }
 
-    LONG     bestDistSq = -1;
-    BOOLEAN  found       = FALSE;
+    ULONGLONG bestDistSq = ~0ULL;
+    BOOLEAN   found      = FALSE;
     USHORT   bestX = 0, bestY = 0;
 
     for (UCHAR i = 0; i < RECENT_LIFT_CAPACITY; i++) {
@@ -72,7 +71,7 @@ AmtRecentLiftFindNearby(
         if (dx > RETAP_MAX_DISTANCE || dy > RETAP_MAX_DISTANCE)
             continue;
 
-        LONG distSq = AmtDistSq(dx, dy);
+        ULONGLONG distSq = AmtDistSq(dx, dy);
         if (!found || distSq < bestDistSq) {
             bestDistSq = distSq;
             bestX      = e->X;
@@ -626,7 +625,7 @@ PTPCore_ProcessFrame(
         // Contacts are in sensor scan order, not stable slots - testing
         // all of them let an unrelated second finger trip the lockout.
         BOOLEAN trackAnchor = pCtx->ForceTouchAnchorValid;
-        LONG    bestDistSq  = -1;
+        ULONGLONG bestDistSq = ~0ULL;
         INT     bestDx = 0, bestDy = 0;
 
         for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
@@ -641,15 +640,15 @@ PTPCore_ProcessFrame(
 
             INT dx = (INT)RawFrame->Contacts[fi].X - (INT)pCtx->ForceTouchAnchorX;
             INT dy = (INT)RawFrame->Contacts[fi].Y - (INT)pCtx->ForceTouchAnchorY;
-            LONG distSq = AmtDistSq(dx, dy);
-            if (bestDistSq < 0 || distSq < bestDistSq) {
+            ULONGLONG distSq = AmtDistSq(dx, dy);
+            if (distSq < bestDistSq) {
                 bestDistSq = distSq;
                 bestDx     = dx;
                 bestDy     = dy;
             }
         }
 
-        if (trackAnchor && bestDistSq >= 0) {
+        if (trackAnchor && bestDistSq != ~0ULL) {
             INT adx = (bestDx < 0) ? -bestDx : bestDx;
             INT ady = (bestDy < 0) ? -bestDy : bestDy;
             if (adx > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE ||

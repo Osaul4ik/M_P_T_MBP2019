@@ -1,7 +1,6 @@
 // Queue entry points and callbacks. Kernel-mode Driver Framework
 
 #include "driver.h"
-#include "queue.tmh"
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (PAGE, AmtPtpDeviceUsbKmQueueInitialize)
@@ -57,6 +56,21 @@ AmtPtpDeviceUsbKmQueueInitialize(
         &queueConfig,
         WDF_NO_OBJECT_ATTRIBUTES,
         &pDeviceContext->InputQueue
+    );
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    // Separate manual queue for the force-touch mouse top-level collection.
+    WDF_IO_QUEUE_CONFIG_INIT(&queueConfig, WdfIoQueueDispatchManual);
+    queueConfig.PowerManaged = WdfFalse;
+    queueConfig.EvtIoStop = AmtPtpDeviceUsbKmEvtIoStop;
+
+    status = WdfIoQueueCreate(
+        Device,
+        &queueConfig,
+        WDF_NO_OBJECT_ATTRIBUTES,
+        &pDeviceContext->MouseInputQueue
     );
 
     return status;
@@ -131,9 +145,26 @@ AmtPtpDispatchReadReportRequests(
 
     pDevContext = DeviceGetContext(Device);
 
+    WDFMEMORY requestMemory;
+    size_t requestBufferLength = 0;
+    status = WdfRequestRetrieveOutputMemory(Request, &requestMemory);
+    if (!NT_SUCCESS(status)) {
+        goto exit;
+    }
+
+    (VOID)WdfMemoryGetBuffer(requestMemory, &requestBufferLength);
+
+    // HIDCLASS gives each collection a read buffer sized for that report.
+    // Route the fixed-size force-touch mouse report to its own manual queue;
+    // all other read reports stay on the digitizer queue.
+    WDFQUEUE targetQueue =
+        (requestBufferLength == sizeof(PTP_FORCETOUCH_MOUSE_REPORT))
+            ? pDevContext->MouseInputQueue
+            : pDevContext->InputQueue;
+
     status = WdfRequestForwardToIoQueue(
         Request,
-        pDevContext->InputQueue
+        targetQueue
     );
 
     if (!NT_SUCCESS(status)) {

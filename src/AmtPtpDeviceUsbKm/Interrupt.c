@@ -3,7 +3,6 @@
 #include "Driver.h"
 #include "PTPCore.h"
 #include "Input.h"
-#include "Interrupt.tmh"
 
 #if DBG
 static VOID
@@ -160,6 +159,8 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     NT_ASSERT(fingerSize != 0);
 
     if (NumBytesTransferred < headerSize ||
+        pCtx->DeviceInfo->tp_button >= NumBytesTransferred ||
+        pCtx->DeviceInfo->tp_delta > (NumBytesTransferred - headerSize) ||
         (NumBytesTransferred - headerSize) % fingerSize != 0) {
         return;
     }
@@ -225,13 +226,15 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         raw_n = (NumBytesTransferred - headerSize) / fingerSize;
         if (raw_n > PTP_MAX_CONTACT_POINTS) raw_n = PTP_MAX_CONTACT_POINTS;
 
-        // AUDIT: raw_n is floor(D/fingerSize), optionally clamped down to
-        // PTP_MAX_CONTACT_POINTS - either way raw_n*fingerSize can never
-        // exceed D, so the runtime check that used to sit here could never
-        // trigger (dead code, no actual protection). Kept as a debug-only
-        // invariant instead of dropping the guarantee's documentation
-        // entirely.
-        NT_ASSERT(raw_n * fingerSize <= (NumBytesTransferred - headerSize));
+        // tp_delta points from the packet header to the first finger record.
+        // Validate the whole final finger before handing the pointer to the
+        // parser; a valid integer floor for raw_n alone is not sufficient
+        // when a non-zero delta is present.
+        if (raw_n > 0 &&
+            pCtx->DeviceInfo->tp_delta >
+                (NumBytesTransferred - headerSize - (raw_n - 1) * fingerSize - fingerSize)) {
+            return;
+        }
 
         UCHAR* f_base = TouchBuffer + headerSize + pCtx->DeviceInfo->tp_delta;
         AmtInputParseFrame(f_base, fingerSize, raw_n, pCtx->DeviceInfo,
@@ -258,28 +261,50 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     AmtReportCheckInvariants(&Report);
 
-    //
-    // Optional live monitor snapshot. This is deliberately after PTPCore
-    // classification/serialization so the GUI sees the same stable contacts
-    // that the driver is about to report to Windows. When LiveEnabled is
-    // FALSE this whole block is skipped: no snapshot copy and no additional
-    // per-contact work is performed in the normal/idle path.
-    //
+    // Capture the force-touch queue state while StateLock is held. The report
+    // itself is already a local value, so copying it into the HID request can
+    // happen after the lock is released.
+    BOOLEAN needMouseDelivery =
+        forceTouchClick ||
+        (pCtx->ForceTouchDeliveryState != FORCE_TOUCH_DELIVERY_IDLE);
+
+    // The main state lock is no longer needed. Request-buffer copying and
+    // completion are both outside the spinlock so the DISPATCH_LEVEL
+    // critical section contains only driver-owned shared-state work.
+    WdfSpinLockRelease(pCtx->StateLock);
+
+    Status = WdfMemoryCopyFromBuffer(
+        RequestMemory, 0, (PVOID)&Report, sizeof(PTP_REPORT));
+    if (!NT_SUCCESS(Status)) {
+        WdfRequestComplete(Request, Status);
+        return;
+    }
+
+    WdfRequestSetInformation(Request, sizeof(PTP_REPORT));
+    WdfRequestComplete(Request, STATUS_SUCCESS);
+
+    // Optional live monitor snapshot. This is intentionally outside StateLock:
+    // coreFrame/rawFrame are local immutable results at this point, and the
+    // dedicated LiveLock protects only the live-monitor state.
+    WdfSpinLockAcquire(pCtx->LiveLock);
     if (pCtx->LiveEnabled) {
         ULONG i;
+        ULONG liveIndex = ((ULONG)InterlockedCompareExchange(
+            &pCtx->LiveFrameIndex, 0, 0)) ^ 1u;
+        PAMT_LIVE_FRAME liveFrame = &pCtx->LiveFrame[liveIndex & 1u];
 
         pCtx->LiveSequence++;
 
-        RtlZeroMemory(&pCtx->LiveFrame, sizeof(pCtx->LiveFrame));
-        pCtx->LiveFrame.StructVersion = AMT_LIVE_FRAME_VERSION;
-        pCtx->LiveFrame.Sequence = pCtx->LiveSequence;
-        pCtx->LiveFrame.TimestampQpc = Now.QuadPart;
-        pCtx->LiveFrame.ContactCount = coreFrame.ContactCount;
-        pCtx->LiveFrame.RawContactCount = rawFrame.ContactCount;
-        pCtx->LiveFrame.LargePalmBlanked = coreFrame.LargePalmBlanked ? 1 : 0;
-        pCtx->LiveFrame.ButtonDown = buttonSnapshot ? 1 : 0;
-        pCtx->LiveFrame.ForceTouchClick = forceTouchClick ? 1 : 0;
-        pCtx->LiveFrame.ButtonClickReport = buttonClickReport ? 1 : 0;
+        RtlZeroMemory(liveFrame, sizeof(*liveFrame));
+        liveFrame->StructVersion = AMT_LIVE_FRAME_VERSION;
+        liveFrame->Sequence = pCtx->LiveSequence;
+        liveFrame->TimestampQpc = Now.QuadPart;
+        liveFrame->ContactCount = coreFrame.ContactCount;
+        liveFrame->RawContactCount = rawFrame.ContactCount;
+        liveFrame->LargePalmBlanked = coreFrame.LargePalmBlanked ? 1 : 0;
+        liveFrame->ButtonDown = buttonSnapshot ? 1 : 0;
+        liveFrame->ForceTouchClick = forceTouchClick ? 1 : 0;
+        liveFrame->ButtonClickReport = buttonClickReport ? 1 : 0;
 
         for (i = 0;
              i < coreFrame.ContactCount && i < AMT_LIVE_MAX_CONTACTS;
@@ -289,23 +314,19 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
             ULONGLONG bestDistance = ~0ULL;
             BOOLEAN haveRawMatch = FALSE;
 
-            pCtx->LiveFrame.Contacts[i].ContactID =
+            liveFrame->Contacts[i].ContactID =
                 coreFrame.Contacts[i].ContactID;
-            pCtx->LiveFrame.Contacts[i].X =
+            liveFrame->Contacts[i].X =
                 coreFrame.Contacts[i].X;
-            pCtx->LiveFrame.Contacts[i].Y =
+            liveFrame->Contacts[i].Y =
                 coreFrame.Contacts[i].Y;
-            pCtx->LiveFrame.Contacts[i].Phase =
+            liveFrame->Contacts[i].Phase =
                 (ULONG)coreFrame.Contacts[i].Phase;
-            pCtx->LiveFrame.Contacts[i].Confident =
+            liveFrame->Contacts[i].Confident =
                 coreFrame.Contacts[i].Confident ? 1 : 0;
-            pCtx->LiveFrame.Contacts[i].PalmSuspect =
+            liveFrame->Contacts[i].PalmSuspect =
                 coreFrame.Contacts[i].PalmSuspect ? 1 : 0;
 
-            //
-            // Live-only calibration data: associate this processed contact
-            // with the nearest raw contact from the same USB frame.
-            //
             for (j = 0; j < rawFrame.ContactCount; ++j) {
                 LONGLONG dx = (LONGLONG)coreFrame.Contacts[i].X -
                                (LONGLONG)rawFrame.Contacts[j].X;
@@ -321,104 +342,57 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
             }
 
             if (haveRawMatch) {
-                pCtx->LiveFrame.Contacts[i].RawX =
+                liveFrame->Contacts[i].RawX =
                     rawFrame.Contacts[bestRawIndex].RawX;
-                pCtx->LiveFrame.Contacts[i].RawY =
+                liveFrame->Contacts[i].RawY =
                     rawFrame.Contacts[bestRawIndex].RawY;
-                pCtx->LiveFrame.Contacts[i].Major =
+                liveFrame->Contacts[i].Major =
                     rawFrame.Contacts[bestRawIndex].Major;
-                pCtx->LiveFrame.Contacts[i].Minor =
+                liveFrame->Contacts[i].Minor =
                     rawFrame.Contacts[bestRawIndex].Minor;
-                pCtx->LiveFrame.Contacts[i].Pressure =
+                liveFrame->Contacts[i].Pressure =
                     rawFrame.Contacts[bestRawIndex].Pressure;
-                pCtx->LiveFrame.Contacts[i].Orientation =
+                liveFrame->Contacts[i].Orientation =
                     rawFrame.Contacts[bestRawIndex].Orientation;
             } else {
-                //
-                // For a UP/deferred contact there may be no raw contact in
-                // the current frame. Reconstruct the best available raw
-                // coordinate from the normalized processed coordinate.
-                // Geometry (Major/Minor) is not reconstructable in this
-                // case - leave at 0 so the GUI falls back to a dot.
-                //
-                pCtx->LiveFrame.Contacts[i].RawX =
+                liveFrame->Contacts[i].RawX =
                     (SHORT)((LONG)coreFrame.Contacts[i].X +
                             pCtx->DeviceInfo->x.min);
-
-                pCtx->LiveFrame.Contacts[i].RawY =
+                liveFrame->Contacts[i].RawY =
                     (SHORT)(pCtx->DeviceInfo->y.max -
                             (LONG)coreFrame.Contacts[i].Y);
-
-                pCtx->LiveFrame.Contacts[i].Major = 0;
-                pCtx->LiveFrame.Contacts[i].Minor = 0;
+                liveFrame->Contacts[i].Major = 0;
+                liveFrame->Contacts[i].Minor = 0;
             }
         }
+
+        // Publish only after the inactive buffer is completely populated.
+        KeMemoryBarrier();
+        InterlockedExchange(
+            &pCtx->LiveFrameIndex,
+            (LONG)(liveIndex & 1u));
     }
+    WdfSpinLockRelease(pCtx->LiveLock);
 
-    Status = WdfMemoryCopyFromBuffer(
-        RequestMemory, 0, (PVOID)&Report, sizeof(PTP_REPORT));
-    if (!NT_SUCCESS(Status)) {
-        WdfSpinLockRelease(pCtx->StateLock);
-        WdfRequestComplete(Request, Status);
-        return;
-    }
+    // Mouse delivery is intentionally a separate, very short critical
+    // section around the force-touch state machine. Its request comes from
+    // MouseInputQueue, never the digitizer queue.
+    if (needMouseDelivery) {
+        WDFREQUEST mouseRequest = NULL;
+        WdfSpinLockAcquire(pCtx->StateLock);
 
-    WdfRequestSetInformation(Request, sizeof(PTP_REPORT));
-    WdfRequestComplete(Request, STATUS_SUCCESS);
-
-    // Force-touch -> synthetic right-click, delivered on the SEPARATE
-    // Mouse top-level collection (REPORTID_STANDARDMOUSE) - see
-    // AAPL_WELLSPRING_T2_FORCETOUCH_MOUSE_TLC. This never touches the
-    // PTP_REPORT/digitizer path above; it opportunistically claims a
-    // second pending IOCTL_HID_READ_REPORT request off the SAME manual
-    // InputQueue (mouhid.sys keeps its own read continuously queued
-    // there, same as the touch/digitizer client does).
-    //
-    // AUDIT FIX #1: edges were dropped if no mouse request was available
-    // that pass - depending on mouhid.sys's read cadence.
-    // AUDIT FIX #2: latching only the latest edge lost fast down+up pairs
-    // (the up overwrote the down, so Button2 never appeared to move).
-    //
-    // REWORK (stuck-button fix): a flat edge ring evicted its OLDEST raw
-    // edge on overflow, which could discard a click's UP after its DOWN
-    // had already been delivered - Button2 would then latch down forever.
-    // Delivery is now a DOWN/UP state machine (ForceTouchDeliveryState)
-    // for the one click in flight, backed by a queue of not-yet-started
-    // click counts (PendingForceTouchClickCount) that's always safe to
-    // trim - see the Device.h field comment.
-    //
-    // SIMPLIFICATION (2026-08-03): PTPCore now decides the whole click on
-    // the release frame (OutForceTouchClick) - nothing to test here.
-    //
-    // The action configured in PointerConfig.ForceTapAction decides how
-    // many click pulses this qualifying press enqueues: DOUBLE_CLICK needs
-    // two independent down+up pulses (see AmtForceTouchClickEnqueue),
-    // everything else is the usual single pulse.
-    if (forceTouchClick) {
-        UCHAR clickCount =
-            (pCtx->PointerConfig.ForceTapAction == AMT_POINTER_ACTION_DOUBLE_CLICK) ? 2 : 1;
-        AmtForceTouchClickEnqueue(pCtx, clickCount);
-    }
-
-    if (pCtx->ForceTouchDeliveryState != FORCE_TOUCH_DELIVERY_IDLE) {
-        BOOLEAN edgeButtonState =
-            (pCtx->ForceTouchDeliveryState == FORCE_TOUCH_DELIVERY_DOWN_PENDING);
-
-        WDFREQUEST mouseRequest;
-        Status = WdfIoQueueRetrieveNextRequest(pCtx->InputQueue, &mouseRequest);
+        Status = WdfIoQueueRetrieveNextRequest(pCtx->MouseInputQueue, &mouseRequest);
         if (NT_SUCCESS(Status)) {
             WDFMEMORY mouseRequestMemory;
             Status = WdfRequestRetrieveOutputMemory(mouseRequest, &mouseRequestMemory);
             if (NT_SUCCESS(Status)) {
                 PTP_FORCETOUCH_MOUSE_REPORT mouseReport;
+                BOOLEAN edgeButtonState =
+                    (pCtx->ForceTouchDeliveryState == FORCE_TOUCH_DELIVERY_DOWN_PENDING);
+
                 RtlZeroMemory(&mouseReport, sizeof(mouseReport));
                 mouseReport.ReportID = REPORTID_STANDARDMOUSE;
 
-                // Which button bit carries the edge depends on the
-                // configured action - context menu/middle click each fire
-                // once per press (single pulse enqueued above); double
-                // click fires Button1 twice (two pulses enqueued above),
-                // and Windows reads two fast left clicks as a double-click.
                 switch (pCtx->PointerConfig.ForceTapAction) {
                 case AMT_POINTER_ACTION_MIDDLE_CLICK:
                     mouseReport.Button3 = edgeButtonState ? 1 : 0;
@@ -436,28 +410,26 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
                     mouseRequestMemory, 0, (PVOID)&mouseReport, sizeof(mouseReport));
                 if (NT_SUCCESS(Status)) {
                     WdfRequestSetInformation(mouseRequest, sizeof(mouseReport));
-                }
-            }
-            WdfRequestComplete(mouseRequest, Status);
 
-            // DOWN just went out -> now the UP for this SAME click is owed
-            // and must be delivered before anything else starts. UP just
-            // went out -> this click is fully done; only now may the next
-            // queued click (if any) begin its own DOWN.
-            if (pCtx->ForceTouchDeliveryState == FORCE_TOUCH_DELIVERY_DOWN_PENDING) {
-                pCtx->ForceTouchDeliveryState = FORCE_TOUCH_DELIVERY_UP_PENDING;
-            } else {
-                pCtx->ForceTouchDeliveryState = FORCE_TOUCH_DELIVERY_IDLE;
-                if (pCtx->PendingForceTouchClickCount > 0) {
-                    pCtx->PendingForceTouchClickCount--;
-                    pCtx->ForceTouchDeliveryState = FORCE_TOUCH_DELIVERY_DOWN_PENDING;
+                    if (pCtx->ForceTouchDeliveryState == FORCE_TOUCH_DELIVERY_DOWN_PENDING) {
+                        pCtx->ForceTouchDeliveryState = FORCE_TOUCH_DELIVERY_UP_PENDING;
+                    } else {
+                        pCtx->ForceTouchDeliveryState = FORCE_TOUCH_DELIVERY_IDLE;
+                        if (pCtx->PendingForceTouchClickCount > 0) {
+                            pCtx->PendingForceTouchClickCount--;
+                            pCtx->ForceTouchDeliveryState = FORCE_TOUCH_DELIVERY_DOWN_PENDING;
+                        }
+                    }
                 }
             }
         }
-        // else: no second request yet - retry on the next completion.
-    }
 
-    WdfSpinLockRelease(pCtx->StateLock);
+        WdfSpinLockRelease(pCtx->StateLock);
+
+        if (mouseRequest != NULL) {
+            WdfRequestComplete(mouseRequest, Status);
+        }
+    }
 }
 
 BOOLEAN

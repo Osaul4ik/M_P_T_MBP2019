@@ -1,7 +1,6 @@
 // Device.c - Device handling events. Kernel-mode Driver Framework
 
 #include "driver.h"
-#include "device.tmh"
 #include "Match.h" // MATCH_MAX_TIME_DELTA_100NS, for the D0Entry tick-cache
 
 #ifdef ALLOC_PRAGMA
@@ -75,7 +74,7 @@ AmtPtpGetDeviceConfig(_In_ const PUSB_DEVICE_DESCRIPTOR DeviceDescriptor)
             return cfg;
     }
 
-    return &Bcm5974ConfigTable[0];
+    return NULL;
 }
 
 // AmtPtpCreateConfigControlDevice
@@ -98,7 +97,7 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
     PAGED_CODE();
 
     DECLARE_CONST_UNICODE_STRING(sddl,
-        L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;AU)");
+        L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)");
     DECLARE_CONST_UNICODE_STRING(ntName,
         L"\\Device\\AmtPtpDeviceUsbKm");
     DECLARE_CONST_UNICODE_STRING(dosName,
@@ -109,24 +108,28 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
         &sddl);
 
     if (controlInit == NULL) {
-        AMT_LOG("WdfControlDeviceInitAllocate FAILED");
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
     status = WdfDeviceInitAssignName(controlInit, &ntName);
     if (!NT_SUCCESS(status)) {
-        AMT_LOG("WdfDeviceInitAssignName(control) FAILED, status=0x%08X", status);
         WdfDeviceInitFree(controlInit);
         return status;
     }
 
     WdfDeviceInitSetExclusive(controlInit, FALSE);
+    WdfDeviceInitSetExecutionLevel(controlInit, WdfExecutionLevelPassive);
 
     // Wire up EvtFileClose so a handle closing for ANY reason - including
     // the GUI process dying without running its own cleanup - is caught by
     // the driver itself and used to force LiveEnabled back off.
     {
         WDF_FILEOBJECT_CONFIG fileConfig;
+        WDF_OBJECT_ATTRIBUTES fileContextAttributes;
+        WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
+            &fileContextAttributes,
+            AMT_CONFIG_CONTROL_FILE_CONTEXT);
+
         WDF_FILEOBJECT_CONFIG_INIT(
             &fileConfig,
             WDF_NO_EVENT_CALLBACK,             // EvtDeviceFileCreate
@@ -136,12 +139,13 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
         WdfDeviceInitSetFileObjectConfig(
             controlInit,
             &fileConfig,
-            WDF_NO_OBJECT_ATTRIBUTES);
+            &fileContextAttributes);
     }
 
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
         &controlAttributes,
         AMT_CONFIG_CONTROL_CONTEXT);
+    controlAttributes.EvtCleanupCallback = AmtPtpConfigControlEvtConfigControlCleanup;
 
     status = WdfDeviceCreate(
         &controlInit,
@@ -149,7 +153,6 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
         &controlDevice);
 
     if (!NT_SUCCESS(status)) {
-        AMT_LOG("WdfDeviceCreate(control) FAILED, status=0x%08X", status);
         return status;
     }
 
@@ -161,7 +164,6 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
         &dosName);
 
     if (!NT_SUCCESS(status)) {
-        AMT_LOG("WdfDeviceCreateSymbolicLink(control) FAILED, status=0x%08X", status);
         WdfObjectDelete(controlDevice);
         return status;
     }
@@ -179,7 +181,6 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
         WDF_NO_HANDLE);
 
     if (!NT_SUCCESS(status)) {
-        AMT_LOG("WdfIoQueueCreate(control) FAILED, status=0x%08X", status);
         WdfObjectDelete(controlDevice);
         return status;
     }
@@ -188,8 +189,6 @@ AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
     WdfControlFinishInitializing(controlDevice);
 
     DeviceGetContext(TargetDevice)->ConfigControlDevice = controlDevice;
-
-    AMT_LOG("Config control device created: \\DosDevices\\AmtPtpDeviceUsbKm");
     return STATUS_SUCCESS;
 }
 
@@ -223,17 +222,14 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     // needed on this device object itself.
     status = WdfDeviceCreate(&DeviceInit, &deviceAttributes, &device);
     if (!NT_SUCCESS(status)) {
-        AMT_LOG("WdfDeviceCreate FAILED, status=0x%08X", status);
         return status;
     }
-    AMT_LOG("WdfDeviceCreate succeeded");
 
     deviceContext = DeviceGetContext(device);
     RtlZeroMemory(deviceContext, sizeof(DEVICE_CONTEXT));
 
     deviceContext->ActiveContacts = AmtAllocateAlignedContactPool();
     if (deviceContext->ActiveContacts == NULL) {
-        AMT_LOG("AmtAllocateAlignedContactPool FAILED (STATUS_INSUFFICIENT_RESOURCES)");
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
@@ -275,7 +271,11 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
 
         status = WdfSpinLockCreate(&lockAttributes, &deviceContext->StateLock);
         if (!NT_SUCCESS(status)) {
-            AMT_LOG("WdfSpinLockCreate FAILED, status=0x%08X", status);
+            return status;
+        }
+
+        status = WdfSpinLockCreate(&lockAttributes, &deviceContext->LiveLock);
+        if (!NT_SUCCESS(status)) {
             return status;
         }
     }
@@ -285,13 +285,11 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     // interface is created on the filter FDO itself.
     status = AmtPtpCreateConfigControlDevice(device);
     if (!NT_SUCCESS(status)) {
-        AMT_LOG("AmtPtpCreateConfigControlDevice FAILED, status=0x%08X", status);
         return status;
     }
 
     status = AmtPtpDeviceUsbKmQueueInitialize(device);
     if (!NT_SUCCESS(status)) {
-        AMT_LOG("AmtPtpDeviceUsbKmQueueInitialize FAILED, status=0x%08X", status);
     }
 
     return status;
@@ -315,13 +313,10 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
 
     pDeviceContext = DeviceGetContext(Device);
 
-    AMT_LOG("EvtDevicePrepareHardware called");
-
     if (pDeviceContext->UsbDevice == NULL) {
         status = WdfUsbTargetDeviceCreate(
             Device, WDF_NO_OBJECT_ATTRIBUTES, &pDeviceContext->UsbDevice);
         if (!NT_SUCCESS(status)) {
-            AMT_LOG("WdfUsbTargetDeviceCreate FAILED, status=0x%08X", status);
             return status;
         }
     }
@@ -331,11 +326,17 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
 
     pDeviceContext->DeviceInfo = AmtPtpGetDeviceConfig(&pDeviceContext->DeviceDescriptor);
     if (pDeviceContext->DeviceInfo == NULL) {
-        AMT_LOG("AmtPtpGetDeviceConfig returned NULL (VID/PID/tp_type not recognized) - "
-                "vid=0x%04X pid=0x%04X, STATUS_INVALID_DEVICE_STATE",
-                pDeviceContext->DeviceDescriptor.idVendor,
-                pDeviceContext->DeviceDescriptor.idProduct);
-        return STATUS_INVALID_DEVICE_STATE;
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    // Fail closed if device metadata contains an impossible packet offset or
+    // vendor-mode buffer index. These are table values, but runtime checks
+    // keep future/edited entries from turning parser mistakes into OOB access.
+    if (pDeviceContext->DeviceInfo->tp_fsize == 0 ||
+        pDeviceContext->DeviceInfo->um_size == 0 ||
+        pDeviceContext->DeviceInfo->um_size > 8 ||
+        pDeviceContext->DeviceInfo->um_switch_idx >= pDeviceContext->DeviceInfo->um_size) {
+        return STATUS_INVALID_PARAMETER;
     }
 
     // Only TYPE4/TYPE5 packets carry a real pressure field (see
@@ -358,20 +359,16 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
 
     status = SelectInterruptInterface(Device);
     if (!NT_SUCCESS(status)) {
-        AMT_LOG("SelectInterruptInterface FAILED, status=0x%08X", status);
         return status;
     }
 
     status = AmtPtpConfigContReaderForInterruptEndPoint(pDeviceContext);
     if (!NT_SUCCESS(status)) {
-        AMT_LOG("AmtPtpConfigContReaderForInterruptEndPoint FAILED, status=0x%08X", status);
         return status;
     }
 
     pDeviceContext->PtpReportButton = TRUE;
     pDeviceContext->PtpReportTouch  = TRUE;
-
-    AMT_LOG("EvtDevicePrepareHardware succeeded");
     return status;
 }
 
@@ -390,8 +387,6 @@ AmtPtpEvtDeviceD0Entry(
 
     pDeviceContext  = DeviceGetContext(Device);
     isTargetStarted = FALSE;
-
-    AMT_LOG("EvtDeviceD0Entry called");
 
     pDeviceContext->LastReportTime =
         KeQueryPerformanceCounter(&pDeviceContext->PerfFrequency);
@@ -451,11 +446,9 @@ AmtPtpEvtDeviceD0Entry(
     status = WdfIoTargetStart(
         WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe));
     if (!NT_SUCCESS(status)) {
-        AMT_LOG("WdfIoTargetStart (interrupt pipe) FAILED, status=0x%08X", status);
         goto end;
     }
     isTargetStarted = TRUE;
-    AMT_LOG("EvtDeviceD0Entry succeeded, interrupt pipe started");
 
 end:
     if (!NT_SUCCESS(status) && isTargetStarted) {
@@ -504,6 +497,11 @@ AmtPtpEvtDeviceContextCleanup(
     // before releasing the physical device context so the GUI endpoint
     // cannot outlive the target WDFDEVICE.
     if (pDeviceContext->ConfigControlDevice != NULL) {
+        PAMT_CONFIG_CONTROL_CONTEXT controlContext =
+            AmtConfigControlGetContext(pDeviceContext->ConfigControlDevice);
+        if (controlContext != NULL)
+            controlContext->TargetDevice = NULL;
+
         WdfObjectDelete(pDeviceContext->ConfigControlDevice);
         pDeviceContext->ConfigControlDevice = NULL;
     }
@@ -596,7 +594,11 @@ AmtPtpSetWellspringMode(
         return STATUS_SUCCESS;
     }
 
-    NT_ASSERT(DeviceContext->DeviceInfo->um_size <= sizeof(buffer));
+    if (DeviceContext->DeviceInfo->um_size == 0 ||
+        DeviceContext->DeviceInfo->um_size > sizeof(buffer) ||
+        DeviceContext->DeviceInfo->um_switch_idx >= DeviceContext->DeviceInfo->um_size) {
+        return STATUS_INVALID_PARAMETER;
+    }
 
     WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(
         &memoryDescriptor, buffer, (ULONG)DeviceContext->DeviceInfo->um_size);

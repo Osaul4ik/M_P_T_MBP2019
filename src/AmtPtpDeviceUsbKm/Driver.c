@@ -3,7 +3,6 @@
 #define INITGUID
 #include <initguid.h>
 #include "driver.h"
-#include "driver.tmh"
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (INIT, DriverEntry)
@@ -16,18 +15,13 @@ DriverEntry(
     _In_ PDRIVER_OBJECT  DriverObject,
     _In_ PUNICODE_STRING RegistryPath
     )
-// Initialize tracing and register the device callback.
+// Initialize the driver and register the device callback.
 {
     WDF_DRIVER_CONFIG config;
     NTSTATUS status;
     WDF_OBJECT_ATTRIBUTES attributes;
 
-    // Init WPP
-    WPP_INIT_TRACING( DriverObject, RegistryPath );
-
-    AMT_LOG("DriverEntry called - driver image loaded by PnP manager");
-
-    // Register cleanup callback for WPP_CLEANUP.
+    // Register the driver cleanup callback.
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.EvtCleanupCallback = AmtPtpDeviceUsbKmEvtDriverContextCleanup;
 
@@ -43,12 +37,8 @@ DriverEntry(
                              );
 
     if (!NT_SUCCESS(status)) {
-        AMT_LOG("WdfDriverCreate FAILED, status=0x%08X", status);
-        WPP_CLEANUP(DriverObject);
         return status;
     }
-
-    AMT_LOG("WdfDriverCreate succeeded");
     return status;
 }
 
@@ -65,18 +55,13 @@ AmtPtpDeviceUsbKmEvtDeviceAdd(
 
     PAGED_CODE();
 
-    AMT_LOG("EvtDeviceAdd called - PnP manager is adding a device instance for our hwid/compatid match");
-
     WdfFdoInitSetFilter(DeviceInit);
     WdfPdoInitAllowForwardingRequestToParent(DeviceInit);
 
     status = AmtPtpDeviceUsbKmCreateDevice(DeviceInit);
 
     if (!NT_SUCCESS(status)) {
-        AMT_LOG("AmtPtpDeviceUsbKmCreateDevice FAILED, status=0x%08X - device will NOT start, "
-                "no device interface will exist, GUI has nothing to find", status);
     } else {
-        AMT_LOG("AmtPtpDeviceUsbKmCreateDevice succeeded - device interface should now be registered");
     }
 
     return status;
@@ -91,8 +76,5 @@ AmtPtpDeviceUsbKmEvtDriverContextCleanup(
     UNREFERENCED_PARAMETER(DriverObject);
 
     PAGED_CODE ();
-
-    // Stop WPP
-    WPP_CLEANUP( WdfDriverWdmGetDriverObject( (WDFDRIVER) DriverObject) );
 
 }

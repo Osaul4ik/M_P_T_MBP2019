@@ -127,6 +127,7 @@ namespace AmtPtpConfigGui
         private readonly DispatcherTimer _liveRenderTimer;
         private CancellationTokenSource? _liveCts;
         private Task? _livePollTask;
+        private int _livePollGeneration;
         private readonly object _liveFrameLock = new();
         private LiveFrame _latestLiveFrame;
         private bool _hasLatestLiveFrame;
@@ -508,7 +509,7 @@ namespace AmtPtpConfigGui
                 _appSettings.CloseToTray = closeToTray.IsChecked == true;
                 _appSettings.StartWithWindows = startup.IsChecked == true;
                 _appSettings.Theme = ThemeManager.Get(selectedTheme).Id;
-                AppSettingsStore.Save(_appSettings);
+                TrySaveAppSettings();
                 UpdateStartupRegistration(_appSettings.StartWithWindows);
 
                 RefreshTrayMenu();
@@ -622,8 +623,8 @@ namespace AmtPtpConfigGui
                 _appSettings.Theme = ThemeManager.Get(backup.AppSettings?.Theme).Id;
                 ThemeManager.Apply(_appSettings.Theme, Resources);
 
-                ProfileStore.Save(_profiles);
-                AppSettingsStore.Save(_appSettings);
+                TrySaveProfiles();
+                TrySaveAppSettings();
                 UpdateStartupRegistration(_appSettings.StartWithWindows);
 
                 var active = ActiveProfile;
@@ -957,6 +958,34 @@ namespace AmtPtpConfigGui
             RefreshTrayMenu();
         }
 
+        private bool TrySaveProfiles()
+        {
+            try
+            {
+                ProfileStore.Save(_profiles);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SetBottomStatus($"Could not save profiles: {ex.Message}");
+                return false;
+            }
+        }
+
+        private bool TrySaveAppSettings()
+        {
+            try
+            {
+                AppSettingsStore.Save(_appSettings);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SetBottomStatus($"Could not save application settings: {ex.Message}");
+                return false;
+            }
+        }
+
         private void SetForceTapActionFromTray(uint action)
         {
             _suppressPointerEvents = true;
@@ -986,7 +1015,7 @@ namespace AmtPtpConfigGui
         {
             _appSettings.PalmEdgeRejectionEnabled = !_appSettings.PalmEdgeRejectionEnabled;
             ChkPalmEdgeRejection.IsChecked = _appSettings.PalmEdgeRejectionEnabled;
-            AppSettingsStore.Save(_appSettings);
+            TrySaveAppSettings();
             ApplyPalmEdgeToggle(_appSettings.PalmEdgeRejectionEnabled);
             RefreshTrayMenu();
         }
@@ -998,7 +1027,7 @@ namespace AmtPtpConfigGui
 
             bool enabled = ChkPalmEdgeRejection.IsChecked == true;
             _appSettings.PalmEdgeRejectionEnabled = enabled;
-            AppSettingsStore.Save(_appSettings);
+            TrySaveAppSettings();
             ApplyPalmEdgeToggle(enabled);
             RefreshTrayMenu();
         }
@@ -1126,7 +1155,7 @@ namespace AmtPtpConfigGui
             _activeProfileIndex = _profiles.Count - 1;
             _profilesReady = true;
 
-            ProfileStore.Save(_profiles);
+            TrySaveProfiles();
             SetBottomStatus($"Created “{name}”. Click “Save” to save it as the current profile and apply it to the driver.");
         }
 
@@ -1149,7 +1178,7 @@ namespace AmtPtpConfigGui
 
             profile.Name = name;
             ProfileCombo.Items.Refresh();
-            ProfileStore.Save(_profiles);
+            TrySaveProfiles();
             SetBottomStatus($"Profile renamed to “{name}”.");
         }
 
@@ -1183,7 +1212,7 @@ namespace AmtPtpConfigGui
             _activeProfileIndex = nextIndex;
             _profilesReady = true;
 
-            ProfileStore.Save(_profiles);
+            TrySaveProfiles();
             var current = ActiveProfile;
             if (current != null)
             {
@@ -1336,6 +1365,11 @@ namespace AmtPtpConfigGui
 
         private void Reconnect()
         {
+            // Invalidate the current polling session before replacing the
+            // device handle. This prevents a stale worker from touching the
+            // newly connected handle after reconnect.
+            StopLivePolling();
+
             if (_liveEnabled)
             {
                 _device.SetLiveEnabled(false);
@@ -1708,31 +1742,52 @@ namespace AmtPtpConfigGui
         {
             StopLivePolling();
 
-            _liveCts = new CancellationTokenSource();
-            var token = _liveCts.Token;
+            int generation = Interlocked.Increment(ref _livePollGeneration);
+            var cts = new CancellationTokenSource();
+            _liveCts = cts;
+            var token = cts.Token;
 
             _livePollTask = Task.Run(() =>
             {
-                while (!token.IsCancellationRequested)
+                try
                 {
-                    if (_device.IsConnected && _device.TryGetLiveFrame(out var frame))
+                    while (!token.IsCancellationRequested &&
+                           generation == Volatile.Read(ref _livePollGeneration) &&
+                           Volatile.Read(ref _liveEnabled))
                     {
-                        lock (_liveFrameLock)
+                        if (_device.IsConnected &&
+                            _device.TryGetLiveFrame(out var frame) &&
+                            generation == Volatile.Read(ref _livePollGeneration))
                         {
-                            _latestLiveFrame = frame;
-                            _hasLatestLiveFrame = true;
+                            lock (_liveFrameLock)
+                            {
+                                _latestLiveFrame = frame;
+                                _hasLatestLiveFrame = true;
+                            }
                         }
-                    }
 
-                    token.WaitHandle.WaitOne(8);
+                        // The render timer is ~24 FPS; 30 Hz polling is enough
+                        // for smooth telemetry while cutting DeviceIoControl
+                        // and marshaling/GC work substantially versus 8 ms.
+                        token.WaitHandle.WaitOne(33);
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    // StopLivePolling can invalidate a session while the
+                    // worker is between cancellation and its wait handle.
                 }
             }, token);
         }
 
         private void StopLivePolling()
         {
+            Interlocked.Increment(ref _livePollGeneration);
+
             var cts = _liveCts;
+            var task = _livePollTask;
             _liveCts = null;
+            _livePollTask = null;
 
             if (cts == null)
                 return;
@@ -1740,14 +1795,13 @@ namespace AmtPtpConfigGui
             try
             {
                 cts.Cancel();
-                _livePollTask?.Wait(250);
+                task?.GetAwaiter().GetResult();
             }
-            catch (AggregateException)
+            catch (OperationCanceledException)
             {
             }
             finally
             {
-                _livePollTask = null;
                 cts.Dispose();
             }
         }
@@ -2068,10 +2122,72 @@ namespace AmtPtpConfigGui
         // would produce (PalmPreviewEngine mirrors Palm.c exactly).
         // ---------------------------------------------------------------
 
+        private Rectangle? _previewPadRect;
+        private readonly Rectangle[] _previewEdgeZones = new Rectangle[4];
+        private Line? _previewCenterVertical;
+        private Line? _previewCenterHorizontal;
+        private TextBlock? _previewEdgeLabel;
+        private Ellipse? _previewFinger;
+        private Line? _previewCrossHorizontal;
+        private Line? _previewCrossVertical;
+
+        private void EnsurePreviewVisuals()
+        {
+            if (PreviewCanvas == null || _previewPadRect != null)
+                return;
+
+            _previewPadRect = new Rectangle
+            {
+                Stroke = GlassPadStrokeBrush,
+                StrokeThickness = 1.5,
+                Fill = GlassPadBrush,
+                RadiusX = 14,
+                RadiusY = 14
+            };
+            PreviewCanvas.Children.Add(_previewPadRect);
+
+            _previewCenterVertical = new Line { Stroke = CrosshairBrush, StrokeThickness = 1 };
+            _previewCenterHorizontal = new Line { Stroke = CrosshairBrush, StrokeThickness = 1 };
+            PreviewCanvas.Children.Add(_previewCenterVertical);
+            PreviewCanvas.Children.Add(_previewCenterHorizontal);
+
+            for (int i = 0; i < _previewEdgeZones.Length; i++)
+            {
+                _previewEdgeZones[i] = new Rectangle { Fill = EdgeZoneBrush };
+                PreviewCanvas.Children.Add(_previewEdgeZones[i]);
+            }
+
+            _previewEdgeLabel = new TextBlock
+            {
+                Text = "EDGE ZONE",
+                Foreground = EdgeZoneLabelBrush,
+                FontSize = 12.5,
+                FontWeight = FontWeights.Bold,
+                FontFamily = new FontFamily("Segoe UI Semibold, Segoe UI")
+            };
+            PreviewCanvas.Children.Add(_previewEdgeLabel);
+
+            _previewFinger = new Ellipse
+            {
+                Stroke = Brushes.White,
+                StrokeThickness = 1.5
+            };
+            PreviewCanvas.Children.Add(_previewFinger);
+
+            _previewCrossHorizontal = new Line { Stroke = Brushes.Black, StrokeThickness = 1.5, Opacity = 0.55 };
+            _previewCrossVertical = new Line { Stroke = Brushes.Black, StrokeThickness = 1.5, Opacity = 0.55 };
+            PreviewCanvas.Children.Add(_previewCrossHorizontal);
+            PreviewCanvas.Children.Add(_previewCrossVertical);
+        }
+
         private void DrawPreview()
         {
             if (PreviewCanvas == null) return;
-            PreviewCanvas.Children.Clear();
+            EnsurePreviewVisuals();
+            if (_previewPadRect == null || _previewFinger == null ||
+                _previewCenterVertical == null || _previewCenterHorizontal == null ||
+                _previewEdgeLabel == null || _previewCrossHorizontal == null ||
+                _previewCrossVertical == null) return;
 
             double w = PreviewCanvas.Width;
             double h = PreviewCanvas.Height;
@@ -2081,43 +2197,28 @@ namespace AmtPtpConfigGui
 
             var cfg = ReadConfigFromSliders();
 
-            // Pad surface, drawn as a dark glass panel (see GlassPadBrush)
-            // instead of a plain white rectangle, so it reads as an actual
-            // trackpad rather than a generic canvas.
-            var padRect = new Rectangle
-            {
-                Width = w,
-                Height = h,
-                Stroke = GlassPadStrokeBrush,
-                StrokeThickness = 1.5,
-                Fill = GlassPadBrush,
-                RadiusX = 14,
-                RadiusY = 14,
-            };
-            Canvas.SetLeft(padRect, 0);
-            Canvas.SetTop(padRect, 0);
-            PreviewCanvas.Children.Add(padRect);
+            _previewPadRect.Width = w;
+            _previewPadRect.Height = h;
 
-            // Faint center crosshair guides, purely decorative/orientation -
-            // helps eyeball where the middle of the pad is at a glance,
-            // the way a real calibration jig would mark it.
-            AddGuideLine(w / 2, 0, w / 2, h);
-            AddGuideLine(0, h / 2, w, h / 2);
+            _previewCenterVertical.X1 = _previewCenterVertical.X2 = w / 2;
+            _previewCenterVertical.Y1 = 0;
+            _previewCenterVertical.Y2 = h;
+            _previewCenterHorizontal.X1 = 0;
+            _previewCenterHorizontal.X2 = w;
+            _previewCenterHorizontal.Y1 = _previewCenterHorizontal.Y2 = h / 2;
 
-            // Edge zone bands (semi-transparent red), sized from the sliders.
             double edgeTopPx = h * (cfg.EdgePermilleTop / 1000.0);
             double edgeBottomPx = h * (cfg.EdgePermilleBottom / 1000.0);
             double edgeLeftPx = w * (cfg.EdgePermilleLeft / 1000.0);
             double edgeRightPx = w * (cfg.EdgePermilleRight / 1000.0);
 
-            AddZoneRect(0, 0, w, edgeTopPx, EdgeZoneBrush);                       // top
-            AddZoneRect(0, h - edgeBottomPx, w, edgeBottomPx, EdgeZoneBrush);     // bottom
-            AddZoneRect(0, 0, edgeLeftPx, h, EdgeZoneBrush);                     // left
-            AddZoneRect(w - edgeRightPx, 0, edgeRightPx, h, EdgeZoneBrush);      // right
+            UpdatePreviewZone(_previewEdgeZones[0], 0, 0, w, edgeTopPx);
+            UpdatePreviewZone(_previewEdgeZones[1], 0, h - edgeBottomPx, w, edgeBottomPx);
+            UpdatePreviewZone(_previewEdgeZones[2], 0, 0, edgeLeftPx, h);
+            UpdatePreviewZone(_previewEdgeZones[3], w - edgeRightPx, 0, edgeRightPx, h);
+            Canvas.SetLeft(_previewEdgeLabel, 8);
+            Canvas.SetTop(_previewEdgeLabel, 6);
 
-            AddLabel("EDGE ZONE", 8, 6, EdgeZoneLabelBrush, 10);
-
-            // Test touch position (percent of pad -> canvas px, and -> sensor units).
             double testXPct = SlTestX.Value / 100.0;
             double testYPct = SlTestY.Value / 100.0;
             double px = testXPct * w;
@@ -2128,13 +2229,8 @@ namespace AmtPtpConfigGui
             int testMajor = (int)SlTestMajor.Value;
             int testMinor = (int)SlTestMinor.Value;
             bool isBirth = ChkIsBirth.IsChecked == true;
-
             var cls = PalmPreviewEngine.Classify(_geometry, cfg, testMajor, testMinor, sensorX, sensorY, isBirth);
 
-            // Major/Minor are both expressed in the same contact-size units.
-            // Use one uniform sensor->pixel scale for both axes so a circular
-            // contact stays circular and an elongated contact is not stretched
-            // just because the pad has different X/Y coordinate ranges.
             double physicalScale = Math.Min(w / xRange, h / yRange);
             double majorPx = Math.Max(12, testMajor * physicalScale);
             double minorPx = Math.Max(12, testMinor * physicalScale);
@@ -2147,20 +2243,19 @@ namespace AmtPtpConfigGui
                 _ => Brushes.Gray,
             };
 
-            var ellipse = new Ellipse
-            {
-                Width = majorPx,
-                Height = minorPx,
-                Fill = fingerBrush,
-                Stroke = Brushes.White,
-                StrokeThickness = 1.5,
-            };
-            Canvas.SetLeft(ellipse, px - majorPx / 2);
-            Canvas.SetTop(ellipse, py - minorPx / 2);
-            PreviewCanvas.Children.Add(ellipse);
+            _previewFinger.Width = majorPx;
+            _previewFinger.Height = minorPx;
+            _previewFinger.Fill = fingerBrush;
+            Canvas.SetLeft(_previewFinger, px - majorPx / 2);
+            Canvas.SetTop(_previewFinger, py - minorPx / 2);
 
-            // Crosshair at the exact touch point, for precise placement.
-            AddCross(px, py);
+            const double s = 8;
+            _previewCrossHorizontal.X1 = px - s;
+            _previewCrossHorizontal.X2 = px + s;
+            _previewCrossHorizontal.Y1 = _previewCrossHorizontal.Y2 = py;
+            _previewCrossVertical.X1 = _previewCrossVertical.X2 = px;
+            _previewCrossVertical.Y1 = py - s;
+            _previewCrossVertical.Y2 = py + s;
 
             string classLabel = cls switch
             {
@@ -2173,6 +2268,19 @@ namespace AmtPtpConfigGui
             };
             ClassificationText.Text = classLabel;
             ClassificationText.Foreground = fingerBrush;
+        }
+
+        private static void UpdatePreviewZone(Rectangle zone, double x, double y, double width, double height)
+        {
+            bool visible = width > 0 && height > 0;
+            zone.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            if (!visible)
+                return;
+
+            zone.Width = width;
+            zone.Height = height;
+            Canvas.SetLeft(zone, x);
+            Canvas.SetTop(zone, y);
         }
 
         private void AddZoneRect(double x, double y, double w, double h, System.Windows.Media.Brush brush)
@@ -2327,10 +2435,23 @@ namespace AmtPtpConfigGui
             var profile = ActiveProfile;
             if (profile != null)
             {
-                profile.Palm = ReadConfigFromSliders();
+                var savedPalm = ReadConfigFromSliders();
+                if (!_appSettings.PalmEdgeRejectionEnabled)
+                {
+                    // The UI/driver use zero as the effective edge config
+                    // while disabled, but the profile must retain the user's
+                    // configured edge widths for the next enable.
+                    var storedPalm = profile.Palm;
+                    savedPalm.EdgePermilleTop = storedPalm.EdgePermilleTop;
+                    savedPalm.EdgePermilleLeft = storedPalm.EdgePermilleLeft;
+                    savedPalm.EdgePermilleRight = storedPalm.EdgePermilleRight;
+                    savedPalm.EdgePermilleBottom = storedPalm.EdgePermilleBottom;
+                }
+
+                profile.Palm = savedPalm.Clamped();
                 profile.Pointer = requestedPointer.Clamped();
                 profile.Scroll = requestedScroll.StructVersion == 0 ? ScrollConfig.Default : requestedScroll.Clamped();
-                ProfileStore.Save(_profiles);
+                TrySaveProfiles();
             }
 
             if (!_device.IsConnected)
@@ -2397,7 +2518,7 @@ namespace AmtPtpConfigGui
                 active.Palm = ReadConfigFromSliders();
                 active.Pointer = ReadPointerConfigFromControls();
                 active.Scroll = ReadScrollConfigFromControls();
-                ProfileStore.Save(_profiles);
+                TrySaveProfiles();
             }
         }
 

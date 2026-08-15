@@ -26,7 +26,8 @@ namespace AmtPtpConfigGui.Native
         // AMT_PTP_IOCTL_INDEX (0x900) + offset, mirrored from Public.h.
         private const uint FileDeviceUnknown = 0x00000022;
         private const uint MethodBuffered = 0;
-        private const uint FileAnyAccess = 0;
+        private const uint FileReadAccess = 1;
+        private const uint FileWriteAccess = 2;
         private const uint AmtPtpIoctlIndex = 0x900;
 
         private static uint CtlCode(
@@ -40,77 +41,77 @@ namespace AmtPtpConfigGui.Native
             method;
 
         public static readonly uint IoctlGetDeviceInfo =
-            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 12, MethodBuffered, FileAnyAccess);
+            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 12, MethodBuffered, FileReadAccess);
 
         public static readonly uint IoctlGetPalmConfig =
             CtlCode(
                 FileDeviceUnknown,
                 AmtPtpIoctlIndex + 0,
                 MethodBuffered,
-                FileAnyAccess);
+                FileReadAccess);
 
         public static readonly uint IoctlSetPalmConfig =
             CtlCode(
                 FileDeviceUnknown,
                 AmtPtpIoctlIndex + 1,
                 MethodBuffered,
-                FileAnyAccess);
+                FileWriteAccess);
 
         public static readonly uint IoctlGetPadGeometry =
             CtlCode(
                 FileDeviceUnknown,
                 AmtPtpIoctlIndex + 2,
                 MethodBuffered,
-                FileAnyAccess);
+                FileReadAccess);
 
         public static readonly uint IoctlResetPalmConfig =
             CtlCode(
                 FileDeviceUnknown,
                 AmtPtpIoctlIndex + 3,
                 MethodBuffered,
-                FileAnyAccess);
+                FileWriteAccess);
 
         public static readonly uint IoctlSetLiveEnabled =
             CtlCode(
                 FileDeviceUnknown,
                 AmtPtpIoctlIndex + 4,
                 MethodBuffered,
-                FileAnyAccess);
+                FileWriteAccess);
 
         public static readonly uint IoctlGetLiveFrame =
             CtlCode(
                 FileDeviceUnknown,
                 AmtPtpIoctlIndex + 5,
                 MethodBuffered,
-                FileAnyAccess);
+                FileReadAccess);
 
         public static readonly uint IoctlGetPointerConfig =
             CtlCode(
                 FileDeviceUnknown,
                 AmtPtpIoctlIndex + 6,
                 MethodBuffered,
-                FileAnyAccess);
+                FileReadAccess);
 
         public static readonly uint IoctlSetPointerConfig =
             CtlCode(
                 FileDeviceUnknown,
                 AmtPtpIoctlIndex + 7,
                 MethodBuffered,
-                FileAnyAccess);
+                FileWriteAccess);
 
         public static readonly uint IoctlResetPointerConfig =
             CtlCode(
                 FileDeviceUnknown,
                 AmtPtpIoctlIndex + 8,
                 MethodBuffered,
-                FileAnyAccess);
+                FileWriteAccess);
 
         public static readonly uint IoctlGetScrollConfig =
-            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 9, MethodBuffered, FileAnyAccess);
+            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 9, MethodBuffered, FileReadAccess);
         public static readonly uint IoctlSetScrollConfig =
-            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 10, MethodBuffered, FileAnyAccess);
+            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 10, MethodBuffered, FileWriteAccess);
         public static readonly uint IoctlResetScrollConfig =
-            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 11, MethodBuffered, FileAnyAccess);
+            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 11, MethodBuffered, FileWriteAccess);
 
         private const string ControlDevicePath = @"\\.\AmtPtpDeviceUsbKm";
 
@@ -125,8 +126,16 @@ namespace AmtPtpConfigGui.Native
         private IntPtr _liveFrameBuffer;
         private int _liveFrameBufferSize;
 
-        public bool IsConnected =>
-            _handle != null && !_handle.IsInvalid;
+        public bool IsConnected
+        {
+            get
+            {
+                lock (_ioLock)
+                {
+                    return _handle != null && !_handle.IsInvalid;
+                }
+            }
+        }
 
         /// <summary>
         /// Human-readable reason the last TryConnect() call failed.
@@ -172,9 +181,21 @@ namespace AmtPtpConfigGui.Native
                     return Fail($"CreateFile('{ControlDevicePath}')");
                 }
 
+                int liveFrameSize = Marshal.SizeOf<LiveFrame>();
+                IntPtr liveFrameBuffer;
+                try
+                {
+                    liveFrameBuffer = Marshal.AllocHGlobal(liveFrameSize);
+                }
+                catch
+                {
+                    handle.Dispose();
+                    throw;
+                }
+
                 _handle = handle;
-                _liveFrameBufferSize = Marshal.SizeOf<LiveFrame>();
-                _liveFrameBuffer = Marshal.AllocHGlobal(_liveFrameBufferSize);
+                _liveFrameBufferSize = liveFrameSize;
+                _liveFrameBuffer = liveFrameBuffer;
                 return true;
             }
         }
@@ -203,33 +224,36 @@ namespace AmtPtpConfigGui.Native
 
         public bool TryGetDeviceInfo(out DeviceInfo info)
         {
-            info = default;
-            if (!IsConnected)
-                return false;
-
-            int size = Marshal.SizeOf<DeviceInfo>();
-            IntPtr outBuf = Marshal.AllocHGlobal(size);
-            try
+            lock (_ioLock)
             {
-                bool ok = DeviceIoControl(
-                    _handle!,
-                    IoctlGetDeviceInfo,
-                    IntPtr.Zero,
-                    0,
-                    outBuf,
-                    (uint)size,
-                    out uint bytesReturned,
-                    IntPtr.Zero);
-
-                if (!ok || bytesReturned < (uint)size)
+                info = default;
+                if (_handle == null || _handle.IsInvalid)
                     return false;
 
-                info = Marshal.PtrToStructure<DeviceInfo>(outBuf);
-                return info.StructVersion == 1;
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(outBuf);
+                int size = Marshal.SizeOf<DeviceInfo>();
+                IntPtr outBuf = Marshal.AllocHGlobal(size);
+                try
+                {
+                    bool ok = DeviceIoControl(
+                        _handle,
+                        IoctlGetDeviceInfo,
+                        IntPtr.Zero,
+                        0,
+                        outBuf,
+                        (uint)size,
+                        out uint bytesReturned,
+                        IntPtr.Zero);
+
+                    if (!ok || bytesReturned < (uint)size)
+                        return false;
+
+                    info = Marshal.PtrToStructure<DeviceInfo>(outBuf);
+                    return info.StructVersion == 1;
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(outBuf);
+                }
             }
         }
 
@@ -334,6 +358,25 @@ namespace AmtPtpConfigGui.Native
             _ => hostProduct
         };
 
+        private bool TryControlIoctl(uint code)
+        {
+            lock (_ioLock)
+            {
+                if (_handle == null || _handle.IsInvalid)
+                    return false;
+
+                return DeviceIoControl(
+                    _handle,
+                    code,
+                    IntPtr.Zero,
+                    0,
+                    IntPtr.Zero,
+                    0,
+                    out _,
+                    IntPtr.Zero);
+            }
+        }
+
         public bool TryGetPalmConfig(
             out PalmConfig config)
         {
@@ -368,23 +411,9 @@ namespace AmtPtpConfigGui.Native
         {
             applied = PalmConfig.Default;
 
-            if (!IsConnected)
+            if (!TryControlIoctl(IoctlResetPalmConfig))
                 return false;
 
-            bool ok = DeviceIoControl(
-                _handle!,
-                IoctlResetPalmConfig,
-                IntPtr.Zero,
-                0,
-                IntPtr.Zero,
-                0,
-                out _,
-                IntPtr.Zero);
-
-            if (!ok)
-                return false;
-
-            // Driver doesn't echo a buffer back for RESET - just re-fetch.
             return TryGetPalmConfig(out applied);
         }
 
@@ -422,23 +451,9 @@ namespace AmtPtpConfigGui.Native
         {
             applied = PointerConfig.Default;
 
-            if (!IsConnected)
+            if (!TryControlIoctl(IoctlResetPointerConfig))
                 return false;
 
-            bool ok = DeviceIoControl(
-                _handle!,
-                IoctlResetPointerConfig,
-                IntPtr.Zero,
-                0,
-                IntPtr.Zero,
-                0,
-                out _,
-                IntPtr.Zero);
-
-            if (!ok)
-                return false;
-
-            // Driver doesn't echo a buffer back for RESET - just re-fetch.
             return TryGetPointerConfig(out applied);
         }
 
@@ -459,54 +474,49 @@ namespace AmtPtpConfigGui.Native
         public bool TryResetScrollConfig(out ScrollConfig applied)
         {
             applied = ScrollConfig.Default;
-            if (!IsConnected) return false;
-            bool ok = DeviceIoControl(_handle!, IoctlResetScrollConfig, IntPtr.Zero, 0, IntPtr.Zero, 0, out _, IntPtr.Zero);
-            return ok && TryGetScrollConfig(out applied);
+            if (!TryControlIoctl(IoctlResetScrollConfig))
+                return false;
+            return TryGetScrollConfig(out applied);
         }
 
         public bool TryGetPadGeometry(
             out PadGeometry geometry)
         {
-            geometry = PadGeometry.Fallback;
-
-            if (!IsConnected)
-                return false;
-
-            int size =
-                Marshal.SizeOf<PadGeometry>();
-
-            IntPtr outBuf =
-                Marshal.AllocHGlobal(size);
-
-            try
+            lock (_ioLock)
             {
-                bool ok = DeviceIoControl(
-                    _handle!,
-                    IoctlGetPadGeometry,
-                    IntPtr.Zero,
-                    0,
-                    outBuf,
-                    (uint)size,
-                    out uint bytesReturned,
-                    IntPtr.Zero);
+                geometry = PadGeometry.Fallback;
 
-                if (!ok || bytesReturned < size)
+                if (_handle == null || _handle.IsInvalid)
                     return false;
 
-                var result =
-                    Marshal.PtrToStructure<PadGeometry>(
-                        outBuf);
+                int size = Marshal.SizeOf<PadGeometry>();
+                IntPtr outBuf = Marshal.AllocHGlobal(size);
+                try
+                {
+                    bool ok = DeviceIoControl(
+                        _handle,
+                        IoctlGetPadGeometry,
+                        IntPtr.Zero,
+                        0,
+                        outBuf,
+                        (uint)size,
+                        out uint bytesReturned,
+                        IntPtr.Zero);
 
-                if (!result.IsValid)
-                    return false;
+                    if (!ok || bytesReturned < (uint)size)
+                        return false;
 
-                geometry = result;
+                    var result = Marshal.PtrToStructure<PadGeometry>(outBuf);
+                    if (!result.IsValid)
+                        return false;
 
-                return true;
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(outBuf);
+                    geometry = result;
+                    return true;
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(outBuf);
+                }
             }
         }
 
@@ -515,57 +525,41 @@ namespace AmtPtpConfigGui.Native
             PalmConfig? input,
             ref PalmConfig output)
         {
-            int size =
-                Marshal.SizeOf<PalmConfig>();
-
-            IntPtr inBuf = IntPtr.Zero;
-
-            IntPtr outBuf =
-                Marshal.AllocHGlobal(size);
-
-            try
+            lock (_ioLock)
             {
-                uint inSize = 0;
-
-                if (input.HasValue)
-                {
-                    inBuf =
-                        Marshal.AllocHGlobal(size);
-
-                    Marshal.StructureToPtr(
-                        input.Value,
-                        inBuf,
-                        false);
-
-                    inSize =
-                        (uint)size;
-                }
-
-                bool ok = DeviceIoControl(
-                    _handle!,
-                    code,
-                    inBuf,
-                    inSize,
-                    outBuf,
-                    (uint)size,
-                    out uint bytesReturned,
-                    IntPtr.Zero);
-
-                if (!ok || bytesReturned < size)
+                if (_handle == null || _handle.IsInvalid)
                     return false;
 
-                output =
-                    Marshal.PtrToStructure<PalmConfig>(
-                        outBuf);
+                int size = Marshal.SizeOf<PalmConfig>();
+                IntPtr inBuf = IntPtr.Zero;
+                IntPtr outBuf = Marshal.AllocHGlobal(size);
 
-                return true;
-            }
-            finally
-            {
-                if (inBuf != IntPtr.Zero)
-                    Marshal.FreeHGlobal(inBuf);
+                try
+                {
+                    uint inSize = 0;
+                    if (input.HasValue)
+                    {
+                        inBuf = Marshal.AllocHGlobal(size);
+                        Marshal.StructureToPtr(input.Value, inBuf, false);
+                        inSize = (uint)size;
+                    }
 
-                Marshal.FreeHGlobal(outBuf);
+                    bool ok = DeviceIoControl(
+                        _handle, code, inBuf, inSize, outBuf, (uint)size,
+                        out uint bytesReturned, IntPtr.Zero);
+
+                    if (!ok || bytesReturned < (uint)size)
+                        return false;
+
+                    output = Marshal.PtrToStructure<PalmConfig>(outBuf);
+                    return true;
+                }
+                finally
+                {
+                    if (inBuf != IntPtr.Zero)
+                        Marshal.FreeHGlobal(inBuf);
+                    Marshal.FreeHGlobal(outBuf);
+                }
             }
         }
 
@@ -574,57 +568,41 @@ namespace AmtPtpConfigGui.Native
             PointerConfig? input,
             ref PointerConfig output)
         {
-            int size =
-                Marshal.SizeOf<PointerConfig>();
-
-            IntPtr inBuf = IntPtr.Zero;
-
-            IntPtr outBuf =
-                Marshal.AllocHGlobal(size);
-
-            try
+            lock (_ioLock)
             {
-                uint inSize = 0;
-
-                if (input.HasValue)
-                {
-                    inBuf =
-                        Marshal.AllocHGlobal(size);
-
-                    Marshal.StructureToPtr(
-                        input.Value,
-                        inBuf,
-                        false);
-
-                    inSize =
-                        (uint)size;
-                }
-
-                bool ok = DeviceIoControl(
-                    _handle!,
-                    code,
-                    inBuf,
-                    inSize,
-                    outBuf,
-                    (uint)size,
-                    out uint bytesReturned,
-                    IntPtr.Zero);
-
-                if (!ok || bytesReturned < size)
+                if (_handle == null || _handle.IsInvalid)
                     return false;
 
-                output =
-                    Marshal.PtrToStructure<PointerConfig>(
-                        outBuf);
+                int size = Marshal.SizeOf<PointerConfig>();
+                IntPtr inBuf = IntPtr.Zero;
+                IntPtr outBuf = Marshal.AllocHGlobal(size);
 
-                return true;
-            }
-            finally
-            {
-                if (inBuf != IntPtr.Zero)
-                    Marshal.FreeHGlobal(inBuf);
+                try
+                {
+                    uint inSize = 0;
+                    if (input.HasValue)
+                    {
+                        inBuf = Marshal.AllocHGlobal(size);
+                        Marshal.StructureToPtr(input.Value, inBuf, false);
+                        inSize = (uint)size;
+                    }
 
-                Marshal.FreeHGlobal(outBuf);
+                    bool ok = DeviceIoControl(
+                        _handle, code, inBuf, inSize, outBuf, (uint)size,
+                        out uint bytesReturned, IntPtr.Zero);
+
+                    if (!ok || bytesReturned < (uint)size)
+                        return false;
+
+                    output = Marshal.PtrToStructure<PointerConfig>(outBuf);
+                    return true;
+                }
+                finally
+                {
+                    if (inBuf != IntPtr.Zero)
+                        Marshal.FreeHGlobal(inBuf);
+                    Marshal.FreeHGlobal(outBuf);
+                }
             }
         }
 
@@ -633,72 +611,70 @@ namespace AmtPtpConfigGui.Native
             ScrollConfig? input,
             ref ScrollConfig output)
         {
-            int size =
-                Marshal.SizeOf<ScrollConfig>();
-
-            IntPtr inBuf = IntPtr.Zero;
-            IntPtr outBuf =
-                Marshal.AllocHGlobal(size);
-
-            try
+            lock (_ioLock)
             {
-                uint inSize = 0;
-
-                if (input.HasValue)
-                {
-                    inBuf = Marshal.AllocHGlobal(size);
-                    Marshal.StructureToPtr(input.Value, inBuf, false);
-                    inSize = (uint)size;
-                }
-
-                bool ok = DeviceIoControl(
-                    _handle!,
-                    code,
-                    inBuf,
-                    inSize,
-                    outBuf,
-                    (uint)size,
-                    out uint bytesReturned,
-                    IntPtr.Zero);
-
-                if (!ok || bytesReturned < size)
+                if (_handle == null || _handle.IsInvalid)
                     return false;
 
-                output = Marshal.PtrToStructure<ScrollConfig>(outBuf);
-                return true;
-            }
-            finally
-            {
-                if (inBuf != IntPtr.Zero)
-                    Marshal.FreeHGlobal(inBuf);
+                int size = Marshal.SizeOf<ScrollConfig>();
+                IntPtr inBuf = IntPtr.Zero;
+                IntPtr outBuf = Marshal.AllocHGlobal(size);
 
-                Marshal.FreeHGlobal(outBuf);
+                try
+                {
+                    uint inSize = 0;
+                    if (input.HasValue)
+                    {
+                        inBuf = Marshal.AllocHGlobal(size);
+                        Marshal.StructureToPtr(input.Value, inBuf, false);
+                        inSize = (uint)size;
+                    }
+
+                    bool ok = DeviceIoControl(
+                        _handle, code, inBuf, inSize, outBuf, (uint)size,
+                        out uint bytesReturned, IntPtr.Zero);
+
+                    if (!ok || bytesReturned < (uint)size)
+                        return false;
+
+                    output = Marshal.PtrToStructure<ScrollConfig>(outBuf);
+                    return true;
+                }
+                finally
+                {
+                    if (inBuf != IntPtr.Zero)
+                        Marshal.FreeHGlobal(inBuf);
+                    Marshal.FreeHGlobal(outBuf);
+                }
             }
         }
 
         public bool SetLiveEnabled(bool enabled)
         {
-            if (!IsConnected)
-                return false;
-
-            IntPtr inBuf = Marshal.AllocHGlobal(sizeof(int));
-            try
+            lock (_ioLock)
             {
-                Marshal.WriteInt32(inBuf, enabled ? 1 : 0);
+                if (_handle == null || _handle.IsInvalid)
+                    return false;
 
-                return DeviceIoControl(
-                    _handle!,
-                    IoctlSetLiveEnabled,
-                    inBuf,
-                    sizeof(int),
-                    IntPtr.Zero,
-                    0,
-                    out _,
-                    IntPtr.Zero);
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(inBuf);
+                IntPtr inBuf = Marshal.AllocHGlobal(sizeof(int));
+                try
+                {
+                    Marshal.WriteInt32(inBuf, enabled ? 1 : 0);
+
+                    return DeviceIoControl(
+                        _handle,
+                        IoctlSetLiveEnabled,
+                        inBuf,
+                        sizeof(int),
+                        IntPtr.Zero,
+                        0,
+                        out _,
+                        IntPtr.Zero);
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(inBuf);
+                }
             }
         }
 

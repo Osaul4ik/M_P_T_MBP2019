@@ -861,8 +861,8 @@ AmtPtpConfigControlEvtIoDeviceControl(
 //
 // Explicitly opt-in. SET_LIVE_ENABLED toggles a cheap boolean. While false,
 // Interrupt.c does not build/copy a live snapshot at all. While true, the
-// latest processed frame is copied into DeviceContext->LiveFrame under the
-// same StateLock already protecting the frame-processing state. The GUI
+// Latest processed frame is copied into DeviceContext->LiveFrame under the
+// dedicated LiveLock so frame processing does not hold the long StateLock. The GUI
 // polls GET_LIVE_FRAME only while its Live checkbox is checked.
 // ----------------------------------------------------------------------------
 
@@ -870,12 +870,20 @@ NTSTATUS
 AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
 {
     PAMT_CONFIG_CONTROL_CONTEXT controlContext;
+    PAMT_CONFIG_CONTROL_FILE_CONTEXT fileContext;
     PDEVICE_CONTEXT targetContext;
+    WDFFILEOBJECT fileObject;
     PULONG enabled;
     size_t inputLength = 0;
 
     controlContext = AmtConfigControlGetContext(Device);
-    if (controlContext == NULL || controlContext->TargetDevice == NULL) {
+    fileObject = WdfRequestGetFileObject(Request);
+    fileContext = fileObject != NULL
+        ? AmtConfigControlFileGetContext(fileObject)
+        : NULL;
+
+    if (controlContext == NULL || controlContext->TargetDevice == NULL ||
+        fileContext == NULL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
@@ -887,18 +895,34 @@ AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
         return status;
     }
 
-    WdfSpinLockAcquire(targetContext->StateLock);
+    WdfSpinLockAcquire(targetContext->LiveLock);
 
-    targetContext->LiveEnabled = (*enabled != 0) ? TRUE : FALSE;
+    if (*enabled != 0) {
+        if (targetContext->LiveOwnerFileObject != NULL &&
+            targetContext->LiveOwnerFileObject != fileObject) {
+            WdfSpinLockRelease(targetContext->LiveLock);
+            return STATUS_SHARING_VIOLATION;
+        }
 
-    if (targetContext->LiveEnabled) {
-        // Start a fresh sequence for every GUI monitoring session.
+        targetContext->LiveOwnerFileObject = fileObject;
+        fileContext->LiveOwner = TRUE;
+        targetContext->LiveEnabled = TRUE;
         targetContext->LiveSequence = 0;
-        RtlZeroMemory(&targetContext->LiveFrame, sizeof(targetContext->LiveFrame));
-        targetContext->LiveFrame.StructVersion = AMT_LIVE_FRAME_VERSION;
+        InterlockedExchange(&targetContext->LiveFrameIndex, 0);
+        RtlZeroMemory(targetContext->LiveFrame, sizeof(targetContext->LiveFrame));
+        targetContext->LiveFrame[0].StructVersion = AMT_LIVE_FRAME_VERSION;
+    } else {
+        if (targetContext->LiveOwnerFileObject != fileObject) {
+            WdfSpinLockRelease(targetContext->LiveLock);
+            return STATUS_ACCESS_DENIED;
+        }
+
+        targetContext->LiveEnabled = FALSE;
+        targetContext->LiveOwnerFileObject = NULL;
+        fileContext->LiveOwner = FALSE;
     }
 
-    WdfSpinLockRelease(targetContext->StateLock);
+    WdfSpinLockRelease(targetContext->LiveLock);
 
     WdfRequestSetInformation(Request, 0);
     return STATUS_SUCCESS;
@@ -908,12 +932,19 @@ NTSTATUS
 AmtPtpGetLiveFrame(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
 {
     PAMT_CONFIG_CONTROL_CONTEXT controlContext;
+    PAMT_CONFIG_CONTROL_FILE_CONTEXT fileContext;
     PDEVICE_CONTEXT targetContext;
     PAMT_LIVE_FRAME output;
     size_t outputLength = 0;
 
     controlContext = AmtConfigControlGetContext(Device);
-    if (controlContext == NULL || controlContext->TargetDevice == NULL) {
+    WDFFILEOBJECT fileObject = WdfRequestGetFileObject(Request);
+    fileContext = fileObject != NULL
+        ? AmtConfigControlFileGetContext(fileObject)
+        : NULL;
+
+    if (controlContext == NULL || controlContext->TargetDevice == NULL ||
+        fileContext == NULL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
@@ -925,16 +956,24 @@ AmtPtpGetLiveFrame(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
         return status;
     }
 
-    WdfSpinLockAcquire(targetContext->StateLock);
+    WdfSpinLockAcquire(targetContext->LiveLock);
+
+    if (!fileContext->LiveOwner ||
+        targetContext->LiveOwnerFileObject != fileObject) {
+        WdfSpinLockRelease(targetContext->LiveLock);
+        return STATUS_ACCESS_DENIED;
+    }
 
     if (!targetContext->LiveEnabled) {
-        WdfSpinLockRelease(targetContext->StateLock);
+        WdfSpinLockRelease(targetContext->LiveLock);
         return STATUS_DEVICE_NOT_READY;
     }
 
-    *output = targetContext->LiveFrame;
+    ULONG index = (ULONG)InterlockedCompareExchange(
+        &targetContext->LiveFrameIndex, 0, 0);
+    *output = targetContext->LiveFrame[index & 1u];
 
-    WdfSpinLockRelease(targetContext->StateLock);
+    WdfSpinLockRelease(targetContext->LiveLock);
 
     WdfRequestSetInformation(Request, sizeof(AMT_LIVE_FRAME));
     return STATUS_SUCCESS;
@@ -960,18 +999,35 @@ AmtPtpConfigControlEvtFileClose(_In_ WDFFILEOBJECT FileObject)
 {
     WDFDEVICE                   controlDevice;
     PAMT_CONFIG_CONTROL_CONTEXT controlContext;
+    PAMT_CONFIG_CONTROL_FILE_CONTEXT fileContext;
     PDEVICE_CONTEXT             targetContext;
 
     controlDevice = WdfFileObjectGetDevice(FileObject);
-
     controlContext = AmtConfigControlGetContext(controlDevice);
-    if (controlContext == NULL || controlContext->TargetDevice == NULL) {
+    fileContext = AmtConfigControlFileGetContext(FileObject);
+
+    if (fileContext == NULL || !fileContext->LiveOwner ||
+        controlContext == NULL || controlContext->TargetDevice == NULL) {
         return;
     }
 
     targetContext = DeviceGetContext(controlContext->TargetDevice);
 
-    WdfSpinLockAcquire(targetContext->StateLock);
-    targetContext->LiveEnabled = FALSE;
-    WdfSpinLockRelease(targetContext->StateLock);
+    WdfSpinLockAcquire(targetContext->LiveLock);
+    if (targetContext->LiveOwnerFileObject == FileObject) {
+        targetContext->LiveEnabled = FALSE;
+        targetContext->LiveOwnerFileObject = NULL;
+    }
+    fileContext->LiveOwner = FALSE;
+    WdfSpinLockRelease(targetContext->LiveLock);
+}
+
+VOID
+AmtPtpConfigControlEvtConfigControlCleanup(_In_ WDFOBJECT Object)
+{
+    WDFDEVICE controlDevice = (WDFDEVICE)Object;
+    PAMT_CONFIG_CONTROL_CONTEXT controlContext =
+        AmtConfigControlGetContext(controlDevice);
+
+    controlContext->TargetDevice = NULL;
 }

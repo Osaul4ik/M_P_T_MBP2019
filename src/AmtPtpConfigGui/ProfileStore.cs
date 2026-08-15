@@ -22,6 +22,8 @@ namespace AmtPtpConfigGui
         private static readonly string DirectoryPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WellspringPTP");
         private static readonly string FilePath = Path.Combine(DirectoryPath, "profiles.json");
+        private static readonly string TempFilePath = FilePath + ".tmp";
+        private static readonly string BackupFilePath = FilePath + ".bak";
         private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -30,11 +32,14 @@ namespace AmtPtpConfigGui
 
         public static List<GuiProfile> Load()
         {
-            try
+            foreach (string candidate in new[] { FilePath, BackupFilePath })
             {
-                if (File.Exists(FilePath))
+                try
                 {
-                    var json = File.ReadAllText(FilePath);
+                    if (!File.Exists(candidate))
+                        continue;
+
+                    var json = File.ReadAllText(candidate);
                     var profiles = JsonSerializer.Deserialize<List<GuiProfile>>(json, JsonOptions);
                     if (profiles != null && profiles.Count > 0)
                     {
@@ -42,18 +47,29 @@ namespace AmtPtpConfigGui
                         return profiles;
                     }
                 }
+                catch
+                {
+                    // Try the backup before falling back to defaults. Never
+                    // overwrite a corrupt main file merely by starting the GUI.
+                }
             }
-            catch
-            {
-                // Corrupt/missing profile storage must not prevent the GUI from starting.
-            }
+
+            PreserveCorruptMainFile();
 
             var defaults = new List<GuiProfile>();
             for (int i = 1; i <= DefaultProfileCount; i++)
-            {
                 defaults.Add(CreateDefault($"Profile {i}"));
+
+            try
+            {
+                Save(defaults);
             }
-            Save(defaults);
+            catch
+            {
+                // The GUI can still start with in-memory defaults even when
+                // the settings directory is not writable.
+            }
+
             return defaults;
         }
 
@@ -62,7 +78,53 @@ namespace AmtPtpConfigGui
             Directory.CreateDirectory(DirectoryPath);
             Normalize(profiles);
             var json = JsonSerializer.Serialize(profiles, JsonOptions);
-            File.WriteAllText(FilePath, json);
+
+            WriteAtomic(FilePath, TempFilePath, BackupFilePath, json);
+        }
+
+        private static void WriteAtomic(string destination, string temporary, string backup, string contents)
+        {
+            try
+            {
+                using (var stream = new FileStream(
+                    temporary, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write(contents);
+                    writer.Flush();
+                    stream.Flush(true);
+                }
+
+                if (File.Exists(destination))
+                    File.Replace(temporary, destination, backup, true);
+                else
+                    File.Move(temporary, destination);
+            }
+            finally
+            {
+                // A failed replacement must not leave a stale .tmp file that
+                // can be mistaken for a valid profile database later.
+                try
+                {
+                    if (File.Exists(temporary))
+                        File.Delete(temporary);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private static void PreserveCorruptMainFile()
+        {
+            try
+            {
+                if (File.Exists(FilePath))
+                    File.Copy(FilePath, CorruptBackupFilePath, true);
+            }
+            catch
+            {
+            }
         }
 
         public static GuiProfile CreateDefault(string name)

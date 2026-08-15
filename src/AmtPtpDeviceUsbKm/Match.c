@@ -149,7 +149,7 @@ AmtMatchBuildCandidates(
         // candidates - the same tie-break role it already plays in
         // AmtMatchCorrespond, for consistency.
         size_t  bestPoolIdx       = MAX_CONTACTS;
-        LONG    bestDistSq        = -1;
+        ULONGLONG bestDistSq     = ~0ULL;
         BOOLEAN bestSlotHintMatch = FALSE;
 
         // MICRO-OPT: rc->X/rc->Y are loop-invariant across the p-loop below
@@ -172,7 +172,7 @@ AmtMatchBuildCandidates(
                 dyAbs > TIP_DROP_MAX_REPOSITION_DELTA)
                 continue;
 
-            LONG    distSq        = AmtDistSq(dxAbs, dyAbs);
+            ULONGLONG distSq        = AmtDistSq(dxAbs, dyAbs);
             BOOLEAN slotHintMatch = (poolEntry->LastSlotHint == rc->SlotIndex);
 
             if (bestPoolIdx == MAX_CONTACTS) {
@@ -182,9 +182,9 @@ AmtMatchBuildCandidates(
                 continue;
             }
 
-            LONG delta = distSq - bestDistSq;
-            BOOLEAN withinEpsilon = (delta > -MATCH_TIE_EPSILON_SQ) &&
-                                    (delta < MATCH_TIE_EPSILON_SQ);
+            ULONGLONG delta =
+                (distSq >= bestDistSq) ? (distSq - bestDistSq) : (bestDistSq - distSq);
+            BOOLEAN withinEpsilon = delta < (ULONGLONG)MATCH_TIE_EPSILON_SQ;
 
             if (distSq < bestDistSq && !withinEpsilon) {
                 bestPoolIdx       = p;
@@ -252,13 +252,13 @@ AmtMatchCorrespond(
     // same call sites logically - just computed once and cached.
     //
     // MICRO-OPT: poolIdx is UCHAR, not size_t - MAX_CONTACTS is 5, always
-    // fits, and it drops PAIR from 32 to 16 bytes (fields ordered widest-
-    // first: no internal gaps left, 3 bytes trailing pad instead of 14+7).
-    // pairs[] is scanned repeatedly in the O(pairCount^2) pick loop below
+    // fits, keeping the pair record compact. The 64-bit cost is intentional
+    // so squared-distance arithmetic cannot overflow. pairs[] is scanned
+    // repeatedly in the O(pairCount^2) pick loop below
     // (up to 625 accesses/frame), so the smaller footprint means fewer
     // cache lines touched per scan. Purely internal representation -
     // pairs[bestIdx].poolIdx below still widens to size_t on read.
-    typedef struct { UCHAR candIdx; UCHAR poolIdx; LONG cost; LONG shapeDist; BOOLEAN slotHintMatch; } PAIR;
+    typedef struct { UCHAR candIdx; UCHAR poolIdx; ULONGLONG cost; LONG shapeDist; BOOLEAN slotHintMatch; } PAIR;
     PAIR pairs[PTP_MAX_CONTACT_POINTS * MAX_CONTACTS];
     UCHAR pairCount = 0;
 
@@ -277,7 +277,7 @@ AmtMatchCorrespond(
 
             INT dx = (INT)cand->X - (INT)poolEntry->ReportX;
             INT dy = (INT)cand->Y - (INT)poolEntry->ReportY;
-            LONG dist = AmtDistSq(dx, dy); // squared distance
+            ULONGLONG dist = AmtDistSq(dx, dy); // squared distance
 
             pairs[pairCount].candIdx       = ci;
             pairs[pairCount].poolIdx       = (UCHAR)p;
@@ -296,7 +296,7 @@ AmtMatchCorrespond(
     RtlZeroMemory(candClaimed, sizeof(candClaimed));
 
     for (UCHAR pick = 0; pick < pairCount; pick++) {
-        LONG    bestCost          = -1;
+        ULONGLONG bestCost       = ~0ULL;
         UCHAR   bestIdx           = 0;
         BOOLEAN bestSlotHintMatch = FALSE;
         LONG    bestShapeDist     = 0;
@@ -316,9 +316,11 @@ AmtMatchCorrespond(
                 continue;
             }
 
-            LONG delta = pairs[k].cost - bestCost;
-            BOOLEAN withinEpsilon = (delta > -MATCH_TIE_EPSILON_SQ) &&
-                                    (delta < MATCH_TIE_EPSILON_SQ);
+            ULONGLONG delta =
+                (pairs[k].cost >= bestCost)
+                    ? (pairs[k].cost - bestCost)
+                    : (bestCost - pairs[k].cost);
+            BOOLEAN withinEpsilon = delta < (ULONGLONG)MATCH_TIE_EPSILON_SQ;
 
             if (pairs[k].cost < bestCost && !withinEpsilon) {
                 bestCost          = pairs[k].cost;

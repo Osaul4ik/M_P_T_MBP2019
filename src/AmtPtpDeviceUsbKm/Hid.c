@@ -2,7 +2,6 @@
 
 #include "Driver.h"
 #include <ntintsafe.h>
-#include "hid.tmh"
 
 #ifdef ALLOC_PRAGMA
 // AmtPtpReportFeatures is the only function in this file that calls
@@ -122,11 +121,10 @@ C_ASSERT(sizeof(AmtPtpReportDescriptor_T2_13)    == sizeof(AmtPtpReportDescripto
 C_ASSERT(sizeof(AmtPtpReportDescriptor_WS9)      == sizeof(AmtPtpReportDescriptor_T2_16));
 C_ASSERT(sizeof(AmtPtpReportDescriptor_WS8)      == sizeof(AmtPtpReportDescriptor_T2_16));
 
-// PID -> report descriptor. Deliberately mirrors AmtPtpGetDeviceConfig's
-// grouping in Device.c (same USB_DEVICE_ID_* constants, same fallback
-// semantics: an unrecognized PID still binds, using the generic
-// oversampled geometry instead of failing) - if a PID is ever added to
-// Bcm5974ConfigTable in AppleDefinition.h, add the matching row here too.
+// PID -> report descriptor. Deliberately mirrors the supported PID grouping
+// in Device.c (same USB_DEVICE_ID_* constants). Unknown hardware is rejected
+// by AmtPtpGetDeviceConfig, so this fallback is only defensive for callers
+// that explicitly ask for an unknown descriptor.
 typedef struct _PTP_DESCRIPTOR_ENTRY {
 	USHORT                       ProductId;
 	const HID_REPORT_DESCRIPTOR* Descriptor;
