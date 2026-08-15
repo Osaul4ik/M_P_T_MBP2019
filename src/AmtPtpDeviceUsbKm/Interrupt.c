@@ -138,7 +138,8 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     PDEVICE_CONTEXT pCtx       = Context;
     size_t          headerSize = (unsigned int)pCtx->DeviceInfo->tp_header;
     size_t          fingerSize = (unsigned int)pCtx->DeviceInfo->tp_fsize;
-    size_t          raw_n;
+    size_t          tpDelta    = (unsigned int)pCtx->DeviceInfo->tp_delta;
+    size_t          raw_n      = 0;
     UCHAR*          TouchBuffer = NULL;
 
     LONGLONG      PerfDelta;
@@ -160,9 +161,46 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
 
     if (NumBytesTransferred < headerSize ||
         pCtx->DeviceInfo->tp_button >= NumBytesTransferred ||
-        pCtx->DeviceInfo->tp_delta > (NumBytesTransferred - headerSize) ||
+        tpDelta > (NumBytesTransferred - headerSize) ||
         (NumBytesTransferred - headerSize) % fingerSize != 0) {
         return;
+    }
+
+    // Precompute AND fully validate the raw finger-record block here, before
+    // the request is dequeued and before StateLock is taken. This keeps
+    // every "malformed/short USB packet" rejection in this function a
+    // trivial, side-effect-free `return` - there is no path below this
+    // point that can bail out while an IRP has been pulled off InputQueue
+    // or while StateLock is held.
+    //
+    // REGRESSION FIX: the previous in-lock check compared tp_delta against
+    // (NumBytesTransferred - headerSize - (raw_n-1)*fingerSize - fingerSize),
+    // i.e. against the *remainder* left over after raw_n whole finger
+    // records. That remainder is 0 whenever the packet divides evenly by
+    // fingerSize (the normal case once raw_n is clamped to
+    // PTP_MAX_CONTACT_POINTS) - so on every TYPE4/TYPE5 (T2) device, where
+    // tp_delta is non-zero, the check was "tp_delta > 0", which is always
+    // true and rejected every single valid T2 packet. Worse, that `return`
+    // sat between WdfSpinLockAcquire(pCtx->StateLock) and its Release, so it
+    // abandoned the lock (and the already-dequeued Request) permanently -
+    // the very next completion then deadlocked re-acquiring the same lock.
+    // TYPE2/TYPE3 (non-T2, e.g. MacBook Air) devices have tp_delta == 0, so
+    // "0 > 0" was always false there and the bug never triggered - which is
+    // exactly why this only ever BSOD'd on T2 hardware.
+    //
+    // The correct check is simply: does the buffer actually contain
+    // header + tp_delta + raw_n whole finger records? That is exactly the
+    // span AmtInputParseFrame is about to read via f_base below.
+    if (pCtx->PtpReportTouch) {
+        size_t requiredLength;
+
+        raw_n = (NumBytesTransferred - headerSize) / fingerSize;
+        if (raw_n > PTP_MAX_CONTACT_POINTS) raw_n = PTP_MAX_CONTACT_POINTS;
+
+        requiredLength = headerSize + tpDelta + raw_n * fingerSize;
+        if (requiredLength > NumBytesTransferred) {
+            return;
+        }
     }
 
     TouchBuffer = WdfMemoryGetBuffer(Buffer, NULL);
@@ -223,20 +261,10 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     rawFrame.TimestampQpc = Now.QuadPart;
 
     if (pCtx->PtpReportTouch) {
-        raw_n = (NumBytesTransferred - headerSize) / fingerSize;
-        if (raw_n > PTP_MAX_CONTACT_POINTS) raw_n = PTP_MAX_CONTACT_POINTS;
-
-        // tp_delta points from the packet header to the first finger record.
-        // Validate the whole final finger before handing the pointer to the
-        // parser; a valid integer floor for raw_n alone is not sufficient
-        // when a non-zero delta is present.
-        if (raw_n > 0 &&
-            pCtx->DeviceInfo->tp_delta >
-                (NumBytesTransferred - headerSize - (raw_n - 1) * fingerSize - fingerSize)) {
-            return;
-        }
-
-        UCHAR* f_base = TouchBuffer + headerSize + pCtx->DeviceInfo->tp_delta;
+        // raw_n/tpDelta were already computed and bounds-checked against
+        // NumBytesTransferred above, before StateLock was taken - nothing
+        // in this branch can fail or return.
+        UCHAR* f_base = TouchBuffer + headerSize + tpDelta;
         AmtInputParseFrame(f_base, fingerSize, raw_n, pCtx->DeviceInfo,
                            Now.QuadPart, &rawFrame);
     }
