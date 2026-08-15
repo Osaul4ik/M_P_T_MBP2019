@@ -717,6 +717,35 @@ namespace AmtPtpConfigGui
             return new System.Drawing.Font(preferredInstalled ? preferred : fallback, size, style);
         }
 
+        // Hosts a plain Label instead of a ToolStripMenuItem so the title
+        // row can be truly centered across the full menu width. A
+        // ToolStripMenuItem always reserves a left-hand check-margin
+        // gutter and lays its text out relative to that gutter (even with
+        // TextAlign = MiddleCenter), which is what made "Wellspring PTP"
+        // read as off-center rather than a centered title.
+        private Forms.ToolStripItem BuildTrayHeaderItem(string text, (System.Drawing.Color Back, System.Drawing.Color Fore, System.Drawing.Color Selected, System.Drawing.Color Border, System.Drawing.Color Accent) trayColors)
+        {
+            var label = new Forms.Label
+            {
+                Text = text,
+                AutoSize = false,
+                Dock = Forms.DockStyle.Fill,
+                TextAlign = System.Drawing.ContentAlignment.MiddleCenter,
+                Font = ResolveTrayFont(9F, System.Drawing.FontStyle.Bold),
+                ForeColor = trayColors.Fore,
+                BackColor = System.Drawing.Color.Transparent
+            };
+
+            var host = new Forms.ToolStripControlHost(label)
+            {
+                AutoSize = false,
+                Margin = System.Windows.Forms.Padding.Empty,
+                Padding = System.Windows.Forms.Padding.Empty,
+                Height = label.Font.Height + 16
+            };
+            return host;
+        }
+
         private Forms.ContextMenuStrip BuildTrayMenu()
         {
             var menu = new RoundedContextMenuStrip
@@ -755,14 +784,24 @@ namespace AmtPtpConfigGui
                 menu.Font = ResolveTrayFont(9F);
                 menu.Items.Clear();
 
-                var header = new Forms.ToolStripMenuItem("Wellspring PTP")
-                {
-                    Enabled = false,
-                    Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold),
-                    Padding = new System.Windows.Forms.Padding(10, 8, 10, 8)
-                };
+                // Title row: a real menu item can never be centered, because
+                // ToolStripDropDownMenu always reserves a left-hand gutter
+                // for the checkmark column and lays every ToolStripMenuItem's
+                // text out relative to that gutter, not the row's full
+                // width. A ToolStripControlHost hosting a plain Label isn't
+                // subject to that MenuItem-specific text layout, so it can
+                // genuinely center across the whole row instead of just
+                // looking centered-ish inside the leftover space.
+                var header = BuildTrayHeaderItem("Wellspring PTP", trayColors);
 
-                var profilesItem = new Forms.ToolStripMenuItem("Profile") { ToolTipText = "Select active profile", Padding = new System.Windows.Forms.Padding(10, 7, 10, 7), Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold) };
+                // Bold labels previously hardcoded "Segoe UI" while every
+                // other row went through ResolveTrayFont (which prefers
+                // "Segoe UI Variable Text" when installed). Two different
+                // font families at the same point size measure differently,
+                // so these rows quietly got their own row height/baseline -
+                // the inconsistency that made the whole menu read as
+                // slightly crooked. Route them through the same resolver.
+                var profilesItem = new RoundedMenuItem("Profile") { ToolTipText = "Select active profile", Padding = new System.Windows.Forms.Padding(10, 7, 10, 7), Font = ResolveTrayFont(9F, System.Drawing.FontStyle.Bold) };
                 for (int i = 0; i < _profiles.Count; i++)
                 {
                     int index = i;
@@ -820,7 +859,7 @@ namespace AmtPtpConfigGui
                     requirePressure.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureGateFromTray));
 
                     // Dedicated item that expands into the list of Force Tap button types.
-                    var actionMenu = new Forms.ToolStripMenuItem("Force Tap action")
+                    var actionMenu = new RoundedMenuItem("Force Tap action")
                     {
                         Enabled = forceTouchOn,
                         Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
@@ -2416,6 +2455,46 @@ namespace AmtPtpConfigGui
             base.OnClosed(e);
         }
     }
+    // A ToolStripMenuItem whose flyout ("Profile", "Force Tap action")
+    // reuses the rounded strip and the theme-accurate renderer/colors of
+    // whichever ContextMenuStrip it lives in. Left as the default
+    // ToolStripMenuItem, WinForms auto-creates a plain ToolStripDropDownMenu
+    // for the flyout that falls back to the system-default renderer - a
+    // square, unthemed popup with the stock checkmark glyph next to the
+    // rounded, custom-rendered top-level tray menu it opens from. That
+    // mismatch between the top-level menu and its own submenus was a big
+    // part of why the context menu read as unfinished.
+    internal sealed class RoundedMenuItem : Forms.ToolStripMenuItem
+    {
+        public RoundedMenuItem(string text) : base(text) { }
+
+        protected override Forms.ToolStripDropDown CreateDefaultDropDown()
+        {
+            var dropDown = new RoundedContextMenuStrip
+            {
+                ShowImageMargin = false,
+                ShowCheckMargin = true,
+                Padding = new System.Windows.Forms.Padding(8, 8, 8, 8)
+            };
+            SyncChrome(dropDown);
+            // The owning strip's theme/renderer can change after this
+            // flyout is created (theme switch, refresh), so re-sync every
+            // time it's about to open rather than only once at creation.
+            dropDown.Opening += (_, _) => SyncChrome(dropDown);
+            return dropDown;
+        }
+
+        private void SyncChrome(Forms.ToolStripDropDown dropDown)
+        {
+            if (Owner == null)
+                return;
+            dropDown.Font = Owner.Font;
+            dropDown.BackColor = Owner.BackColor;
+            dropDown.ForeColor = Owner.ForeColor;
+            dropDown.Renderer = Owner.Renderer;
+        }
+    }
+
     internal sealed class RoundedContextMenuStrip : Forms.ContextMenuStrip
     {
         [DllImport("gdi32.dll")]
