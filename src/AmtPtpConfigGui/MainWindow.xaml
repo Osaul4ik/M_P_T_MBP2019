@@ -1246,7 +1246,7 @@
                                 </StackPanel>
                             </GroupBox>
 
-                            <GroupBox Margin="0,12,0,0">
+                            <GroupBox x:Name="ForceTouchGroup" Margin="0,12,0,0">
                                 <GroupBox.Header>
                                     <StackPanel>
                                         <TextBlock Text="Force Touch" Style="{StaticResource SectionTitle}"/>

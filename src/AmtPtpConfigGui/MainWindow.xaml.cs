@@ -767,34 +767,52 @@ namespace AmtPtpConfigGui
                 var pointerCfg = ReadPointerConfigFromControls();
                 bool forceTouchOn = pointerCfg.ForceTouchEnabled != 0;
 
+                menu.Items.Add(header);
+                menu.Items.Add(new Forms.ToolStripSeparator());
+                menu.Items.Add(profilesItem);
+                menu.Items.Add(new Forms.ToolStripSeparator());
+                menu.Items.Add(palmEdges);
+
                 // Force Touch controls now live directly in the main menu instead of
-                // being buried inside a nested "Force Touch" submenu.
-                var forceTouch = new Forms.ToolStripMenuItem("Force Touch")
+                // being buried inside a nested "Force Touch" submenu - but only on
+                // trackpads that actually have Force Touch hardware. On older/non-
+                // Force-Touch models (see _forceTouchSupported, set from
+                // DeviceIo.GetDeviceModelDisplay) these three items are omitted
+                // entirely rather than shown disabled, matching the Pointer tab
+                // where the whole "Force Touch" settings group is hidden.
+                if (_forceTouchSupported)
                 {
-                    Checked = forceTouchOn,
-                    Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
-                    ToolTipText = "Enable Force Touch click arbitration on trackpads that support it."
-                };
-                forceTouch.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ToggleForceTouchFromTray));
+                    var forceTouch = new Forms.ToolStripMenuItem("Force Touch")
+                    {
+                        Checked = forceTouchOn,
+                        Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
+                        ToolTipText = "Enable Force Touch click arbitration on trackpads that support it."
+                    };
+                    forceTouch.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ToggleForceTouchFromTray));
 
-                var requirePressure = new Forms.ToolStripMenuItem("Require pressure to activate contact")
-                {
-                    Checked = pointerCfg.RequirePressureToActivate != 0,
-                    Enabled = forceTouchOn,
-                    Padding = new System.Windows.Forms.Padding(10, 7, 10, 7)
-                };
-                requirePressure.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureGateFromTray));
+                    var requirePressure = new Forms.ToolStripMenuItem("Require pressure to activate contact")
+                    {
+                        Checked = pointerCfg.RequirePressureToActivate != 0,
+                        Enabled = forceTouchOn,
+                        Padding = new System.Windows.Forms.Padding(10, 7, 10, 7)
+                    };
+                    requirePressure.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureGateFromTray));
 
-                // Dedicated item that expands into the list of Force Tap button types.
-                var actionMenu = new Forms.ToolStripMenuItem("Force Tap action")
-                {
-                    Enabled = forceTouchOn,
-                    Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
-                    ToolTipText = "Choose what a hard press sends: context menu, middle click, or double click."
-                };
-                AddTrayActionItem(actionMenu, "Context menu", PointerConfig.ActionContextMenu, pointerCfg.ForceTapAction);
-                AddTrayActionItem(actionMenu, "Middle mouse button", PointerConfig.ActionMiddleClick, pointerCfg.ForceTapAction);
-                AddTrayActionItem(actionMenu, "Double click", PointerConfig.ActionDoubleClick, pointerCfg.ForceTapAction);
+                    // Dedicated item that expands into the list of Force Tap button types.
+                    var actionMenu = new Forms.ToolStripMenuItem("Force Tap action")
+                    {
+                        Enabled = forceTouchOn,
+                        Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
+                        ToolTipText = "Choose what a hard press sends: context menu, middle click, or double click."
+                    };
+                    AddTrayActionItem(actionMenu, "Context menu", PointerConfig.ActionContextMenu, pointerCfg.ForceTapAction);
+                    AddTrayActionItem(actionMenu, "Middle mouse button", PointerConfig.ActionMiddleClick, pointerCfg.ForceTapAction);
+                    AddTrayActionItem(actionMenu, "Double click", PointerConfig.ActionDoubleClick, pointerCfg.ForceTapAction);
+
+                    menu.Items.Add(forceTouch);
+                    menu.Items.Add(requirePressure);
+                    menu.Items.Add(actionMenu);
+                }
 
                 var open = new Forms.ToolStripMenuItem("Open application") { Padding = new System.Windows.Forms.Padding(10, 7, 10, 7) };
                 open.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ShowFromTray));
@@ -805,14 +823,6 @@ namespace AmtPtpConfigGui
                 var exit = new Forms.ToolStripMenuItem("Exit") { Padding = new System.Windows.Forms.Padding(10, 7, 10, 7) };
                 exit.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ExitApplication));
 
-                menu.Items.Add(header);
-                menu.Items.Add(new Forms.ToolStripSeparator());
-                menu.Items.Add(profilesItem);
-                menu.Items.Add(new Forms.ToolStripSeparator());
-                menu.Items.Add(palmEdges);
-                menu.Items.Add(forceTouch);
-                menu.Items.Add(requirePressure);
-                menu.Items.Add(actionMenu);
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 menu.Items.Add(open);
                 menu.Items.Add(settings);
@@ -1137,6 +1147,30 @@ namespace AmtPtpConfigGui
             return dialog.ShowDialog() == true ? text.Text : null;
         }
 
+        // ---------------------------------------------------------------
+        // Force Touch availability
+        // ---------------------------------------------------------------
+
+        // Whether the connected trackpad supports Force Touch, per the last
+        // Reconnect()/GetDeviceModelDisplay() result. Defaults to true
+        // (controls shown) so the Force Touch group and tray menu items
+        // aren't hidden before the first successful device query - only a
+        // confirmed "false" from the driver/SMBIOS table hides them.
+        private bool _forceTouchSupported = true;
+
+        private void UpdateForceTouchAvailability(bool? supportsForceTouch)
+        {
+            _forceTouchSupported = supportsForceTouch != false;
+
+            if (ForceTouchGroup != null)
+                ForceTouchGroup.Visibility = _forceTouchSupported ? Visibility.Visible : Visibility.Collapsed;
+
+            // The tray context menu is rebuilt on demand from RefreshTrayMenu,
+            // but if it's already open/cached it should reflect the change
+            // immediately rather than waiting for the next open.
+            RefreshTrayMenu();
+        }
+
         private void ProMode_Changed(object sender, RoutedEventArgs e)
         {
             UpdateProModeVisibility();
@@ -1221,7 +1255,8 @@ namespace AmtPtpConfigGui
             {
                 StatusDot.Fill = ConnectedBrush;
                 StatusText.Text = "Connected";
-                DeviceModelText.Text = _device.GetDeviceModelDisplay();
+                DeviceModelText.Text = _device.GetDeviceModelDisplay(out var supportsForceTouch);
+                UpdateForceTouchAvailability(supportsForceTouch);
 
                 if (_device.TryGetPalmConfig(out var cfg))
                 {
@@ -1259,6 +1294,10 @@ namespace AmtPtpConfigGui
                 StatusDot.Fill = DisconnectedBrush;
                 StatusText.Text = "Disconnected";
                 DeviceModelText.Text = "No device detected";
+                // No device to ask, so we don't actually know whether Force
+                // Touch is supported - default to showing the controls
+                // rather than hiding a feature the user might have.
+                UpdateForceTouchAvailability(supportsForceTouch: null);
                 LoadConfigIntoSliders(PalmConfig.Default);
                 LoadPointerConfigIntoControls(PointerConfig.Default);
                 LoadScrollConfigIntoControls(ScrollConfig.Default);

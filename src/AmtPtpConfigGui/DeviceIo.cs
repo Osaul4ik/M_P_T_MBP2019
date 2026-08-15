@@ -233,7 +233,24 @@ namespace AmtPtpConfigGui.Native
             }
         }
 
-        public string GetDeviceModelDisplay()
+        public string GetDeviceModelDisplay() => GetDeviceModelDisplay(out _);
+
+        /// <summary>
+        /// Same model string as before, plus whether the connected trackpad
+        /// supports Force Touch click arbitration. Used by the GUI to hide
+        /// the Force Touch settings group and tray menu entries entirely on
+        /// hardware that doesn't have Force Touch, instead of showing
+        /// controls for a feature the driver will just ignore.
+        ///
+        /// True/false come from the driver's own GET_DEVICE_INFO answer
+        /// when available (authoritative - the driver already resolved this
+        /// per-model), or from a small SMBIOS product-name table for older
+        /// driver builds that predate that IOCTL. Null means "couldn't
+        /// determine" (no device, or an unrecognized SMBIOS product name);
+        /// callers should treat null as "assume supported" so the setting
+        /// is never hidden on inconclusive data.
+        /// </summary>
+        public string GetDeviceModelDisplay(out bool? supportsForceTouch)
         {
             if (TryGetDeviceInfo(out var info) && info.ProductId != 0)
             {
@@ -253,7 +270,8 @@ namespace AmtPtpConfigGui.Native
                     _ => $"Apple Internal Trackpad · PID 0x{info.ProductId:X4}"
                 };
 
-                return info.SupportsForceTouch != 0
+                supportsForceTouch = info.SupportsForceTouch != 0;
+                return supportsForceTouch == true
                     ? $"{model} · Force Touch"
                     : model;
             }
@@ -273,18 +291,34 @@ namespace AmtPtpConfigGui.Native
                 // Keep a safe generic fallback.
             }
 
-            return hostProduct switch
+            switch (hostProduct)
             {
-                "MacBookPro16,1" => "MacBookPro16,1 · 2019 16-inch · Force Touch",
-                "MacBookPro16,2" => "MacBookPro16,2 · 2020 13-inch · Force Touch",
-                "MacBookPro16,3" => "MacBookPro16,3 · 2020 13-inch · Force Touch",
-                "MacBookPro15,1" => "MacBookPro15,1 · 2018 15-inch · Force Touch",
-                "MacBookPro15,2" => "MacBookPro15,2 · 2018 13-inch · Force Touch",
-                "MacBookPro15,4" => "MacBookPro15,4 · 2019 13-inch · Force Touch",
-                _ when !string.IsNullOrWhiteSpace(hostProduct) => hostProduct,
-                _ => "Apple Precision Touchpad · model unavailable"
-            };
+                case "MacBookPro16,1":
+                case "MacBookPro16,2":
+                case "MacBookPro16,3":
+                case "MacBookPro15,1":
+                case "MacBookPro15,2":
+                case "MacBookPro15,4":
+                    supportsForceTouch = true;
+                    return $"{hostProduct} · {DescribeSmbiosModel(hostProduct)} · Force Touch";
+                default:
+                    supportsForceTouch = null;
+                    return !string.IsNullOrWhiteSpace(hostProduct)
+                        ? hostProduct
+                        : "Apple Precision Touchpad · model unavailable";
+            }
         }
+
+        private static string DescribeSmbiosModel(string hostProduct) => hostProduct switch
+        {
+            "MacBookPro16,1" => "2019 16-inch",
+            "MacBookPro16,2" => "2020 13-inch",
+            "MacBookPro16,3" => "2020 13-inch",
+            "MacBookPro15,1" => "2018 15-inch",
+            "MacBookPro15,2" => "2018 13-inch",
+            "MacBookPro15,4" => "2019 13-inch",
+            _ => hostProduct
+        };
 
         public bool TryGetPalmConfig(
             out PalmConfig config)
