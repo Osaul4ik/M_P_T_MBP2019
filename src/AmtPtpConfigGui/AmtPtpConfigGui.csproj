@@ -8,7 +8,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AmtPtpConfigGui</RootNamespace>
-    <AssemblyName>AmtPtpConfigGui</AssemblyName>
+    <AssemblyName>Wellspring Control Center</AssemblyName>
+    <Product>Wellspring Control Center</Product>
+    <AssemblyTitle>Wellspring Control Center</AssemblyTitle>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <Platforms>x64;ARM64</Platforms>

@@ -205,7 +205,7 @@ namespace AmtPtpConfigGui
             {
                 Icon = appIcon ?? System.Drawing.SystemIcons.Application,
                 Visible = true,
-                Text = "Wellspring Precision Touchpad"
+                Text = "Wellspring Control Center"
             };
             _trayIcon.DoubleClick += (_, _) => ShowFromTray();
             _trayIcon.ContextMenuStrip = BuildTrayMenu();
@@ -247,7 +247,7 @@ namespace AmtPtpConfigGui
 
             var dialog = new Window
             {
-                Title = "Wellspring PTP Settings",
+                Title = "Wellspring Control Center Settings",
                 Width = 540,
                 Height = 650,
                 MinWidth = 500,
@@ -276,7 +276,7 @@ namespace AmtPtpConfigGui
             });
             var headingSub = new TextBlock
             {
-                Text = "Configure Wellspring PTP behavior and appearance.",
+                Text = "Configure Wellspring Control Center behavior and appearance.",
                 FontSize = 12,
                 Margin = new Thickness(0, 3, 0, 0)
             };
@@ -522,7 +522,7 @@ namespace AmtPtpConfigGui
         {
             var dlg = new SaveFileDialog
             {
-                Filter = "Wellspring PTP backup (*.wspbackup.json)|*.wspbackup.json|JSON (*.json)|*.json",
+                Filter = "Wellspring Control Center backup (*.wspbackup.json)|*.wspbackup.json|JSON (*.json)|*.json",
                 FileName = $"WellspringPTP-Backup-{DateTime.Now:yyyy-MM-dd}.wspbackup.json",
                 Title = "Export backup"
             };
@@ -569,7 +569,7 @@ namespace AmtPtpConfigGui
         {
             var dlg = new OpenFileDialog
             {
-                Filter = "Wellspring PTP backup (*.wspbackup.json)|*.wspbackup.json|JSON (*.json)|*.json",
+                Filter = "Wellspring Control Center backup (*.wspbackup.json)|*.wspbackup.json|JSON (*.json)|*.json",
                 Title = "Restore backup"
             };
             if (dlg.ShowDialog() != true)
@@ -721,7 +721,7 @@ namespace AmtPtpConfigGui
         // row can be truly centered across the full menu width. A
         // ToolStripMenuItem always reserves a left-hand check-margin
         // gutter and lays its text out relative to that gutter (even with
-        // TextAlign = MiddleCenter), which is what made "Wellspring PTP"
+        // TextAlign = MiddleCenter), which is what made the title
         // read as off-center rather than a centered title.
         private Forms.ToolStripItem BuildTrayHeaderItem(string text, (System.Drawing.Color Back, System.Drawing.Color Fore, System.Drawing.Color Selected, System.Drawing.Color Border, System.Drawing.Color Accent) trayColors)
         {
@@ -792,7 +792,7 @@ namespace AmtPtpConfigGui
                 // subject to that MenuItem-specific text layout, so it can
                 // genuinely center across the whole row instead of just
                 // looking centered-ish inside the leftover space.
-                var header = BuildTrayHeaderItem("Wellspring PTP", trayColors);
+                var header = BuildTrayHeaderItem("Wellspring Control Center", trayColors);
 
                 // Bold labels previously hardcoded "Segoe UI" while every
                 // other row went through ResolveTrayFont (which prefers
@@ -1020,7 +1020,7 @@ namespace AmtPtpConfigGui
             {
                 e.Cancel = true;
                 Hide();
-                SetBottomStatus("Wellspring PTP is running in the system tray.");
+                SetBottomStatus("Wellspring Control Center is running in the system tray.");
                 return;
             }
 
