@@ -890,7 +890,7 @@ namespace AmtPtpConfigGui
                     {
                         Checked = smallContactRejectionOn,
                         Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
-                        ToolTipText = "Reject tiny contacts on trackpads without Force Touch until M:100/80 is reached."
+                        ToolTipText = "Reject tiny contacts on trackpads without Force Touch until M:80/60 is reached."
                     };
                     smallReject.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ToggleSmallContactRejectionFromTray));
                     menu.Items.Add(smallReject);
@@ -1750,7 +1750,21 @@ namespace AmtPtpConfigGui
             DrawLiveOverlay(frame);
 
             int count = frame.ContactCount;
-            if (++_liveTelemetryTickCounter >= 3)
+
+            // The live contact count is part of the same snapshot as the
+            // overlay. It must therefore update for every new frame;
+            // throttling it independently can leave "Live: 1/2/3 contacts"
+            // visible after the preview has already cleared on lift.
+            LiveStatusText.Text =
+                $"Live: {count} contacts | seq {frame.Sequence}" +
+                (frame.ButtonDown != 0 ? " | BUTTON" : "") +
+                (frame.LargePalmBlanked != 0 ? " | PALM" : "");
+
+            // Detailed text/corner telemetry is secondary and can remain
+            // throttled to reduce string-building/layout work. Force an
+            // immediate refresh on a zero-contact frame so lift is reflected
+            // everywhere in the UI in the same render tick.
+            if (++_liveTelemetryTickCounter >= 3 || count == 0)
             {
                 _liveTelemetryTickCounter = 0;
                 LiveCoordText.Text = BuildLiveContactText(frame, count);
@@ -1758,11 +1772,6 @@ namespace AmtPtpConfigGui
                 LiveCornerText.Text =
                     $"Corners: TL {_topLeft.Samples} | TR {_topRight.Samples} | " +
                     $"BL {_bottomLeft.Samples} | BR {_bottomRight.Samples}";
-
-                LiveStatusText.Text =
-                    $"Live: {count} contacts | seq {frame.Sequence}" +
-                    (frame.ButtonDown != 0 ? " | BUTTON" : "") +
-                    (frame.LargePalmBlanked != 0 ? " | PALM" : "");
             }
         }
 
@@ -2750,14 +2759,13 @@ namespace AmtPtpConfigGui
             {
                 ShowImageMargin = false,
                 ShowCheckMargin = true,
-                // A submenu (e.g. the Profile list) opens flush against the
-                // parent item's edge, so the same generous 8px padding used
-                // on the top-level strip (there, to keep content clear of
-                // the outer rounded corners) instead reads as a wide gap
-                // between the main menu and the flyout's actual content.
-                // A slimmer padding keeps the rounded corners clear without
-                // pushing the item list away from the parent menu.
-                Padding = new System.Windows.Forms.Padding(4, 6, 4, 6)
+                // Keep the flyout visually attached to the parent item.
+                // The default WinForms submenu offset leaves a noticeable
+                // gap on some Windows 10 themes, especially with a custom
+                // rounded region. A tiny overlap makes it read as one menu.
+                HorizontalOffset = -1,
+                VerticalOffset = -1,
+                Padding = new System.Windows.Forms.Padding(2, 4, 2, 4)
             };
             SyncChrome(dropDown);
             // The owning strip's theme/renderer can change after this
@@ -2916,14 +2924,17 @@ namespace AmtPtpConfigGui
             if (e.Item is not Forms.ToolStripMenuItem { Checked: true })
                 return;
 
-            var bounds = e.ImageRectangle;
-            if (bounds.Width <= 0 || bounds.Height <= 0)
-                bounds = new System.Drawing.Rectangle(6, 2, 16, e.Item.Height - 4);
+            var checkBounds = e.ImageRectangle;
+            if (checkBounds.Width <= 0)
+                checkBounds = new System.Drawing.Rectangle(0, 0, 20, e.Item.Height);
 
-            int size = Math.Min(bounds.Height, 16);
+            // WinForms' check rectangle can be vertically biased because it is
+            // computed from the native menu metrics. Center the actual glyph
+            // against the full item row instead of the native rectangle's Y.
+            int size = Math.Min(14, Math.Max(8, e.Item.Height - 8));
             var box = new System.Drawing.Rectangle(
-                bounds.X + Math.Max(0, (bounds.Width - size) / 2),
-                bounds.Y + Math.Max(0, (bounds.Height - size) / 2),
+                checkBounds.X + Math.Max(0, (checkBounds.Width - size) / 2),
+                Math.Max(0, (e.Item.Height - size) / 2),
                 size, size);
 
             using var accentBrush = new System.Drawing.SolidBrush(_accent);

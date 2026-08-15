@@ -102,7 +102,7 @@ AmtMatchBuildCandidates(
             PointerConfig != NULL &&
             PointerConfig->SmallContactRejectionEnabled &&
             PointerConfig->SmallContactRejectionStrict &&
-            (rc->Major < 100 || rc->Minor < 80))
+            (rc->Major < 50 || rc->Minor < 30))
         {
             continue;
         }

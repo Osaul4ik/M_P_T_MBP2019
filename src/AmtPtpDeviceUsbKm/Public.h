@@ -92,14 +92,14 @@ typedef struct _AMT_POINTER_CONFIG
     ULONG SmoothingAlphaNumSlow;
 
     // Reject small contacts on trackpads without Force Touch. A contact is
-    // initially rejected while Major < 100 AND Minor < 80; once it reaches
-    // Major >= 100 OR Minor >= 80 it stays accepted until that contact is
+    // initially rejected while Major < 80 AND Minor < 60; once it reaches
+    // Major >= 80 OR Minor >= 60 it stays accepted until that contact is
     // lifted. Ignored on Force Touch-capable devices.
     ULONG SmallContactRejectionEnabled;
 
     // When enabled together with SmallContactRejectionEnabled on a
     // non-Force-Touch device, the Major/Minor gate is applied continuously:
-    // every frame requires Major >= 100 AND Minor >= 80.
+    // every frame requires Major >= 50 AND Minor >= 30.
     ULONG SmallContactRejectionStrict;
 } AMT_POINTER_CONFIG, *PAMT_POINTER_CONFIG;
 

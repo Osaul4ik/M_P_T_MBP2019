@@ -242,16 +242,10 @@ PTPCore_ProcessFrame(
     MATCH_CANDIDATE_SET candidates;
     BOOLEAN              largePalm = FALSE;
 
-    AmtMatchBuildCandidates(
-        RawFrame,
-        pCtx->DeviceInfo,
-        &pCtx->PalmConfig,
-        &pCtx->PalmRuntime,
-        &pCtx->PointerConfig,
-        pCtx->SupportsForceTouch,
-        pCtx->ActiveContacts,
-        &candidates,
-        &largePalm);
+    AmtMatchBuildCandidates(RawFrame, pCtx->DeviceInfo, &pCtx->PalmConfig,
+                            &pCtx->PalmRuntime, &pCtx->PointerConfig,
+                            pCtx->SupportsForceTouch, pCtx->ActiveContacts,
+                            &candidates, &largePalm);
 
     // Palm session: suppress candidates when palm active. Contacts that go
     // unmatched purely because of this suppression are NOT lifted (see
@@ -310,8 +304,8 @@ PTPCore_ProcessFrame(
             isNewContact &&
             !pCtx->SupportsForceTouch &&
             pCtx->PointerConfig.SmallContactRejectionEnabled &&
-            cand->Major < 100 &&
-            cand->Minor < 80;
+            cand->Major < 80 &&
+            cand->Minor < 60;
 
         if (!pressureGatedBirth &&
             !smallContactGatedBirth &&
@@ -463,7 +457,7 @@ PTPCore_ProcessFrame(
         // Phase C updates/reports it without re-applying these gates.
         //
         // Force-Touch devices: require positive pressure when configured.
-        // Non-Force-Touch devices: require Major >= 100 OR Minor >= 80 when
+        // Non-Force-Touch devices: require Major >= 80 OR Minor >= 60 when
         // Small Contact Rejection is enabled.
         if (pCtx->SupportsForceTouch) {
             if (pCtx->PointerConfig.ForceTouchEnabled &&
@@ -473,8 +467,8 @@ PTPCore_ProcessFrame(
                 continue;
             }
         } else if (pCtx->PointerConfig.SmallContactRejectionEnabled &&
-                   cand->Major < 100 &&
-                   cand->Minor < 80)
+                   cand->Major < 80 &&
+                   cand->Minor < 60)
         {
             continue;
         }

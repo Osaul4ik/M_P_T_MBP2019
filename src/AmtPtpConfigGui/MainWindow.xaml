@@ -893,12 +893,15 @@
                                        ToolTip="Detected Mac/trackpad model"/>
                         </StackPanel>
                     </Border>
-                    <Button x:Name="BtnAppSettings" Content="⚙" Width="40" Height="36" MinWidth="40" Margin="8,0,0,0"
+                    <Button x:Name="BtnAppSettings" Width="40" Height="36" MinWidth="40" Margin="8,0,0,0"
                             Padding="0" Background="{DynamicResource ControlFillBrush}"
                             BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
                             Foreground="{DynamicResource TextPrimaryBrush}"
-                            FontSize="15" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
-                            Style="{StaticResource SecondaryButton}" Click="AppSettings_Click" ToolTip="Application settings"/>
+                            FontFamily="Segoe MDL2 Assets" FontSize="16"
+                            HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                            Style="{StaticResource SecondaryButton}" Click="AppSettings_Click" ToolTip="Application settings">
+                        <TextBlock Text="&#xE713;" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
                 </StackPanel>
             </Grid>
         </Border>
@@ -1261,9 +1264,9 @@
                                     </StackPanel>
                                 </GroupBox.Header>
                                 <StackPanel>
-                                    <CheckBox x:Name="ChkSmallContactRejection" Style="{StaticResource OptionCheckBox}" Margin="0,10,0,8" Content="Enable small-contact rejection" Checked="SmallContactRejectionOption_Changed" Unchecked="SmallContactRejectionOption_Changed" ToolTip="On trackpads without Force Touch, reject a new contact while Major is below 100 and Minor is below 80. Once it reaches Major 100 or Minor 80, that contact remains accepted until it is lifted."/>
-                                    <CheckBox x:Name="ChkSmallContactRejectionStrict" Style="{StaticResource OptionCheckBox}" Margin="0,0,0,8" Content="Require M:100/80 continuously" Visibility="Collapsed" ToolTip="While enabled, a non-Force-Touch contact is ignored on every frame unless Major is at least 100 AND Minor is at least 80. If either value drops below the threshold while you move, the contact is ignored until it qualifies again."/>
-                                    <TextBlock Style="{StaticResource HintText}" Text="Normal mode checks M only when a contact starts. Strict mode checks M on every frame and requires both Major ≥ 100 and Minor ≥ 80."/>
+                                    <CheckBox x:Name="ChkSmallContactRejection" Style="{StaticResource OptionCheckBox}" Margin="0,10,0,8" Content="Enable small-contact rejection" Checked="SmallContactRejectionOption_Changed" Unchecked="SmallContactRejectionOption_Changed" ToolTip="On trackpads without Force Touch, reject a new contact while Major is below 80 and Minor is below 60. Once it reaches Major 80 or Minor 60, that contact remains accepted until it is lifted."/>
+                                    <CheckBox x:Name="ChkSmallContactRejectionStrict" Style="{StaticResource OptionCheckBox}" Margin="0,0,0,8" Content="Require M:50/30 continuously" Visibility="Collapsed" ToolTip="While enabled, a non-Force-Touch contact is ignored on every frame unless Major is at least 50 AND Minor is at least 30. If either value drops below the threshold while you move, the contact is ignored until it qualifies again."/>
+                                    <TextBlock Style="{StaticResource HintText}" Text="Normal mode checks M only when a contact starts. Strict mode checks M on every frame and requires Major ≥ 50 AND Minor ≥ 30."/>
                                 </StackPanel>
                             </GroupBox>
 
