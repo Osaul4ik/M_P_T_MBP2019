@@ -10,6 +10,7 @@ namespace AmtPtpConfigGui.Native
         public uint ForceTapAction;
         public uint ForceTouchEnabled;
         public uint RequirePressureToActivate;
+        public uint RequirePressureContinuously;
         public uint CursorSmoothingPercent;
         public uint CursorSpeedPercent;
         public uint CursorDeadzone;
@@ -20,8 +21,9 @@ namespace AmtPtpConfigGui.Native
         public uint SmoothingAlphaDen;
         public uint SmoothingAlphaNumSlow;
         public uint SmallContactRejectionEnabled;
+        public uint SmallContactRejectionStrict;
 
-        public const uint CurrentVersion = 5;
+        public const uint CurrentVersion = 7;
         public const uint ActionContextMenu = 0;
         public const uint ActionMiddleClick = 1;
         public const uint ActionDoubleClick = 2;
@@ -36,6 +38,7 @@ namespace AmtPtpConfigGui.Native
             ForceTapAction = ActionContextMenu,
             ForceTouchEnabled = 1,
             RequirePressureToActivate = 1,
+            RequirePressureContinuously = 0,
             CursorSmoothingPercent = 0,
             CursorSpeedPercent = 100,
             CursorDeadzone = 1,
@@ -46,6 +49,7 @@ namespace AmtPtpConfigGui.Native
             SmoothingAlphaDen = 8,
             SmoothingAlphaNumSlow = 3,
             SmallContactRejectionEnabled = 1,
+            SmallContactRejectionStrict = 0,
         };
 
         public PointerConfig Clamped()
@@ -56,7 +60,11 @@ namespace AmtPtpConfigGui.Native
             if (c.ForceTapAction > ActionMax) c.ForceTapAction = ActionContextMenu;
             c.ForceTouchEnabled = c.ForceTouchEnabled != 0 ? 1u : 0u;
             c.RequirePressureToActivate = c.RequirePressureToActivate != 0 ? 1u : 0u;
+            c.RequirePressureContinuously = c.RequirePressureContinuously != 0 ? 1u : 0u;
             c.SmallContactRejectionEnabled = c.SmallContactRejectionEnabled != 0 ? 1u : 0u;
+            c.SmallContactRejectionStrict = c.SmallContactRejectionStrict != 0 ? 1u : 0u;
+            if (c.SmallContactRejectionEnabled == 0)
+                c.SmallContactRejectionStrict = 0;
             c.CursorSmoothingPercent = Clamp(c.CursorSmoothingPercent, 0, 100);
             c.CursorSpeedPercent = Clamp(c.CursorSpeedPercent, 50, 200);
             c.CursorDeadzone = Clamp(c.CursorDeadzone, 0, 8);

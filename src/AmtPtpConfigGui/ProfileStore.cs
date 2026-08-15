@@ -169,6 +169,20 @@ namespace AmtPtpConfigGui
                         old.SmallContactRejectionEnabled = defaults.SmallContactRejectionEnabled;
                     }
 
+                    // Version 5 → 6: add the optional continuous/strict
+                    // small-contact gate. Existing profiles keep it off.
+                    if (p.Pointer.StructVersion < 6)
+                    {
+                        old.SmallContactRejectionStrict = defaults.SmallContactRejectionStrict;
+                    }
+
+                    // Version 6 → 7: add the optional continuous Force-Touch
+                    // pressure gate. Existing profiles keep it off.
+                    if (p.Pointer.StructVersion < 7)
+                    {
+                        old.RequirePressureContinuously = defaults.RequirePressureContinuously;
+                    }
+
                     if (p.Pointer.StructVersion < 3)
                     {
                         old.CursorDeadzoneSlow = defaults.CursorDeadzoneSlow;

@@ -70,6 +70,8 @@ AmtMatchBuildCandidates(
     _In_  const struct BCM5974_CONFIG*             DevInfo,
     _In_  const AMT_PALM_CONFIG*                   PalmConfig,
     _In_  const AMT_PALM_RUNTIME*                  PalmRuntime,
+    _In_  const AMT_POINTER_CONFIG*                 PointerConfig,
+    _In_  BOOLEAN                                   SupportsForceTouch,
     _In_reads_(MAX_CONTACTS) const ACTIVE_CONTACT* Pool,
     _Out_ MATCH_CANDIDATE_SET*                     OutCandidates,
     _Out_ BOOLEAN*                                 LargePalmDetected
@@ -88,6 +90,37 @@ AmtMatchBuildCandidates(
 
     for (UCHAR i = 0; i < RawFrame->ContactCount; i++) {
         const RAW_CONTACT* rc = &RawFrame->Contacts[i];
+
+        // Optional strict non-Force-Touch mode: the size gate applies to
+        // every frame, not only to the birth of a new contact. A contact is
+        // eligible for matching/output only when BOTH dimensions meet the
+        // threshold. When either falls below the threshold, this frame is
+        // treated as if the contact were absent; the normal contact FSM then
+        // emits the proper UP for the old identity and a later qualifying
+        // frame can create a fresh DOWN.
+        if (!SupportsForceTouch &&
+            PointerConfig != NULL &&
+            PointerConfig->SmallContactRejectionEnabled &&
+            PointerConfig->SmallContactRejectionStrict &&
+            (rc->Major < 100 || rc->Minor < 80))
+        {
+            continue;
+        }
+
+        // Optional strict Force-Touch pressure mode: the pressure gate applies
+        // to every frame, not only to the birth of a new contact. A Force-Touch
+        // contact is eligible for matching/output only while pressure is
+        // positive. If pressure drops to zero, this frame is treated as absent;
+        // the normal contact FSM then emits UP for the old identity. A later
+        // frame with positive pressure can create a new DOWN.
+        if (SupportsForceTouch &&
+            PointerConfig != NULL &&
+            PointerConfig->ForceTouchEnabled &&
+            PointerConfig->RequirePressureContinuously &&
+            rc->Pressure == 0)
+        {
+            continue;
+        }
 
         // Birth = no already-active pool contact sits near this raw
         // position. Geometric, not firmware-flag-based - feeds the

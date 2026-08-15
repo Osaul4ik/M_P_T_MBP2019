@@ -669,6 +669,12 @@ namespace AmtPtpConfigGui
 
                 if (cfg.StructVersion < 5)
                     cfg.SmallContactRejectionEnabled = defaults.SmallContactRejectionEnabled;
+
+                if (cfg.StructVersion < 6)
+                    cfg.SmallContactRejectionStrict = defaults.SmallContactRejectionStrict;
+
+                if (cfg.StructVersion < 7)
+                    cfg.RequirePressureContinuously = defaults.RequirePressureContinuously;
             }
 
             return cfg.Clamped();
@@ -912,6 +918,15 @@ namespace AmtPtpConfigGui
                     };
                     requirePressure.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureGateFromTray));
 
+                    var requirePressureContinuous = new Forms.ToolStripMenuItem("Require pressure continuously")
+                    {
+                        Checked = pointerCfg.RequirePressureContinuously != 0,
+                        Enabled = forceTouchOn,
+                        Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
+                        ToolTipText = "Ignore a Force-Touch contact on any frame where pressure is zero."
+                    };
+                    requirePressureContinuous.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureContinuousFromTray));
+
                     // Dedicated item that expands into the list of Force Tap button types.
                     var actionMenu = new RoundedMenuItem("Force Tap action")
                     {
@@ -970,6 +985,13 @@ namespace AmtPtpConfigGui
         private void TogglePressureGateFromTray()
         {
             ChkRequirePressure.IsChecked = ChkRequirePressure.IsChecked != true;
+            Save_Click(this, new RoutedEventArgs());
+            RefreshTrayMenu();
+        }
+
+        private void TogglePressureContinuousFromTray()
+        {
+            ChkRequirePressureContinuously.IsChecked = ChkRequirePressureContinuously.IsChecked != true;
             Save_Click(this, new RoutedEventArgs());
             RefreshTrayMenu();
         }
@@ -1315,6 +1337,11 @@ namespace AmtPtpConfigGui
                 ForceTouchGroup.Visibility = _forceTouchSupported ? Visibility.Visible : Visibility.Collapsed;
             if (SmallContactRejectionGroup != null)
                 SmallContactRejectionGroup.Visibility = _forceTouchSupported ? Visibility.Collapsed : Visibility.Visible;
+            if (ChkSmallContactRejectionStrict != null)
+                ChkSmallContactRejectionStrict.Visibility =
+                    (!_forceTouchSupported && ChkSmallContactRejection?.IsChecked == true)
+                        ? Visibility.Visible
+                        : Visibility.Collapsed;
 
             // The tray context menu is rebuilt on demand from RefreshTrayMenu,
             // but if it's already open/cached it should reflect the change
@@ -1989,8 +2016,16 @@ namespace AmtPtpConfigGui
                 SlForceTapThreshold.Value = cfg.ForceTapThreshold;
                 ChkForceTouchEnabled.IsChecked = cfg.ForceTouchEnabled != 0;
                 ChkRequirePressure.IsChecked = cfg.RequirePressureToActivate != 0;
+                ChkRequirePressureContinuously.IsChecked = cfg.RequirePressureContinuously != 0;
                 ChkSmallContactRejection.IsChecked = cfg.SmallContactRejectionEnabled != 0;
+                ChkSmallContactRejectionStrict.IsChecked = cfg.SmallContactRejectionStrict != 0;
                 ChkRequirePressure.IsEnabled = cfg.ForceTouchEnabled != 0;
+                ChkRequirePressureContinuously.Visibility = cfg.ForceTouchEnabled != 0 ? Visibility.Visible : Visibility.Collapsed;
+                ChkRequirePressureContinuously.IsEnabled = cfg.ForceTouchEnabled != 0;
+                ChkSmallContactRejectionStrict.Visibility =
+                    cfg.SmallContactRejectionEnabled != 0
+                        ? Visibility.Visible
+                        : Visibility.Collapsed;
                 SlCursorSmoothing.Value = cfg.CursorSmoothingPercent;
                 SlCursorSpeed.Value = cfg.CursorSpeedPercent;
                 SlCursorDeadzone.Value = cfg.CursorDeadzone;
@@ -2021,7 +2056,12 @@ namespace AmtPtpConfigGui
             c.ForceTapThreshold = (uint)SlForceTapThreshold.Value;
             c.ForceTouchEnabled = ChkForceTouchEnabled.IsChecked == true ? 1u : 0u;
             c.RequirePressureToActivate = ChkRequirePressure.IsChecked == true ? 1u : 0u;
+            c.RequirePressureContinuously =
+                ChkRequirePressureContinuously.IsChecked == true ? 1u : 0u;
             c.SmallContactRejectionEnabled = ChkSmallContactRejection.IsChecked == true ? 1u : 0u;
+            c.SmallContactRejectionStrict =
+                (ChkSmallContactRejection.IsChecked == true &&
+                 ChkSmallContactRejectionStrict.IsChecked == true) ? 1u : 0u;
             c.CursorSmoothingPercent = (uint)SlCursorSmoothing.Value;
             c.CursorSpeedPercent = (uint)SlCursorSpeed.Value;
             c.CursorDeadzone = (uint)SlCursorDeadzone.Value;
@@ -2066,13 +2106,29 @@ namespace AmtPtpConfigGui
 
         private void ForceTouchOption_Changed(object sender, RoutedEventArgs e)
         {
-            if (ChkForceTouchEnabled != null && ChkRequirePressure != null)
-                ChkRequirePressure.IsEnabled = ChkForceTouchEnabled.IsChecked == true;
+            if (ChkForceTouchEnabled == null ||
+                ChkRequirePressure == null ||
+                ChkRequirePressureContinuously == null)
+                return;
+
+            bool enabled = ChkForceTouchEnabled.IsChecked == true;
+            ChkRequirePressure.IsEnabled = enabled;
+            ChkRequirePressureContinuously.IsEnabled = enabled;
+            ChkRequirePressureContinuously.Visibility =
+                enabled ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void SmallContactRejectionOption_Changed(object sender, RoutedEventArgs e)
         {
-            if (!_uiReady || _suppressPointerEvents) return;
+            if (ChkSmallContactRejection == null || ChkSmallContactRejectionStrict == null)
+                return;
+
+            bool enabled = ChkSmallContactRejection.IsChecked == true;
+            ChkSmallContactRejectionStrict.Visibility =
+                enabled ? Visibility.Visible : Visibility.Collapsed;
+
+            if (!enabled)
+                ChkSmallContactRejectionStrict.IsChecked = false;
         }
 
         // Scroll tab <-> ScrollConfig plumbing

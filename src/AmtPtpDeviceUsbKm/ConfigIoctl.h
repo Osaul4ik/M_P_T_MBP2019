@@ -44,6 +44,7 @@ EXTERN_C_START
 #define AMT_REG_VALUE_FORCETAP_ACTION    L"PointerForceTapAction"
 #define AMT_REG_VALUE_FORCETOUCH_ENABLED L"PointerForceTouchEnabled"
 #define AMT_REG_VALUE_REQUIRE_PRESSURE   L"PointerRequirePressureToActivate"
+#define AMT_REG_VALUE_REQUIRE_PRESSURE_CONTINUOUS L"PointerRequirePressureContinuously"
 #define AMT_REG_VALUE_CURSOR_SMOOTH      L"PointerCursorSmoothing"
 #define AMT_REG_VALUE_CURSOR_SPEED       L"PointerCursorSpeed"
 #define AMT_REG_VALUE_CURSOR_DEADZONE    L"PointerCursorDeadzone"
@@ -54,6 +55,7 @@ EXTERN_C_START
 #define AMT_REG_VALUE_CURSOR_ALPHA_DEN   L"PointerSmoothingAlphaDen"
 #define AMT_REG_VALUE_CURSOR_ALPHA_SLOW  L"PointerSmoothingAlphaNumSlow"
 #define AMT_REG_VALUE_SMALL_CONTACT_REJECTION L"PointerSmallContactRejectionEnabled"
+#define AMT_REG_VALUE_SMALL_CONTACT_REJECTION_STRICT L"PointerSmallContactRejectionStrict"
 
 #define AMT_REG_VALUE_SCROLL_SPEED       L"ScrollSpeed"
 #define AMT_REG_VALUE_SCROLL_FAST_SPEED  L"ScrollFastSpeed"

@@ -74,6 +74,10 @@ typedef struct _AMT_POINTER_CONFIG
     ULONG ForceTapAction;
     ULONG ForceTouchEnabled;
     ULONG RequirePressureToActivate;
+    // When enabled on Force Touch devices, pressure must remain positive on
+    // every frame. If pressure drops to zero, the candidate is treated as
+    // absent for that frame (continuous pressure rejection).
+    ULONG RequirePressureContinuously;
 
     // Cursor motion tuning. Percent values use 100 as the current/default
     // behavior. CursorSmoothingPercent: 0 = raw, 100 = strongest smoothing.
@@ -89,12 +93,17 @@ typedef struct _AMT_POINTER_CONFIG
 
     // Reject small contacts on trackpads without Force Touch. A contact is
     // initially rejected while Major < 100 AND Minor < 80; once it reaches
-    // Major >= 100 OR Minor >= 80 it stays accepted until the hardware slot
-    // disappears. Ignored on Force Touch-capable devices.
+    // Major >= 100 OR Minor >= 80 it stays accepted until that contact is
+    // lifted. Ignored on Force Touch-capable devices.
     ULONG SmallContactRejectionEnabled;
+
+    // When enabled together with SmallContactRejectionEnabled on a
+    // non-Force-Touch device, the Major/Minor gate is applied continuously:
+    // every frame requires Major >= 100 AND Minor >= 80.
+    ULONG SmallContactRejectionStrict;
 } AMT_POINTER_CONFIG, *PAMT_POINTER_CONFIG;
 
-#define AMT_POINTER_CONFIG_VERSION 5
+#define AMT_POINTER_CONFIG_VERSION 7
 
 #define AMT_POINTER_SMOOTH_MIN       0
 #define AMT_POINTER_SMOOTH_MAX       100
@@ -129,6 +138,7 @@ typedef struct _AMT_POINTER_CONFIG
     1,                                                                      \
     1,                                                                      \
     0,                                                                      \
+    0,                                                                      \
     100,                                                                    \
     1,                                                                      \
     4,                                                                      \
@@ -137,7 +147,8 @@ typedef struct _AMT_POINTER_CONFIG
     905,                                                                    \
     8,                                                                      \
     3,                                                                      \
-    1                                                                       \
+    1,                                                                      \
+    0                                                                       \
 }
 
 // Sane clamp range - raw pressure realistically spans ~0-300, so keep the

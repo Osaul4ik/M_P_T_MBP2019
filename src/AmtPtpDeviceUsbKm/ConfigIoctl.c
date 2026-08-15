@@ -156,7 +156,11 @@ AmtPointerConfigClamp(_Inout_ PAMT_POINTER_CONFIG Config)
         Config->ForceTapAction = AMT_POINTER_ACTION_CONTEXT_MENU;
     Config->ForceTouchEnabled = Config->ForceTouchEnabled ? 1u : 0u;
     Config->RequirePressureToActivate = Config->RequirePressureToActivate ? 1u : 0u;
+    Config->RequirePressureContinuously = Config->RequirePressureContinuously ? 1u : 0u;
     Config->SmallContactRejectionEnabled = Config->SmallContactRejectionEnabled ? 1u : 0u;
+    Config->SmallContactRejectionStrict = Config->SmallContactRejectionStrict ? 1u : 0u;
+    if (!Config->SmallContactRejectionEnabled)
+        Config->SmallContactRejectionStrict = 0;
     Config->CursorSmoothingPercent = AmtClampULong(Config->CursorSmoothingPercent, AMT_POINTER_SMOOTH_MIN, AMT_POINTER_SMOOTH_MAX);
     Config->CursorSpeedPercent = AmtClampULong(Config->CursorSpeedPercent, AMT_POINTER_SPEED_MIN, AMT_POINTER_SPEED_MAX);
     Config->CursorDeadzone = AmtClampULong(Config->CursorDeadzone, AMT_POINTER_DEADZONE_MIN, AMT_POINTER_DEADZONE_MAX);
@@ -321,6 +325,7 @@ AmtPointerConfigLoadFromRegistry(
     AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETAP_ACTION,    &Config->ForceTapAction);
     AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETOUCH_ENABLED, &Config->ForceTouchEnabled);
     AmtRegistryReadDword(key, AMT_REG_VALUE_REQUIRE_PRESSURE,   &Config->RequirePressureToActivate);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_REQUIRE_PRESSURE_CONTINUOUS, &Config->RequirePressureContinuously);
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_SMOOTH,      &Config->CursorSmoothingPercent);
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_SPEED,       &Config->CursorSpeedPercent);
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_DEADZONE,    &Config->CursorDeadzone);
@@ -331,6 +336,7 @@ AmtPointerConfigLoadFromRegistry(
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_ALPHA_DEN,   &Config->SmoothingAlphaDen);
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_ALPHA_SLOW,  &Config->SmoothingAlphaNumSlow);
     AmtRegistryReadDword(key, AMT_REG_VALUE_SMALL_CONTACT_REJECTION, &Config->SmallContactRejectionEnabled);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_SMALL_CONTACT_REJECTION_STRICT, &Config->SmallContactRejectionStrict);
 
     WdfRegistryClose(key);
 
@@ -361,6 +367,7 @@ AmtPointerConfigSaveToRegistry(
     AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETAP_ACTION,    Config->ForceTapAction);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETOUCH_ENABLED, Config->ForceTouchEnabled);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_REQUIRE_PRESSURE,   Config->RequirePressureToActivate);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_REQUIRE_PRESSURE_CONTINUOUS, Config->RequirePressureContinuously);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_SMOOTH,      Config->CursorSmoothingPercent);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_SPEED,       Config->CursorSpeedPercent);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_DEADZONE,    Config->CursorDeadzone);
@@ -371,6 +378,7 @@ AmtPointerConfigSaveToRegistry(
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_ALPHA_DEN,   Config->SmoothingAlphaDen);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_ALPHA_SLOW,  Config->SmoothingAlphaNumSlow);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_SMALL_CONTACT_REJECTION, Config->SmallContactRejectionEnabled);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_SMALL_CONTACT_REJECTION_STRICT, Config->SmallContactRejectionStrict);
 
     WdfRegistryClose(key);
 }
@@ -909,7 +917,7 @@ AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
 
         targetContext->LiveOwnerFileObject = fileObject;
         fileContext->LiveOwner = TRUE;
-        targetContext->LiveEnabled = TRUE;
+        InterlockedExchange(&targetContext->LiveEnabled, 1);
         targetContext->LiveSequence = 0;
         InterlockedExchange(&targetContext->LiveFrameIndex, 0);
         RtlZeroMemory(targetContext->LiveFrame, sizeof(targetContext->LiveFrame));
@@ -920,7 +928,7 @@ AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
             return STATUS_ACCESS_DENIED;
         }
 
-        targetContext->LiveEnabled = FALSE;
+        InterlockedExchange(&targetContext->LiveEnabled, 0);
         targetContext->LiveOwnerFileObject = NULL;
         fileContext->LiveOwner = FALSE;
     }
@@ -967,7 +975,7 @@ AmtPtpGetLiveFrame(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
         return STATUS_ACCESS_DENIED;
     }
 
-    if (!targetContext->LiveEnabled) {
+    if (InterlockedCompareExchange(&targetContext->LiveEnabled, 0, 0) == 0) {
         WdfSpinLockRelease(targetContext->LiveLock);
         return STATUS_DEVICE_NOT_READY;
     }
@@ -1018,7 +1026,7 @@ AmtPtpConfigControlEvtFileClose(_In_ WDFFILEOBJECT FileObject)
 
     WdfSpinLockAcquire(targetContext->LiveLock);
     if (targetContext->LiveOwnerFileObject == FileObject) {
-        targetContext->LiveEnabled = FALSE;
+        InterlockedExchange(&targetContext->LiveEnabled, 0);
         targetContext->LiveOwnerFileObject = NULL;
     }
     fileContext->LiveOwner = FALSE;
