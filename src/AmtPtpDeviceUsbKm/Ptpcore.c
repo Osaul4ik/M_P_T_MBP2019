@@ -242,8 +242,16 @@ PTPCore_ProcessFrame(
     MATCH_CANDIDATE_SET candidates;
     BOOLEAN              largePalm = FALSE;
 
-    AmtMatchBuildCandidates(RawFrame, pCtx->DeviceInfo, &pCtx->PalmConfig,
-                            &pCtx->PalmRuntime, pCtx->ActiveContacts, &candidates, &largePalm);
+    AmtMatchBuildCandidates(
+        RawFrame,
+        pCtx->DeviceInfo,
+        &pCtx->PalmConfig,
+        &pCtx->PalmRuntime,
+        &pCtx->PointerConfig,
+        pCtx->SupportsForceTouch,
+        pCtx->ActiveContacts,
+        &candidates,
+        &largePalm);
 
     // Palm session: suppress candidates when palm active. Contacts that go
     // unmatched purely because of this suppression are NOT lifted (see
