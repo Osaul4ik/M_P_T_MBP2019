@@ -458,14 +458,23 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     WdfSpinLockRelease(pCtx->LiveLock);
 
     // Mouse delivery is a separate critical section around the force-touch
-    // delivery state machine. The request comes from MouseInputQueue.
+    // delivery state machine.
+    //
+    // REVERT (force-touch regression fix): opportunistically claim a second
+    // pending IOCTL_HID_READ_REPORT request off the SAME manual InputQueue
+    // used by the digitizer/touch client above - mouhid.sys keeps its own
+    // read continuously queued there too, same as before the "Fullfix"
+    // rework split this into a separate MouseInputQueue. That split is the
+    // most likely cause of the intermittent (every-other-press) force-touch
+    // failures, since nothing guarantees a mouse-collection read is sitting
+    // in a dedicated queue at the exact moment this handler needs one.
     if (needMouseDelivery) {
         WDFREQUEST mouseRequest = NULL;
 
         WdfSpinLockAcquire(pCtx->StateLock);
 
         Status = WdfIoQueueRetrieveNextRequest(
-            pCtx->MouseInputQueue,
+            pCtx->InputQueue,
             &mouseRequest);
 
         if (NT_SUCCESS(Status)) {

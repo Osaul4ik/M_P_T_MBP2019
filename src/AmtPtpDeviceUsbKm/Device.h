@@ -88,7 +88,6 @@ typedef struct _DEVICE_CONTEXT
     // top-level collections. Queue.c classifies READ_REPORT requests by the
     // caller-provided output-buffer size before forwarding them.
     WDFQUEUE        InputQueue;
-    WDFQUEUE        MouseInputQueue;
 
     // User-mode configuration endpoint. This is a separate KMDF control
     // device; the PnP FDO remains a lower filter and does not expose the

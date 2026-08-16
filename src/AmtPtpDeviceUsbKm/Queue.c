@@ -61,17 +61,12 @@ AmtPtpDeviceUsbKmQueueInitialize(
         return status;
     }
 
-    // Separate manual queue for the force-touch mouse top-level collection.
-    WDF_IO_QUEUE_CONFIG_INIT(&queueConfig, WdfIoQueueDispatchManual);
-    queueConfig.PowerManaged = WdfFalse;
-    queueConfig.EvtIoStop = AmtPtpDeviceUsbKmEvtIoStop;
-
-    status = WdfIoQueueCreate(
-        Device,
-        &queueConfig,
-        WDF_NO_OBJECT_ATTRIBUTES,
-        &pDeviceContext->MouseInputQueue
-    );
+    // NOTE: a separate manual "MouseInputQueue" for the force-touch mouse
+    // top-level collection existed here between the "Fullfix" commit and
+    // this revert. It has been removed - the mouse collection's reads are
+    // forwarded to the same InputQueue as the digitizer, matching the
+    // pre-Fullfix behavior (see AmtPtpDispatchReadReportRequests and
+    // AmtPtpEvtUsbInterruptPipeReadComplete).
 
     return status;
 }
@@ -145,26 +140,24 @@ AmtPtpDispatchReadReportRequests(
 
     pDevContext = DeviceGetContext(Device);
 
-    WDFMEMORY requestMemory;
-    size_t requestBufferLength = 0;
-    status = WdfRequestRetrieveOutputMemory(Request, &requestMemory);
-    if (!NT_SUCCESS(status)) {
-        goto exit;
-    }
-
-    (VOID)WdfMemoryGetBuffer(requestMemory, &requestBufferLength);
-
-    // HIDCLASS gives each collection a read buffer sized for that report.
-    // Route the fixed-size force-touch mouse report to its own manual queue;
-    // all other read reports stay on the digitizer queue.
-    WDFQUEUE targetQueue =
-        (requestBufferLength == sizeof(PTP_FORCETOUCH_MOUSE_REPORT))
-            ? pDevContext->MouseInputQueue
-            : pDevContext->InputQueue;
-
+    // REVERT (force-touch regression fix): the buffer-size-based split that
+    // routed the mouse top-level collection's reads to a separate
+    // MouseInputQueue was introduced in the "Fullfix" rework and is the
+    // most likely cause of the intermittent (every-other-press, requiring
+    // a full finger lift to recover) force-touch delivery failures - the
+    // mouse collection's read cadence from mouhid.sys is not guaranteed to
+    // keep a request continuously queued at the exact moment
+    // AmtPtpEvtUsbInterruptPipeReadComplete needs one, so the down/up pulse
+    // could desync from the digitizer-driven delivery loop.
+    //
+    // Restored to the pre-Fullfix design: every HID read request (both the
+    // digitizer/touch collection and the force-touch mouse collection) is
+    // forwarded to the single InputQueue. AmtPtpEvtUsbInterruptPipeReadComplete
+    // opportunistically claims a second pending request off that same queue
+    // for mouse delivery, exactly as before.
     status = WdfRequestForwardToIoQueue(
         Request,
-        targetQueue
+        pDevContext->InputQueue
     );
 
     if (!NT_SUCCESS(status)) {
