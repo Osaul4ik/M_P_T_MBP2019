@@ -154,14 +154,6 @@ typedef struct _DEVICE_CONTEXT
     USHORT  ForceTouchAnchorY;
     BOOLEAN ForceTouchDragLockout;
 
-    // Previous frame's nearest-to-anchor contact position, for the
-    // single-frame fast-motion check (FORCE_TOUCH_FAST_FRAME_DELTA in
-    // Ptpcore.c) that catches a same-frame press+fast-drag before the
-    // click-arbitration latch fires the force-touch click.
-    BOOLEAN ForceTouchLastValid;
-    USHORT  ForceTouchLastX;
-    USHORT  ForceTouchLastY;
-
     // Force-touch click delivery state - see FORCE_TOUCH_DELIVERY_STATE
     // above for the full rationale.
 #define PENDING_FORCE_TOUCH_CLICK_CAPACITY 8 // queued (not-yet-started) clicks

@@ -8,22 +8,6 @@
 // Dragging far from the anchor cancels force-touch arbitration.
 #define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 160
 
-// Single-frame (frame-to-frame) motion threshold - separate from, and
-// deliberately much smaller than, FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE above.
-// That check only trips once TOTAL movement since button-down exceeds 160
-// units, which takes several frames to accumulate. Now that the force-touch
-// click fires immediately on latch (not deferred to release - see the
-// delivery block below), a press-and-immediately-drag-fast that crosses the
-// pressure threshold in the same frame it starts moving fast would otherwise
-// slip through before the total-distance lockout has a chance to catch it.
-// This single-frame check closes that gap.
-// TUNING: 45 units/frame (~0.35mm at this hardware's ~120-125 units/mm,
-// i.e. roughly 40-45mm/s at ~120Hz scan rate) - comfortably above finger
-// tremor/grip-shift during a stationary press (which the 160-unit TOTAL
-// budget above already absorbs over many frames), but well below any
-// deliberate drag's per-frame travel.
-#define FORCE_TOUCH_FAST_FRAME_DELTA 45
-
 // Safety cap prevents a press from staying pending indefinitely.
 // CLICK_ARBITRATION_TIMEOUT_MS moved to Ptpcore.h (shared with Device.c).
 
@@ -655,7 +639,6 @@ PTPCore_ProcessFrame(
     if (!ButtonDown) {
         pCtx->ForceTouchAnchorValid = FALSE;
         pCtx->ForceTouchDragLockout = FALSE;
-        pCtx->ForceTouchLastValid   = FALSE;
     } else {
         // AUDIT FIX: previously gated on buttonClickEdge, the anchor was
         // never armed if the edge frame reported zero contacts (mechanical
@@ -674,7 +657,6 @@ PTPCore_ProcessFrame(
         BOOLEAN trackAnchor = pCtx->ForceTouchAnchorValid;
         ULONGLONG bestDistSq = ~0ULL;
         INT     bestDx = 0, bestDy = 0;
-        USHORT  bestX = 0, bestY = 0;
 
         for (UCHAR fi = 0; fi < RawFrame->ContactCount; fi++) {
             // Peak raw pressure this frame, shared by click arbitration
@@ -693,8 +675,6 @@ PTPCore_ProcessFrame(
                 bestDistSq = distSq;
                 bestDx     = dx;
                 bestDy     = dy;
-                bestX      = RawFrame->Contacts[fi].X;
-                bestY      = RawFrame->Contacts[fi].Y;
             }
         }
 
@@ -705,29 +685,6 @@ PTPCore_ProcessFrame(
                 ady > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE) {
                 pCtx->ForceTouchDragLockout = TRUE;
             }
-
-            // FIX (press-hard-and-immediately-drag-fast opens a context
-            // menu): the total-distance check above only trips after several
-            // frames of accumulated movement. A fast drag can cover
-            // FORCE_TOUCH_FAST_FRAME_DELTA in a single frame long before it
-            // covers the full FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE from the
-            // anchor - checking frame-to-frame motion here catches that fast
-            // onset immediately, before pressure gets the chance to latch
-            // FORCE_TOUCH (and fire the click - see delivery block below) on
-            // an earlier frame than the total-distance check would ever trip.
-            if (pCtx->ForceTouchLastValid) {
-                INT fdx = (INT)bestX - (INT)pCtx->ForceTouchLastX;
-                if (fdx < 0) fdx = -fdx;
-                INT fdy = (INT)bestY - (INT)pCtx->ForceTouchLastY;
-                if (fdy < 0) fdy = -fdy;
-                if (fdx > FORCE_TOUCH_FAST_FRAME_DELTA ||
-                    fdy > FORCE_TOUCH_FAST_FRAME_DELTA) {
-                    pCtx->ForceTouchDragLockout = TRUE;
-                }
-            }
-            pCtx->ForceTouchLastX     = bestX;
-            pCtx->ForceTouchLastY     = bestY;
-            pCtx->ForceTouchLastValid = TRUE;
         }
     }
 
@@ -746,10 +703,11 @@ PTPCore_ProcessFrame(
     // ordinary click on the release frame via releasedFastClick.
     BOOLEAN releasedFastClick = FALSE;
 
-    // Set TRUE exactly on the one frame ClickArbitrationState transitions
-    // PENDING -> FORCE_TOUCH (the latch edge) - see the force-touch delivery
-    // block near the end for why this is needed.
-    BOOLEAN justLatchedForceTouch = FALSE;
+    // Captured BEFORE the !ButtonDown branch below resets
+    // ClickArbitrationState to IDLE - see the force-touch delivery block
+    // near the end for why this is needed.
+    BOOLEAN releaseWasForceTouch =
+        !ButtonDown && (pCtx->ClickArbitrationState == CLICK_ARBITRATION_FORCE_TOUCH);
 
     if (!ButtonDown) {
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
@@ -784,7 +742,6 @@ PTPCore_ProcessFrame(
 
             if (framePeakPressure > pCtx->PointerConfig.ForceTapThreshold) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
-                justLatchedForceTouch       = TRUE;
             } else if (dropFromPeak >= CLICK_ARBITRATION_PRESSURE_HYSTERESIS) {
                 pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
             } else if (pCtx->ClickArbitrationStallFrames >= CLICK_ARBITRATION_STALL_FRAMES_FAST_RESOLVE) {
@@ -811,28 +768,16 @@ PTPCore_ProcessFrame(
         releasedFastClick ||
         (pCtx->ClickArbitrationState == CLICK_ARBITRATION_HARD_TAP);
 
-    // Force-touch delivery: fires immediately on the latch edge (the one
-    // frame ClickArbitrationState becomes FORCE_TOUCH), not deferred to
-    // release - a held press triggers the click right away, matching a
-    // real Force Click (single trigger the instant the threshold is
-    // crossed; it does not re-fire from holding harder or wait for the
-    // finger to lift). Downstream (Interrupt.c's AmtForceTouchClickEnqueue
-    // / ForceTouchDeliveryState) already delivers this as a self-contained
-    // DOWN+UP pulse over the next couple of mouse reports regardless of how
-    // long the physical press continues, so firing once at latch time is
-    // sufficient - no separate "up" signal is needed here.
-    //
-    // The 2026-08-03 rework moved delivery to the release edge specifically
-    // to avoid a fast press-and-drag delivering a complete Button2 pulse
-    // before the (multi-frame) total-distance drag lockout caught up,
-    // flashing the context menu open and closed. That failure mode is
-    // covered here instead by the single-frame FORCE_TOUCH_FAST_FRAME_DELTA
-    // check above, which trips ForceTouchDragLockout - and therefore forces
-    // CLICK_ARBITRATION_HARD_TAP instead of FORCE_TOUCH on the very same
-    // frame - before a same-frame press+fast-drag ever gets the chance to
-    // latch. A drag that develops gradually AFTER a genuine latch (i.e.
-    // after the click already fired) is a one-way downgrade to HARD_TAP
-    // exactly as before; the click already delivered is not retroactively
-    // cancelled, same as a real Force Click.
-    *OutForceTouchClick = justLatchedForceTouch;
+    // Force-touch delivery: fires only on release. Only a press STILL
+    // FORCE_TOUCH at the exact moment of release fires the context menu,
+    // as a single down+up pulse on that release frame (delivered by
+    // Interrupt.c's AmtForceTouchClickEnqueue / ForceTouchDeliveryState
+    // over the next couple of mouse reports). This trades away
+    // "right-click-drag", which Windows has no use for anyway, and means a
+    // fast press-and-drag can never deliver a complete Button2 pulse before
+    // the drag lockout (checked every frame above, including retroactively
+    // downgrading an already-latched FORCE_TOUCH to HARD_TAP) has a chance
+    // to catch it - so there is no context-menu flash to guard against
+    // separately.
+    *OutForceTouchClick = releaseWasForceTouch;
 }
