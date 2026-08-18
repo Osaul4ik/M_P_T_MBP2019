@@ -586,12 +586,28 @@ AmtPtpEvtDeviceD0Exit(
 
     pDeviceContext = DeviceGetContext(Device);
 
-    // Cancel any pending backed-off reader-restart synchronously (wait for
-    // an in-progress callback to finish) before tearing down the pipe's
-    // I/O target below. Without this, a timer that fires concurrently with
-    // D0Exit could call WdfIoTargetStart on a target that is being (or has
-    // just been) stopped for this power transition.
-    WdfTimerStop(pDeviceContext->ReaderRestartTimer, TRUE);
+    // Do NOT wait here (Wait = FALSE). AmtPtpEvtReaderRestartTimer can be
+    // mid-flight in WdfUsbTargetDeviceResetPortSynchronously, which per its
+    // documented signature takes no WDFREQUEST/WDF_REQUEST_SEND_OPTIONS
+    // and therefore has no time-out - if the port is in a bad enough state
+    // to need that call, it can also be in a bad enough state for the call
+    // to never return. WdfTimerStop(..., TRUE) would then block this
+    // PASSIVE_LEVEL D0Exit callback indefinitely, which is exactly Bug
+    // Check 0x9F (DRIVER_POWER_STATE_FAILURE), reason 0x3: "A device
+    // object has been blocking an IRP for too long a time" - the power
+    // manager times out waiting for this callback and Windows bugchecks,
+    // which is unrecoverable short of a hard reboot.
+    //
+    // This trades away the race the previous (blocking) version of this
+    // call was guarding against: a recovery call from a stale timer fire
+    // finishing after D0Exit has already stopped the pipe target. That
+    // race is benign here - InterruptPipe/UsbDevice stay valid handles
+    // across an ordinary D0Exit (they are only nulled out in
+    // AmtPtpEvtDeviceReleaseHardware, a distinct, much rarer callback), so
+    // a late recovery call just targets an already-stopped I/O target and
+    // returns an error, which every call site here already discards via
+    // (VOID). A blocked-forever power IRP is the far worse failure mode.
+    WdfTimerStop(pDeviceContext->ReaderRestartTimer, FALSE);
 
     WdfIoTargetStop(
         WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe),
