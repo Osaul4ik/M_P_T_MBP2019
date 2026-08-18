@@ -232,24 +232,16 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
         return status;
     }
 
-    // Canonical USB-client S0-idle (selective suspend) policy. Requires
-    // the WdfDeviceInitSetPowerPolicyOwnership(TRUE) claimed in
-    // AmtPtpDeviceUsbKmEvtDeviceAdd, since this FDO is filter-style and
-    // would not be the power-policy owner by default. 5000 ms matches the
-    // Windows HID-class default selective-suspend idle timeout, so the
-    // trackpad reawakens as quickly as any stock USB HID device would.
-    {
-        WDF_DEVICE_POWER_POLICY_IDLE_SETTINGS idleSettings;
-
-        WDF_DEVICE_POWER_POLICY_IDLE_SETTINGS_INIT(
-            &idleSettings, IdleUsbSelectiveSuspend);
-        idleSettings.IdleTimeout = 5000;
-
-        status = WdfDeviceAssignS0IdleSettings(device, &idleSettings);
-        if (!NT_SUCCESS(status)) {
-            return status;
-        }
-    }
+    // Reverted alongside the WdfDeviceInitSetPowerPolicyOwnership(TRUE)
+    // claim in AmtPtpDeviceUsbKmEvtDeviceAdd (Driver.c): this call is only
+    // valid when this driver is the power-policy owner (see the
+    // FDOPowerPolicyOwnerAPI rule), and that ownership claim was reverted
+    // as a likely cause of a STATUS_DEVICE_DATA_ERROR seen after it was
+    // introduced. The AmtPtpDeviceUsbKm_AddReg SelectiveSuspendEnabled=1
+    // INF setting is left in place; whichever driver actually owns power
+    // policy in this stack negotiates USB selective suspend on its own -
+    // this driver does not need to (and, without ownership, cannot)
+    // configure S0-idle settings itself.
 
     deviceContext = DeviceGetContext(device);
     RtlZeroMemory(deviceContext, sizeof(DEVICE_CONTEXT));
