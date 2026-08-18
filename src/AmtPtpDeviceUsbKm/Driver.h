@@ -5,6 +5,8 @@
 #include <usb.h>
 #include <usbdlib.h>
 #include <wdfusb.h>
+#include <usbioctl.h> // IOCTL_INTERNAL_USB_CYCLE_PORT - last rung of the
+                       // reader-recovery escalation ladder (Interrupt.c)
 #include "device.h"
 #include "queue.h"
 

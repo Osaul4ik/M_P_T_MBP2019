@@ -65,8 +65,19 @@ AddReg=AmtPtpDeviceUsbKm_AddReg
 
 [AmtPtpDeviceUsbKm_AddReg]
 HKR,,FriendlyName,,%AmtPtpDeviceUsbKm.DeviceDesc%
+; NOT redundant - see AmtPtpDeviceUsbKm_Device.NT.Services below. mshidkmdf
+; carries SPSVCINST_ASSOCSERVICE there (Microsoft's documented flag for
+; "this is the PnP function driver"); AmtPtpDeviceUsbKm's own AddService
+; line deliberately omits that flag, exactly as MS's INF AddService
+; Directive doc prescribes for "a filter driver or other driver component".
+; A plain AddService without ASSOCSERVICE only installs the service (SCM
+; entry); it does NOT attach the driver to this device's PnP stack. Only
+; this LowerFilters entry does that. Removing it (as an earlier pass of
+; mine incorrectly did) leaves nothing telling PnP to load
+; AmtPtpDeviceUsbKm.sys here at all - only mshidkmdf would load, and the
+; device would get zero USB/HID processing.
 HKR,,"LowerFilters",0x00010008,"AmtPtpDeviceUsbKm"
-HKR,,"SelectiveSuspendEnabled",0x00010001,0
+HKR,,"SelectiveSuspendEnabled",0x00010001,1
 
 [AmtPtpDeviceUsbKm_Service_Inst]
 DisplayName   = %AmtPtpDeviceUsbKm.SVCDESC%

@@ -4,6 +4,15 @@
 #include "PTPCore.h"
 #include "Input.h"
 
+#ifdef ALLOC_PRAGMA
+// These two are the only PASSIVE_LEVEL-only, non-hot-path functions in this
+// file (the reader-recovery escalation ladder - see READER_RECOVERY_STAGE
+// in Device.h); everything else here runs on the USB completion/DPC path
+// and must stay non-paged.
+#pragma alloc_text (PAGE, AmtPtpCyclePort)
+#pragma alloc_text (PAGE, AmtPtpEvtReaderRestartTimer)
+#endif
+
 #if DBG
 static VOID
 AmtReportCheckInvariants(_In_ const PTP_REPORT* Report)
@@ -160,6 +169,16 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // fingerSize/headerSize come from the static config entry latched once
     // for this device. The fingerSize==0 case is rejected during setup.
     NT_ASSERT(fingerSize != 0);
+
+    // A successful transfer clears the reader-recovery escalation ladder
+    // (AmtPtpEvtUsbInterruptReadersFailed / AmtPtpEvtReaderRestartTimer) -
+    // a blip early in a power session should not leave the next unrelated
+    // failure escalating straight to a port reset or port cycle. Not
+    // lock-protected: it is a heuristic recovery-progress marker, not
+    // correctness-critical, and the worst case of a benign race with that
+    // callback is retrying one rung of the ladder an extra time, never a
+    // correctness issue.
+    pCtx->ReaderRecoveryStage = READER_RECOVERY_RESET_PIPE;
 
     // Validate packet shape before dequeuing a HID request and before taking
     // StateLock. This ensures malformed/short USB packets cannot leave an
@@ -558,15 +577,155 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     }
 }
 
+// AmtPtpCyclePort
+//
+// Last rung of the reader-recovery escalation ladder - see
+// READER_RECOVERY_STAGE in Device.h. Power-cycles the device's USB port,
+// the moral equivalent of an unplug/replug: the device disappears and
+// reappears through normal PnP. There is no WDFUSB wrapper for this
+// operation (unlike reset-pipe/reset-port), so it goes down as the raw
+// internal IOCTL against the WDFUSBDEVICE's own I/O target.
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS
+AmtPtpCyclePort(
+    _In_ PDEVICE_CONTEXT DeviceContext)
+{
+    WDFIOTARGET               ioTarget;
+    WDF_REQUEST_SEND_OPTIONS  sendOptions;
+
+    PAGED_CODE();
+
+    ioTarget = WdfUsbTargetDeviceGetIoTarget(DeviceContext->UsbDevice);
+
+    // Bounded like the Wellspring control transfers in Device.c - a cycle
+    // request that never completes must not hang the passive-level
+    // recovery worker (AmtPtpEvtReaderRestartTimer) forever.
+    WDF_REQUEST_SEND_OPTIONS_INIT(&sendOptions, WDF_REQUEST_SEND_OPTION_TIMEOUT);
+    WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(
+        &sendOptions, WDF_REL_TIMEOUT_IN_SEC(WELLSPRING_CONTROL_TRANSFER_TIMEOUT_SEC));
+
+    return WdfIoTargetSendInternalIoctlSynchronously(
+        ioTarget,
+        NULL,                        // Request - let WDF allocate one
+        IOCTL_INTERNAL_USB_CYCLE_PORT,
+        NULL,                        // InputBuffer
+        NULL,                        // OutputBuffer
+        &sendOptions,
+        NULL);                       // BytesReturned
+}
+
+// AmtPtpEvtReaderRestartTimer
+//
+// Performs one rung of the READER_RECOVERY_STAGE escalation ladder, then
+// tries to resume the continuous reader. Runs at PASSIVE_LEVEL (the timer
+// object was created with ExecutionLevel = WdfExecutionLevelPassive
+// specifically for this - WdfUsbTargetPipeResetPipe,
+// WdfUsbTargetDeviceResetPortSynchronously, and AmtPtpCyclePort are all
+// PASSIVE_LEVEL-only synchronous calls).
+VOID
+AmtPtpEvtReaderRestartTimer(
+    _In_ WDFTIMER Timer)
+{
+    WDFDEVICE        device = (WDFDEVICE)WdfTimerGetParentObject(Timer);
+    PDEVICE_CONTEXT  pCtx   = DeviceGetContext(device);
+
+    PAGED_CODE();
+
+    // If this fires in the narrow window after D0Exit already stopped the
+    // target but before the next D0Entry restarts it, these recovery calls
+    // and the final WdfIoTargetStart simply fail (target/device not in a
+    // startable state) and nothing further happens - no special-casing
+    // needed. D0Exit additionally cancels this timer synchronously before
+    // stopping the target, so in practice that window is not reachable.
+    switch (pCtx->ReaderRecoveryStage) {
+    case READER_RECOVERY_RESET_PIPE:
+        // Pipe-level only; no need to quiesce the I/O target first - this
+        // is the same operation the framework itself performs internally
+        // when EvtUsbTargetPipeReadersFailed returns TRUE (see the
+        // official EVT_WDF_USB_READERS_FAILED remarks), just delayed and
+        // rate-limited here instead of immediate/unconditional.
+        (VOID)WdfUsbTargetPipeResetPipe(pCtx->InterruptPipe);
+        break;
+
+    case READER_RECOVERY_RESET_PORT:
+    case READER_RECOVERY_CYCLE_PORT:
+        // Device/port-level operations affect the whole USB device, not
+        // just this pipe. A known KMDF USB pitfall is issuing a device-
+        // level operation while a pipe's I/O target still believes itself
+        // "started" - the pipe target's bookkeeping and the hardware then
+        // disagree, which can leave the target stuck and a later
+        // WdfIoTargetStart ineffective. Explicitly stop the pipe target
+        // first and let the WdfIoTargetStart below bring it back cleanly
+        // afterward, mirroring the same stop/act/start bracket D0Exit and
+        // D0Entry already use around the interrupt pipe.
+        WdfIoTargetStop(
+            WdfUsbTargetPipeGetIoTarget(pCtx->InterruptPipe),
+            WdfIoTargetCancelSentIo);
+
+        if (pCtx->ReaderRecoveryStage == READER_RECOVERY_RESET_PORT) {
+            // The framework reselects the current USB configuration after
+            // a successful port reset, so InterruptPipe/UsbInterface stay
+            // valid - no need to redo SelectInterruptInterface here.
+            (VOID)WdfUsbTargetDeviceResetPortSynchronously(pCtx->UsbDevice);
+        } else {
+            (VOID)AmtPtpCyclePort(pCtx);
+        }
+        break;
+
+    default:
+        // READER_RECOVERY_EXHAUSTED: already tried every rung this D0
+        // session. Stay silent until the next D0Entry (sleep/wake cycle
+        // or replug) resets the ladder.
+        return;
+    }
+
+    // Escalate for next time regardless of this step's own result - if the
+    // reader is still stuck after this recovery action, the *next* failure
+    // callback should try the next rung, not repeat this one forever.
+    pCtx->ReaderRecoveryStage++;
+
+    // Always attempt to resume the reader, even if the recovery call above
+    // failed: if reads are still broken, this resubmission will itself
+    // fail and drive AmtPtpEvtUsbInterruptReadersFailed again, which is
+    // what carries the ladder forward to the next rung.
+    (VOID)WdfIoTargetStart(
+        WdfUsbTargetPipeGetIoTarget(pCtx->InterruptPipe));
+}
+
 BOOLEAN
 AmtPtpEvtUsbInterruptReadersFailed(
     _In_ WDFUSBPIPE  Pipe,
     _In_ NTSTATUS    Status,
     _In_ USBD_STATUS UsbdStatus)
 {
-    UNREFERENCED_PARAMETER(Pipe);
+    WDFIOTARGET      ioTarget = WdfUsbTargetPipeGetIoTarget(Pipe);
+    WDFDEVICE        device   = WdfIoTargetGetDevice(ioTarget);
+    PDEVICE_CONTEXT  pCtx     = DeviceGetContext(device);
+
     UNREFERENCED_PARAMETER(Status);
     UNREFERENCED_PARAMETER(UsbdStatus);
 
-    return TRUE;
+    // Escalating recovery (reset-pipe -> reset-port -> cycle-port) instead
+    // of an immediate unconditional restart. Returning TRUE unconditionally
+    // here previously let a persistently failing pipe (most commonly:
+    // right after a system resume, before the endpoint has settled) spin
+    // as fast as USBD could complete failed URBs - real CPU and
+    // USB-controller cost, observable as elevated temperature after wake -
+    // and never actually attempted the recovery a stuck endpoint or port
+    // typically needs.
+    if (pCtx->ReaderRecoveryStage >= READER_RECOVERY_EXHAUSTED) {
+        // Give up until the next D0Entry resets the ladder. The device
+        // stays silent rather than burning power in an unbounded loop;
+        // AmtPtpEvtDeviceD0Entry (a genuine replug, or the next sleep/wake
+        // cycle) gets a clean slate to try again.
+        return FALSE;
+    }
+
+    WdfTimerStart(
+        pCtx->ReaderRestartTimer,
+        WDF_REL_TIMEOUT_IN_MS(READER_RECOVERY_STEP_DELAY_MS));
+
+    // We own the recovery/restart via the timer above, so tell the
+    // framework not to immediately resubmit the reader itself.
+    return FALSE;
 }

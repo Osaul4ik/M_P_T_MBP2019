@@ -6,6 +6,7 @@
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (PAGE, AmtPtpDeviceUsbKmCreateDevice)
 #pragma alloc_text (PAGE, AmtPtpDeviceUsbKmEvtDevicePrepareHardware)
+#pragma alloc_text (PAGE, AmtPtpEvtDeviceReleaseHardware)
 // Both PASSIVE_LEVEL-only and both already call PAGED_CODE(); previously
 // missing here, which left them PAGED_CODE()-asserting from a non-paged
 // segment (PREfast C28172).
@@ -212,6 +213,7 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
 
     WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&pnpPowerCallbacks);
     pnpPowerCallbacks.EvtDevicePrepareHardware = AmtPtpDeviceUsbKmEvtDevicePrepareHardware;
+    pnpPowerCallbacks.EvtDeviceReleaseHardware = AmtPtpEvtDeviceReleaseHardware;
     pnpPowerCallbacks.EvtDeviceD0Entry         = AmtPtpEvtDeviceD0Entry;
     pnpPowerCallbacks.EvtDeviceD0Exit          = AmtPtpEvtDeviceD0Exit;
     WdfDeviceInitSetPnpPowerEventCallbacks(DeviceInit, &pnpPowerCallbacks);
@@ -230,8 +232,49 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
         return status;
     }
 
+    // Canonical USB-client S0-idle (selective suspend) policy. Requires
+    // the WdfDeviceInitSetPowerPolicyOwnership(TRUE) claimed in
+    // AmtPtpDeviceUsbKmEvtDeviceAdd, since this FDO is filter-style and
+    // would not be the power-policy owner by default. 5000 ms matches the
+    // Windows HID-class default selective-suspend idle timeout, so the
+    // trackpad reawakens as quickly as any stock USB HID device would.
+    {
+        WDF_DEVICE_POWER_POLICY_IDLE_SETTINGS idleSettings;
+
+        WDF_DEVICE_POWER_POLICY_IDLE_SETTINGS_INIT(
+            &idleSettings, IdleUsbSelectiveSuspend);
+        idleSettings.IdleTimeout = 5000;
+
+        status = WdfDeviceAssignS0IdleSettings(device, &idleSettings);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+    }
+
     deviceContext = DeviceGetContext(device);
     RtlZeroMemory(deviceContext, sizeof(DEVICE_CONTEXT));
+
+    // Timer used to restart the interrupt pipe's continuous reader with
+    // backoff after AmtPtpEvtUsbInterruptReadersFailed (see Interrupt.c).
+    // Its callback calls WdfIoTargetStart, which requires PASSIVE_LEVEL,
+    // hence the explicit passive execution level here rather than the
+    // default DISPATCH_LEVEL timer callback.
+    {
+        WDF_TIMER_CONFIG      timerConfig;
+        WDF_OBJECT_ATTRIBUTES timerAttributes;
+
+        WDF_TIMER_CONFIG_INIT(&timerConfig, AmtPtpEvtReaderRestartTimer);
+
+        WDF_OBJECT_ATTRIBUTES_INIT(&timerAttributes);
+        timerAttributes.ParentObject   = device;
+        timerAttributes.ExecutionLevel = WdfExecutionLevelPassive;
+
+        status = WdfTimerCreate(
+            &timerConfig, &timerAttributes, &deviceContext->ReaderRestartTimer);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+    }
 
     deviceContext->ActiveContacts = AmtAllocateAlignedContactPool();
     if (deviceContext->ActiveContacts == NULL) {
@@ -377,6 +420,43 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
     return status;
 }
 
+// AmtPtpEvtDeviceReleaseHardware
+//
+// Symmetric counterpart to AmtPtpDeviceUsbKmEvtDevicePrepareHardware. Per
+// the KMDF PnP contract, EvtDevicePrepareHardware can be invoked more than
+// once over the lifetime of a single device object (e.g. resource
+// rebalance), and without a matching EvtDeviceReleaseHardware the second
+// PrepareHardware call would see stale UsbInterface/InterruptPipe/UsbDevice
+// handles from the previous hardware instantiation instead of cleanly
+// re-acquiring them.
+
+NTSTATUS
+AmtPtpEvtDeviceReleaseHardware(
+    _In_ WDFDEVICE    Device,
+    _In_ WDFCMRESLIST ResourceListTranslated)
+{
+    PDEVICE_CONTEXT pDeviceContext;
+
+    UNREFERENCED_PARAMETER(ResourceListTranslated);
+    PAGED_CODE();
+
+    pDeviceContext = DeviceGetContext(Device);
+
+    // WdfUsbTargetDeviceCreate's returned WDFUSBDEVICE, and the interface/
+    // pipe handles derived from it via SelectInterruptInterface, are all
+    // parented to Device and torn down by the framework automatically -
+    // this callback only needs to drop this driver's own references to
+    // them so AmtPtpDeviceUsbKmEvtDevicePrepareHardware's
+    // "if (pDeviceContext->UsbDevice == NULL)" guard re-acquires a fresh
+    // set on the next PrepareHardware instead of skipping acquisition and
+    // reusing now-invalid handles.
+    pDeviceContext->InterruptPipe = NULL;
+    pDeviceContext->UsbInterface  = NULL;
+    pDeviceContext->UsbDevice     = NULL;
+
+    return STATUS_SUCCESS;
+}
+
 // AmtPtpEvtDeviceD0Entry
 
 NTSTATUS
@@ -388,10 +468,13 @@ AmtPtpEvtDeviceD0Entry(
     NTSTATUS        status;
     BOOLEAN         isTargetStarted;
 
-    UNREFERENCED_PARAMETER(PreviousState);
-
     pDeviceContext  = DeviceGetContext(Device);
     isTargetStarted = FALSE;
+
+    // A fresh D0Entry always means a clean slate for the reader-recovery
+    // escalation ladder in Interrupt.c - whatever failure streak happened
+    // in a previous power session is irrelevant now.
+    pDeviceContext->ReaderRecoveryStage = READER_RECOVERY_RESET_PIPE;
 
     pDeviceContext->LastReportTime =
         KeQueryPerformanceCounter(&pDeviceContext->PerfFrequency);
@@ -446,7 +529,39 @@ AmtPtpEvtDeviceD0Entry(
     RtlZeroMemory(&pDeviceContext->RecentLifts, sizeof(pDeviceContext->RecentLifts));
 
     // Wellspring-mode setup is best-effort; only the start result matters.
-    (VOID)AmtPtpSetWellspringMode(pDeviceContext, TRUE);
+    //
+    // After a real power-off (PreviousState == WdfPowerDeviceD3Final), the
+    // device may not yet accept control transfers in the very first
+    // instant it reappears in D0 - re-enumeration/link-training on the
+    // parent hub can still be settling. A single fire-and-forget attempt
+    // here silently left Wellspring mode never re-armed if that first
+    // attempt lost the race, which reads to the user as "trackpad
+    // unresponsive after wake" even though the interrupt pipe itself comes
+    // up fine. Retry a bounded few times with a short pause; a D0Entry
+    // reached from a lighter (non-D3Final) transition doesn't need this
+    // slack, so it gets a single attempt as before.
+    {
+        ULONG maxAttempts = (PreviousState == WdfPowerDeviceD3Final)
+            ? WELLSPRING_MODE_D0ENTRY_MAX_ATTEMPTS
+            : 1;
+        ULONG attempt;
+
+        for (attempt = 0; attempt < maxAttempts; attempt++) {
+            if (NT_SUCCESS(AmtPtpSetWellspringMode(pDeviceContext, TRUE))) {
+                break;
+            }
+
+            if (attempt + 1 < maxAttempts) {
+                LARGE_INTEGER delay;
+                // D0Entry runs at PASSIVE_LEVEL, so a short blocking pause
+                // here is sanctioned by the WDF power-callback contract -
+                // this is not a hot path.
+                delay.QuadPart = WDF_REL_TIMEOUT_IN_MS(
+                    WELLSPRING_MODE_D0ENTRY_RETRY_DELAY_MS_UNIT * (attempt + 1));
+                KeDelayExecutionThread(KernelMode, FALSE, &delay);
+            }
+        }
+    }
 
     status = WdfIoTargetStart(
         WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe));
@@ -478,6 +593,13 @@ AmtPtpEvtDeviceD0Exit(
     PAGED_CODE();
 
     pDeviceContext = DeviceGetContext(Device);
+
+    // Cancel any pending backed-off reader-restart synchronously (wait for
+    // an in-progress callback to finish) before tearing down the pipe's
+    // I/O target below. Without this, a timer that fires concurrently with
+    // D0Exit could call WdfIoTargetStart on a target that is being (or has
+    // just been) stopped for this power transition.
+    WdfTimerStop(pDeviceContext->ReaderRestartTimer, TRUE);
 
     WdfIoTargetStop(
         WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe),

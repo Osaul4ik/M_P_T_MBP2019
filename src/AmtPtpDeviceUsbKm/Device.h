@@ -44,6 +44,33 @@ typedef enum _FORCE_TOUCH_DELIVERY_STATE
     FORCE_TOUCH_DELIVERY_UP_PENDING    // DOWN delivered, UP not yet delivered
 } FORCE_TOUCH_DELIVERY_STATE;
 
+// Escalation ladder for interrupt-pipe read failures, matching the USB
+// client-driver recovery guidance in the Windows USB driver design
+// documentation: try the least disruptive recovery first and only escalate
+// if the pipe is still failing afterward.
+//
+//   1. reset-pipe  - WdfUsbTargetPipeResetPipe: clears a halted/stalled
+//                    endpoint without touching the rest of the device.
+//   2. reset-port  - WdfUsbTargetDeviceResetPortSynchronously: a full
+//                    device reset via the parent hub port; the framework
+//                    reselects the current USB configuration afterward, so
+//                    existing pipe handles remain valid.
+//   3. cycle-port  - IOCTL_INTERNAL_USB_CYCLE_PORT: power-cycles the port,
+//                    i.e. treats the device exactly like an unplug/replug.
+//                    This is the last resort - the device will disappear
+//                    and reappear through normal PnP.
+//
+// Each stage is attempted at most once per D0 session before escalating to
+// the next; once cycle-port has been tried, this driver instance gives up
+// (READER_RECOVERY_EXHAUSTED) until the next D0Entry or PnP re-arrival.
+typedef enum _READER_RECOVERY_STAGE
+{
+    READER_RECOVERY_RESET_PIPE = 0,
+    READER_RECOVERY_RESET_PORT,
+    READER_RECOVERY_CYCLE_PORT,
+    READER_RECOVERY_EXHAUSTED
+} READER_RECOVERY_STAGE;
+
 typedef struct _AMT_CONFIG_CONTROL_CONTEXT
 {
     // The PnP filter device that owns the actual palm/geometry state.
@@ -190,6 +217,18 @@ typedef struct _DEVICE_CONTEXT
     // Every lift-off advances it; reseeded at D0Entry.
     ULONG   NextContactId;
 
+    // Bounded, escalating recovery of the interrupt pipe's continuous
+    // reader after AmtPtpEvtUsbInterruptReadersFailed. Without this, a
+    // pipe that keeps failing right after a resume (endpoint not yet
+    // settled) gets resubmitted in a tight loop with no delay - real CPU
+    // and USB-controller cost, not just a cosmetic retry. Reset in
+    // AmtPtpEvtDeviceD0Entry and on every successful read completion;
+    // cancelled synchronously in AmtPtpEvtDeviceD0Exit before the pipe's
+    // I/O target is stopped, so it can never fire against a pipe that is
+    // concurrently being torn down.
+    WDFTIMER               ReaderRestartTimer;
+    READER_RECOVERY_STAGE  ReaderRecoveryStage;
+
     // QPC frequency cached at D0Entry
     LARGE_INTEGER PerfFrequency;
 
@@ -257,12 +296,26 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 // Bound the Wellspring control transfer with a timeout.
 #define WELLSPRING_CONTROL_TRANSFER_TIMEOUT_SEC   5
 
+// Small settle delay before each escalation step in the reader-recovery
+// ladder (READER_RECOVERY_STAGE above). The recovery calls themselves
+// (port reset, port cycle) already take real time on the wire; this just
+// avoids hammering an endpoint that is mid-transition between one
+// escalation step and the next.
+#define READER_RECOVERY_STEP_DELAY_MS 100
+
+// Bounded retries for the D0Entry Wellspring mode-switch control transfer
+// after a full power-off (D3Final -> D0), where the device may not yet
+// accept control transfers in the first instant it is back in D0.
+#define WELLSPRING_MODE_D0ENTRY_MAX_ATTEMPTS       3
+#define WELLSPRING_MODE_D0ENTRY_RETRY_DELAY_MS_UNIT 50
+
 NTSTATUS
 AmtPtpDeviceUsbKmCreateDevice(
     _Inout_ PWDFDEVICE_INIT DeviceInit
     );
 
 EVT_WDF_DEVICE_PREPARE_HARDWARE AmtPtpDeviceUsbKmEvtDevicePrepareHardware;
+EVT_WDF_DEVICE_RELEASE_HARDWARE AmtPtpEvtDeviceReleaseHardware;
 EVT_WDF_DEVICE_D0_ENTRY         AmtPtpEvtDeviceD0Entry;
 EVT_WDF_DEVICE_D0_EXIT          AmtPtpEvtDeviceD0Exit;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP  AmtPtpEvtDeviceContextCleanup;
@@ -300,6 +353,15 @@ AmtPtpConfigContReaderForInterruptEndPoint(_In_ PDEVICE_CONTEXT DeviceContext);
 
 EVT_WDF_USB_READER_COMPLETION_ROUTINE AmtPtpEvtUsbInterruptPipeReadComplete;
 EVT_WDF_USB_READERS_FAILED            AmtPtpEvtUsbInterruptReadersFailed;
+EVT_WDF_TIMER                         AmtPtpEvtReaderRestartTimer;
+
+// Last rung of the reader-recovery escalation ladder - see
+// READER_RECOVERY_STAGE. Power-cycles the device's USB port, the moral
+// equivalent of an unplug/replug, via IOCTL_INTERNAL_USB_CYCLE_PORT sent to
+// the WDFUSBDEVICE's I/O target. Must be called at PASSIVE_LEVEL.
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS
+AmtPtpCyclePort(_In_ PDEVICE_CONTEXT DeviceContext);
 
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS
