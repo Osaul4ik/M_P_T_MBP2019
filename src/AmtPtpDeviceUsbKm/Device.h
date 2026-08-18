@@ -49,16 +49,24 @@ typedef enum _FORCE_TOUCH_DELIVERY_STATE
 // documentation: try the least disruptive recovery first and only escalate
 // if the pipe is still failing afterward.
 //
-//   1. reset-pipe  - WdfUsbTargetPipeResetPipe: clears a halted/stalled
-//                    endpoint without touching the rest of the device.
+//   1. reset-pipe  - WdfUsbTargetPipeResetSynchronously: clears a halted/
+//                    stalled endpoint without touching the rest of the
+//                    device.
 //   2. reset-port  - WdfUsbTargetDeviceResetPortSynchronously: a full
 //                    device reset via the parent hub port; the framework
 //                    reselects the current USB configuration afterward, so
 //                    existing pipe handles remain valid.
-//   3. cycle-port  - IOCTL_INTERNAL_USB_CYCLE_PORT: power-cycles the port,
-//                    i.e. treats the device exactly like an unplug/replug.
-//                    This is the last resort - the device will disappear
-//                    and reappear through normal PnP.
+//   3. cycle-port  - IOCTL_INTERNAL_USB_CYCLE_PORT (the raw request behind
+//                    WdfUsbTargetDeviceCyclePortSynchronously - see
+//                    AmtPtpCyclePort for why the raw IOCTL is used
+//                    instead): power-cycles the port, i.e. treats the
+//                    device exactly like an unplug/replug. This is the
+//                    last resort - the device will disappear and reappear
+//                    through normal PnP.
+//
+// All three rungs require WdfIoTargetStop on the interrupt pipe's I/O
+// target first, per the documented preconditions of each call above; see
+// AmtPtpEvtReaderRestartTimer.
 //
 // Each stage is attempted at most once per D0 session before escalating to
 // the next; once cycle-port has been tried, this driver instance gives up
@@ -358,7 +366,10 @@ EVT_WDF_TIMER                         AmtPtpEvtReaderRestartTimer;
 // Last rung of the reader-recovery escalation ladder - see
 // READER_RECOVERY_STAGE. Power-cycles the device's USB port, the moral
 // equivalent of an unplug/replug, via IOCTL_INTERNAL_USB_CYCLE_PORT sent to
-// the WDFUSBDEVICE's I/O target. Must be called at PASSIVE_LEVEL.
+// the WDFUSBDEVICE's I/O target - deliberately the raw IOCTL rather than
+// the WdfUsbTargetDeviceCyclePortSynchronously wrapper, which has no
+// time-out parameter (see the comment above AmtPtpCyclePort's definition
+// in Interrupt.c). Must be called at PASSIVE_LEVEL.
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS
 AmtPtpCyclePort(_In_ PDEVICE_CONTEXT DeviceContext);
