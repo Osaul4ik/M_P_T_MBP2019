@@ -657,6 +657,38 @@ AmtPtpEvtReaderRestartTimer(
     DbgPrint("[AmtPtp] ReaderRestartTimer: ENTER, stage=%d\n",
         (int)pCtx->ReaderRecoveryStage);
 
+    // MS-RECOMMENDED CHECK (How to Recover From USB Pipe Errors,
+    // learn.microsoft.com/windows-hardware/drivers/usbcon/how-to-recover-from-usb-pipe-errors):
+    // "Before issuing any request that resets the pipe or the device, make
+    // sure that the device is connected. You can determine the connected
+    // state of the device by calling the WdfUsbTargetDeviceIsConnectedSynchronous
+    // method." The escalation ladder below previously skipped this and ran
+    // reset-pipe/reset-port/cycle-port unconditionally. Confirmed via
+    // DbgPrint capture across a real sleep/wake cycle: the failure driving
+    // this timer was STATUS_NO_SUCH_DEVICE (the physical device gone, not
+    // a stalled endpoint - this port's xHC controller genuinely
+    // disconnects and re-links across S3, distinct from a merely idle
+    // pipe), so every rung was guaranteed to fail and burn through the
+    // whole ladder for nothing while the *real* recovery (PnP's own
+    // ReleaseHardware -> fresh PrepareHardware once the device physically
+    // reappears) was already in flight independently. Checking first
+    // avoids sending pointless reset/cycle-port requests at a PDO that's
+    // already gone - the framework doesn't do this check for us.
+    if (!NT_SUCCESS(WdfUsbTargetDeviceIsConnectedSynchronous(pCtx->UsbDevice))) {
+        DbgPrint("[AmtPtp] ReaderRestartTimer: device not connected, "
+            "skipping reset ladder - waiting for PnP re-enumeration\n");
+        // Nothing to resume once the device is truly gone: leave the
+        // pipe target as EvtUsbTargetPipeReadersFailed left it (WDF
+        // already stopped the failed reader on error), and mark this D0
+        // session's ladder exhausted so further failed-read callbacks
+        // don't re-arm this timer only to hit the same check again. The
+        // next real D0Entry (from the eventual PrepareHardware once the
+        // device reappears) resets ReaderRecoveryStage back to
+        // READER_RECOVERY_RESET_PIPE regardless.
+        pCtx->ReaderRecoveryStage = READER_RECOVERY_EXHAUSTED;
+        return;
+    }
+
     // All three rungs require the interrupt pipe's I/O target to be
     // stopped first - this is not optional bookkeeping, it is a documented
     // precondition of each underlying WDFUSB call:
