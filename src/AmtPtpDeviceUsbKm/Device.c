@@ -353,10 +353,20 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
 
     pDeviceContext = DeviceGetContext(Device);
 
+    // DIAG: DbgPrint tracing for lifecycle debugging (Code 10 /
+    // STATUS_DEVICE_DATA_ERROR investigation after sleep-wake). View live
+    // with Sysinternals DebugView64 (run as admin, Capture Kernel +
+    // Enable Verbose Kernel Output both checked) or a kernel debugger.
+    // Grep/filter on "[AmtPtp]" - every tag below shares that prefix.
+    DbgPrint("[AmtPtp] PrepareHardware: ENTER, UsbDevice=%p\n",
+        pDeviceContext->UsbDevice);
+
     if (pDeviceContext->UsbDevice == NULL) {
         status = WdfUsbTargetDeviceCreate(
             Device, WDF_NO_OBJECT_ATTRIBUTES, &pDeviceContext->UsbDevice);
         if (!NT_SUCCESS(status)) {
+            DbgPrint("[AmtPtp] PrepareHardware: WdfUsbTargetDeviceCreate FAILED, status=0x%08X\n",
+                status);
             return status;
         }
     }
@@ -366,6 +376,8 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
 
     pDeviceContext->DeviceInfo = AmtPtpGetDeviceConfig(&pDeviceContext->DeviceDescriptor);
     if (pDeviceContext->DeviceInfo == NULL) {
+        DbgPrint("[AmtPtp] PrepareHardware: unrecognized idProduct=0x%04X, STATUS_NOT_SUPPORTED\n",
+            pDeviceContext->DeviceDescriptor.idProduct);
         return STATUS_NOT_SUPPORTED;
     }
 
@@ -376,6 +388,7 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
         pDeviceContext->DeviceInfo->um_size == 0 ||
         pDeviceContext->DeviceInfo->um_size > 8 ||
         pDeviceContext->DeviceInfo->um_switch_idx >= pDeviceContext->DeviceInfo->um_size) {
+        DbgPrint("[AmtPtp] PrepareHardware: bad DeviceInfo table entry, STATUS_INVALID_PARAMETER\n");
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -399,16 +412,24 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
 
     status = SelectInterruptInterface(Device);
     if (!NT_SUCCESS(status)) {
+        DbgPrint("[AmtPtp] PrepareHardware: SelectInterruptInterface FAILED, status=0x%08X\n",
+            status);
         return status;
     }
 
     status = AmtPtpConfigContReaderForInterruptEndPoint(pDeviceContext);
     if (!NT_SUCCESS(status)) {
+        DbgPrint("[AmtPtp] PrepareHardware: ConfigContReaderForInterruptEndPoint FAILED, status=0x%08X\n",
+            status);
         return status;
     }
 
     pDeviceContext->PtpReportButton = TRUE;
     pDeviceContext->PtpReportTouch  = TRUE;
+
+    DbgPrint("[AmtPtp] PrepareHardware: EXIT OK, InterruptPipe=%p\n",
+        pDeviceContext->InterruptPipe);
+
     return status;
 }
 
@@ -433,6 +454,17 @@ AmtPtpEvtDeviceReleaseHardware(
     PAGED_CODE();
 
     pDeviceContext = DeviceGetContext(Device);
+
+    // DIAG: if this fires around a sleep/wake cycle (instead of only
+    // around real PnP rebalance/removal), it means the stack is treating
+    // resume as a surprise-removal + re-enumeration rather than an
+    // ordinary D0Exit/D0Entry pair - that would explain a Code 10 that
+    // AmtPtpEvtDeviceD0Entry's own logging can't otherwise account for,
+    // since PrepareHardware would then need to re-run from scratch (fresh
+    // UsbDevice/pipe/interface) instead of D0Entry reusing the existing
+    // InterruptPipe handle.
+    DbgPrint("[AmtPtp] ReleaseHardware: ENTER, UsbDevice=%p InterruptPipe=%p\n",
+        pDeviceContext->UsbDevice, pDeviceContext->InterruptPipe);
 
     // WdfUsbTargetDeviceCreate's returned WDFUSBDEVICE, and the interface/
     // pipe handles derived from it via SelectInterruptInterface, are all
@@ -462,6 +494,12 @@ AmtPtpEvtDeviceD0Entry(
 
     pDeviceContext  = DeviceGetContext(Device);
     isTargetStarted = FALSE;
+
+    // DIAG: PreviousState values (WDF_POWER_DEVICE_STATE): 2=D0, 3=D1,
+    // 4=D2, 5=D3, 6=D3Final. Sleep/wake normally lands here with 5 or 6 -
+    // if it's neither, D0Entry isn't even being reached the way we assume.
+    DbgPrint("[AmtPtp] D0Entry: ENTER, PreviousState=%d, InterruptPipe=%p\n",
+        (int)PreviousState, pDeviceContext->InterruptPipe);
 
     // A fresh D0Entry always means a clean slate for the reader-recovery
     // escalation ladder in Interrupt.c - whatever failure streak happened
@@ -539,7 +577,10 @@ AmtPtpEvtDeviceD0Entry(
         ULONG attempt;
 
         for (attempt = 0; attempt < maxAttempts; attempt++) {
-            if (NT_SUCCESS(AmtPtpSetWellspringMode(pDeviceContext, TRUE))) {
+            NTSTATUS wellspringStatus = AmtPtpSetWellspringMode(pDeviceContext, TRUE);
+            DbgPrint("[AmtPtp] D0Entry: SetWellspringMode attempt %lu/%lu -> status=0x%08X\n",
+                attempt + 1, maxAttempts, wellspringStatus);
+            if (NT_SUCCESS(wellspringStatus)) {
                 break;
             }
 
@@ -557,6 +598,7 @@ AmtPtpEvtDeviceD0Entry(
 
     status = WdfIoTargetStart(
         WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe));
+    DbgPrint("[AmtPtp] D0Entry: WdfIoTargetStart -> status=0x%08X\n", status);
     if (!NT_SUCCESS(status)) {
         goto end;
     }
@@ -569,6 +611,8 @@ end:
             WdfIoTargetCancelSentIo);
     }
 
+    DbgPrint("[AmtPtp] D0Entry: EXIT, status=0x%08X\n", status);
+
     return status;
 }
 
@@ -580,11 +624,16 @@ AmtPtpEvtDeviceD0Exit(
     _In_ WDF_POWER_DEVICE_STATE TargetState)
 {
     PDEVICE_CONTEXT pDeviceContext;
+    NTSTATUS        wellspringOffStatus;
 
-    UNREFERENCED_PARAMETER(TargetState);
     PAGED_CODE();
 
     pDeviceContext = DeviceGetContext(Device);
+
+    // DIAG: TargetState values (WDF_POWER_DEVICE_STATE): 5=D3, 6=D3Final.
+    // Now used below instead of discarded via UNREFERENCED_PARAMETER, so
+    // sleep-wake cycles can be told apart from a full power-off in the log.
+    DbgPrint("[AmtPtp] D0Exit: ENTER, TargetState=%d\n", (int)TargetState);
 
     // Do NOT wait here (Wait = FALSE). AmtPtpEvtReaderRestartTimer can be
     // mid-flight in WdfUsbTargetDeviceResetPortSynchronously, which per its
@@ -613,7 +662,10 @@ AmtPtpEvtDeviceD0Exit(
         WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe),
         WdfIoTargetCancelSentIo);
 
-    AmtPtpSetWellspringMode(pDeviceContext, FALSE);
+    wellspringOffStatus = AmtPtpSetWellspringMode(pDeviceContext, FALSE);
+
+    DbgPrint("[AmtPtp] D0Exit: EXIT, SetWellspringMode(FALSE) -> status=0x%08X\n",
+        wellspringOffStatus);
 
     return STATUS_SUCCESS;
 }

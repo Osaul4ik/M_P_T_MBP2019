@@ -650,8 +650,12 @@ AmtPtpEvtReaderRestartTimer(
         // recovery rungs, this exit path has no matching WdfIoTargetStart,
         // so stopping the target here would leave the reader permanently
         // stopped instead of merely giving up until the next D0Entry.
+        DbgPrint("[AmtPtp] ReaderRestartTimer: ladder EXHAUSTED, giving up until next D0Entry\n");
         return;
     }
+
+    DbgPrint("[AmtPtp] ReaderRestartTimer: ENTER, stage=%d\n",
+        (int)pCtx->ReaderRecoveryStage);
 
     // All three rungs require the interrupt pipe's I/O target to be
     // stopped first - this is not optional bookkeeping, it is a documented
@@ -671,27 +675,33 @@ AmtPtpEvtReaderRestartTimer(
         WdfIoTargetCancelSentIo);
 
     switch (pCtx->ReaderRecoveryStage) {
-    case READER_RECOVERY_RESET_PIPE:
-        (VOID)WdfUsbTargetPipeResetSynchronously(
+    case READER_RECOVERY_RESET_PIPE: {
+        NTSTATUS rungStatus = WdfUsbTargetPipeResetSynchronously(
             pCtx->InterruptPipe,
             WDF_NO_HANDLE,
             NULL);
+        DbgPrint("[AmtPtp] ReaderRestartTimer: RESET_PIPE -> status=0x%08X\n", rungStatus);
         break;
+    }
 
-    case READER_RECOVERY_RESET_PORT:
+    case READER_RECOVERY_RESET_PORT: {
         // The framework reselects the current USB configuration after
         // a successful port reset, so InterruptPipe/UsbInterface stay
         // valid - no need to redo SelectInterruptInterface here.
-        (VOID)WdfUsbTargetDeviceResetPortSynchronously(pCtx->UsbDevice);
+        NTSTATUS rungStatus = WdfUsbTargetDeviceResetPortSynchronously(pCtx->UsbDevice);
+        DbgPrint("[AmtPtp] ReaderRestartTimer: RESET_PORT -> status=0x%08X\n", rungStatus);
         break;
+    }
 
     case READER_RECOVERY_CYCLE_PORT:
-    default:
+    default: {
         // READER_RECOVERY_CYCLE_PORT is the only remaining value the stage
         // can hold here (the >= READER_RECOVERY_EXHAUSTED case already
         // returned above); default is kept only as a defensive fallback.
-        (VOID)AmtPtpCyclePort(pCtx);
+        NTSTATUS rungStatus = AmtPtpCyclePort(pCtx);
+        DbgPrint("[AmtPtp] ReaderRestartTimer: CYCLE_PORT -> status=0x%08X\n", rungStatus);
         break;
+    }
     }
 
     // Escalate for next time regardless of this step's own result - if the
@@ -703,8 +713,12 @@ AmtPtpEvtReaderRestartTimer(
     // failed: if reads are still broken, this resubmission will itself
     // fail and drive AmtPtpEvtUsbInterruptReadersFailed again, which is
     // what carries the ladder forward to the next rung.
-    (VOID)WdfIoTargetStart(
-        WdfUsbTargetPipeGetIoTarget(pCtx->InterruptPipe));
+    {
+        NTSTATUS restartStatus = WdfIoTargetStart(
+            WdfUsbTargetPipeGetIoTarget(pCtx->InterruptPipe));
+        DbgPrint("[AmtPtp] ReaderRestartTimer: EXIT, WdfIoTargetStart -> status=0x%08X, next stage=%d\n",
+            restartStatus, (int)pCtx->ReaderRecoveryStage);
+    }
 }
 
 BOOLEAN
@@ -717,8 +731,12 @@ AmtPtpEvtUsbInterruptReadersFailed(
     WDFDEVICE        device   = WdfIoTargetGetDevice(ioTarget);
     PDEVICE_CONTEXT  pCtx     = DeviceGetContext(device);
 
-    UNREFERENCED_PARAMETER(Status);
-    UNREFERENCED_PARAMETER(UsbdStatus);
+    // DIAG: this is the very first callback to see a broken interrupt
+    // read - Status/UsbdStatus here are the actual root cause of any
+    // downstream Code 10, so they're worth capturing even though the
+    // recovery logic below doesn't otherwise need their exact values.
+    DbgPrint("[AmtPtp] ReadersFailed: Status=0x%08X, UsbdStatus=0x%08X, stage=%d\n",
+        Status, UsbdStatus, (int)pCtx->ReaderRecoveryStage);
 
     // Escalating recovery (reset-pipe -> reset-port -> cycle-port) instead
     // of an immediate unconditional restart. Returning TRUE unconditionally
