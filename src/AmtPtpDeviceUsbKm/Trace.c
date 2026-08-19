@@ -8,6 +8,10 @@
 // AmtPtpDeviceUsbKm.vcxproj - it was not compiled into the driver at all.
 
 #include "Driver.h"
+#include <stdarg.h> // va_list/va_start/va_end for AmtTracePrint - not
+                     // reliably pulled in transitively by ntddk.h/wdm.h in
+                     // every WDK header configuration (build broke with
+                     // C4013 'va_start' undefined without this).
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (PAGE, AmtTraceLoadDebugModeFromRegistry)
