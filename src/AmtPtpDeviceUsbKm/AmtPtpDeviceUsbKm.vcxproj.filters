@@ -55,6 +55,9 @@
     <ClInclude Include="ConfigIoctl.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Trace.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Device.c">
@@ -88,6 +91,9 @@
       <Filter>PTPCore</Filter>
     </ClCompile>
     <ClCompile Include="ConfigIoctl.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Trace.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

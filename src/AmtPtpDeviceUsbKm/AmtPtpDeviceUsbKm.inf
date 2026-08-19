@@ -78,6 +78,12 @@ HKR,,FriendlyName,,%AmtPtpDeviceUsbKm.DeviceDesc%
 ; device would get zero USB/HID processing.
 HKR,,"LowerFilters",0x00010008,"AmtPtpDeviceUsbKm"
 HKR,,"SelectiveSuspendEnabled",0x00010001,1
+; Runtime debug-trace switch (see Trace.h/Trace.c). 0 = off (default,
+; shipped state) - AmtTrace() call sites do a single bool check and print
+; nothing. Flip to 1 (regedit, this device's "Device Parameters" key) to
+; enable "[AmtPtp] ..." DbgPrintEx output for lifecycle debugging. Not
+; related to the GUI's separate "Live" frame monitor.
+HKR,,"DebugMode",0x00010001,0
 
 [AmtPtpDeviceUsbKm_Service_Inst]
 DisplayName   = %AmtPtpDeviceUsbKm.SVCDESC%

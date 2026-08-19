@@ -141,6 +141,14 @@ typedef struct _DEVICE_CONTEXT
     const struct BCM5974_CONFIG* DeviceInfo;
     BOOLEAN IsWellspringModeOn;
 
+    // Runtime debug-trace switch (see Trace.h/Trace.c). Loaded once from
+    // this device's "DebugMode" REG_DWORD in AmtPtpDeviceUsbKmCreateDevice;
+    // FALSE (traces compiled out to a single bool check, nothing printed)
+    // unless that registry value is present and non-zero. Unrelated to
+    // LiveEnabled below - that is the GUI's always-available live-frame
+    // monitor, not a debug facility.
+    BOOLEAN TraceDebugEnabled;
+
     // Runtime-tunable palm-rejection thresholds (see AMT_PALM_CONFIG in
     // Public.h). Initialized to AMT_PALM_CONFIG_DEFAULT_INIT in
     // AmtPtpDeviceUsbKmCreateDevice, then optionally overridden from the

@@ -57,12 +57,15 @@ AmtFreeAlignedContactPool(_In_opt_ PACTIVE_CONTACT Pool)
 
 // Read the matching config entry for the detected device.
 //
-// DESIGN NOTE: an idProduct with no table entry is a deliberate best-effort
-// fallback to Bcm5974ConfigTable[0] (a TYPE4/T2 profile), not an error -
-// this lets the driver still bind (with possibly miscalibrated geometry
-// limits) on unlisted-but-compatible hardware instead of refusing to load.
-// If that's no longer the desired behavior, change this to return NULL and
-// have AmtPtpDeviceUsbKmEvtDevicePrepareHardware fail the bind instead.
+// CORRECTION: an earlier comment here claimed an idProduct with no table
+// entry fell back to Bcm5974ConfigTable[0] - that was never true of the
+// code below, which simply returns NULL on no match. NULL is the correct,
+// fail-closed behavior: AmtPtpDeviceUsbKmEvtDevicePrepareHardware already
+// treats a NULL DeviceInfo as STATUS_NOT_SUPPORTED and refuses to bind. In
+// practice this path is unreachable anyway - the INF's [Standard.NT$ARCH$]
+// section lists only the exact VID/PID/MI combinations PnP will ever offer
+// this driver for - but the function must still fail closed rather than
+// guess if a future INF entry and this table ever drift apart.
 _IRQL_requires_(PASSIVE_LEVEL)
 static const struct BCM5974_CONFIG*
 AmtPtpGetDeviceConfig(_In_ const PUSB_DEVICE_DESCRIPTOR DeviceDescriptor)
@@ -287,6 +290,11 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     AmtPalmConfigLoadFromRegistry(device, &deviceContext->PalmConfig);
     AmtPalmRuntimeRebuild(&deviceContext->PalmConfig, &deviceContext->PalmRuntime);
 
+    // Debug-trace switch: same compiled-in-default(FALSE)-then-registry-
+    // override sequence as the config blocks above/below. See Trace.h for
+    // what DebugMode does and how it differs from LiveEnabled.
+    AmtTraceLoadDebugModeFromRegistry(device, deviceContext);
+
     // Pointer config (Force Tap threshold + action): same compiled-in-
     // defaults-then-registry-override sequence as PalmConfig above.
     {
@@ -330,6 +338,7 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
 
     status = AmtPtpDeviceUsbKmQueueInitialize(device);
     if (!NT_SUCCESS(status)) {
+        AmtTrace(deviceContext, "CreateDevice: QueueInitialize FAILED, status=0x%08X", status);
     }
 
     return status;
@@ -353,19 +362,20 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
 
     pDeviceContext = DeviceGetContext(Device);
 
-    // DIAG: DbgPrint tracing for lifecycle debugging (Code 10 /
-    // STATUS_DEVICE_DATA_ERROR investigation after sleep-wake). View live
+    // DIAG: lifecycle tracing (Code 10 / STATUS_DEVICE_DATA_ERROR
+    // investigation after sleep-wake). Enabled only when this device's
+    // "DebugMode" registry value is non-zero (see Trace.h) - view live
     // with Sysinternals DebugView64 (run as admin, Capture Kernel +
     // Enable Verbose Kernel Output both checked) or a kernel debugger.
-    // Grep/filter on "[AmtPtp]" - every tag below shares that prefix.
-    DbgPrint("[AmtPtp] PrepareHardware: ENTER, UsbDevice=%p\n",
+    // Grep/filter on "[AmtPtp]" - every line shares that prefix.
+    AmtTrace(pDeviceContext, "PrepareHardware: ENTER, UsbDevice=%p",
         pDeviceContext->UsbDevice);
 
     if (pDeviceContext->UsbDevice == NULL) {
         status = WdfUsbTargetDeviceCreate(
             Device, WDF_NO_OBJECT_ATTRIBUTES, &pDeviceContext->UsbDevice);
         if (!NT_SUCCESS(status)) {
-            DbgPrint("[AmtPtp] PrepareHardware: WdfUsbTargetDeviceCreate FAILED, status=0x%08X\n",
+            AmtTrace(pDeviceContext, "PrepareHardware: WdfUsbTargetDeviceCreate FAILED, status=0x%08X",
                 status);
             return status;
         }
@@ -376,7 +386,7 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
 
     pDeviceContext->DeviceInfo = AmtPtpGetDeviceConfig(&pDeviceContext->DeviceDescriptor);
     if (pDeviceContext->DeviceInfo == NULL) {
-        DbgPrint("[AmtPtp] PrepareHardware: unrecognized idProduct=0x%04X, STATUS_NOT_SUPPORTED\n",
+        AmtTrace(pDeviceContext, "PrepareHardware: unrecognized idProduct=0x%04X, STATUS_NOT_SUPPORTED",
             pDeviceContext->DeviceDescriptor.idProduct);
         return STATUS_NOT_SUPPORTED;
     }
@@ -388,7 +398,7 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
         pDeviceContext->DeviceInfo->um_size == 0 ||
         pDeviceContext->DeviceInfo->um_size > 8 ||
         pDeviceContext->DeviceInfo->um_switch_idx >= pDeviceContext->DeviceInfo->um_size) {
-        DbgPrint("[AmtPtp] PrepareHardware: bad DeviceInfo table entry, STATUS_INVALID_PARAMETER\n");
+        AmtTrace(pDeviceContext, "PrepareHardware: bad DeviceInfo table entry, STATUS_INVALID_PARAMETER");
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -412,14 +422,14 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
 
     status = SelectInterruptInterface(Device);
     if (!NT_SUCCESS(status)) {
-        DbgPrint("[AmtPtp] PrepareHardware: SelectInterruptInterface FAILED, status=0x%08X\n",
+        AmtTrace(pDeviceContext, "PrepareHardware: SelectInterruptInterface FAILED, status=0x%08X",
             status);
         return status;
     }
 
     status = AmtPtpConfigContReaderForInterruptEndPoint(pDeviceContext);
     if (!NT_SUCCESS(status)) {
-        DbgPrint("[AmtPtp] PrepareHardware: ConfigContReaderForInterruptEndPoint FAILED, status=0x%08X\n",
+        AmtTrace(pDeviceContext, "PrepareHardware: ConfigContReaderForInterruptEndPoint FAILED, status=0x%08X",
             status);
         return status;
     }
@@ -427,7 +437,7 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
     pDeviceContext->PtpReportButton = TRUE;
     pDeviceContext->PtpReportTouch  = TRUE;
 
-    DbgPrint("[AmtPtp] PrepareHardware: EXIT OK, InterruptPipe=%p\n",
+    AmtTrace(pDeviceContext, "PrepareHardware: EXIT OK, InterruptPipe=%p",
         pDeviceContext->InterruptPipe);
 
     return status;
@@ -463,7 +473,7 @@ AmtPtpEvtDeviceReleaseHardware(
     // since PrepareHardware would then need to re-run from scratch (fresh
     // UsbDevice/pipe/interface) instead of D0Entry reusing the existing
     // InterruptPipe handle.
-    DbgPrint("[AmtPtp] ReleaseHardware: ENTER, UsbDevice=%p InterruptPipe=%p\n",
+    AmtTrace(pDeviceContext, "ReleaseHardware: ENTER, UsbDevice=%p InterruptPipe=%p",
         pDeviceContext->UsbDevice, pDeviceContext->InterruptPipe);
 
     // WdfUsbTargetDeviceCreate's returned WDFUSBDEVICE, and the interface/
@@ -495,11 +505,11 @@ AmtPtpEvtDeviceD0Entry(
     pDeviceContext  = DeviceGetContext(Device);
     isTargetStarted = FALSE;
 
-    // DIAG: PreviousState values (WDF_POWER_DEVICE_STATE): 2=D0, 3=D1,
-    // 4=D2, 5=D3, 6=D3Final. Sleep/wake normally lands here with 5 or 6 -
-    // if it's neither, D0Entry isn't even being reached the way we assume.
-    DbgPrint("[AmtPtp] D0Entry: ENTER, PreviousState=%d, InterruptPipe=%p\n",
-        (int)PreviousState, pDeviceContext->InterruptPipe);
+    // DIAG: sleep/wake normally lands here with PreviousState D3 or
+    // D3Final - if it's neither, D0Entry isn't even being reached the way
+    // we assume.
+    AmtTrace(pDeviceContext, "D0Entry: ENTER, PreviousState=%s, InterruptPipe=%p",
+        DbgDevicePowerString(PreviousState), pDeviceContext->InterruptPipe);
 
     // A fresh D0Entry always means a clean slate for the reader-recovery
     // escalation ladder in Interrupt.c - whatever failure streak happened
@@ -578,7 +588,7 @@ AmtPtpEvtDeviceD0Entry(
 
         for (attempt = 0; attempt < maxAttempts; attempt++) {
             NTSTATUS wellspringStatus = AmtPtpSetWellspringMode(pDeviceContext, TRUE);
-            DbgPrint("[AmtPtp] D0Entry: SetWellspringMode attempt %lu/%lu -> status=0x%08X\n",
+            AmtTrace(pDeviceContext, "D0Entry: SetWellspringMode attempt %lu/%lu -> status=0x%08X",
                 attempt + 1, maxAttempts, wellspringStatus);
             if (NT_SUCCESS(wellspringStatus)) {
                 break;
@@ -598,7 +608,7 @@ AmtPtpEvtDeviceD0Entry(
 
     status = WdfIoTargetStart(
         WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe));
-    DbgPrint("[AmtPtp] D0Entry: WdfIoTargetStart -> status=0x%08X\n", status);
+    AmtTrace(pDeviceContext, "D0Entry: WdfIoTargetStart -> status=0x%08X", status);
     if (!NT_SUCCESS(status)) {
         goto end;
     }
@@ -611,7 +621,7 @@ end:
             WdfIoTargetCancelSentIo);
     }
 
-    DbgPrint("[AmtPtp] D0Entry: EXIT, status=0x%08X\n", status);
+    AmtTrace(pDeviceContext, "D0Entry: EXIT, status=0x%08X", status);
 
     return status;
 }
@@ -630,10 +640,10 @@ AmtPtpEvtDeviceD0Exit(
 
     pDeviceContext = DeviceGetContext(Device);
 
-    // DIAG: TargetState values (WDF_POWER_DEVICE_STATE): 5=D3, 6=D3Final.
-    // Now used below instead of discarded via UNREFERENCED_PARAMETER, so
-    // sleep-wake cycles can be told apart from a full power-off in the log.
-    DbgPrint("[AmtPtp] D0Exit: ENTER, TargetState=%d\n", (int)TargetState);
+    // DIAG: TargetState is now used below instead of discarded via
+    // UNREFERENCED_PARAMETER, so sleep-wake cycles can be told apart from a
+    // full power-off in the log.
+    AmtTrace(pDeviceContext, "D0Exit: ENTER, TargetState=%s", DbgDevicePowerString(TargetState));
 
     // Do NOT wait here (Wait = FALSE). AmtPtpEvtReaderRestartTimer can be
     // mid-flight in WdfUsbTargetDeviceResetPortSynchronously, which per its
@@ -664,7 +674,7 @@ AmtPtpEvtDeviceD0Exit(
 
     wellspringOffStatus = AmtPtpSetWellspringMode(pDeviceContext, FALSE);
 
-    DbgPrint("[AmtPtp] D0Exit: EXIT, SetWellspringMode(FALSE) -> status=0x%08X\n",
+    AmtTrace(pDeviceContext, "D0Exit: EXIT, SetWellspringMode(FALSE) -> status=0x%08X",
         wellspringOffStatus);
 
     return STATUS_SUCCESS;

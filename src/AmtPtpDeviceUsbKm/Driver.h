@@ -10,6 +10,12 @@
 #include "device.h"
 #include "queue.h"
 
+// Trace.h uses PDEVICE_CONTEXT (AmtTrace() macro), so it must come after
+// device.h. Every .c file in this project includes Driver.h first (see the
+// note at the top of ConfigIoctl.h), so this ordering makes AmtTrace()
+// available everywhere without each file needing its own #include "Trace.h".
+#include "Trace.h"
+
 #include <Hid.h>
 
 EXTERN_C_START

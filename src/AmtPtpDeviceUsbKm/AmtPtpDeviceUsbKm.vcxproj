@@ -38,6 +38,7 @@
     <ClCompile Include="Palm.c" />
     <ClCompile Include="PTPCore.c" />
     <ClCompile Include="Queue.c" />
+    <ClCompile Include="Trace.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ActiveContact.h" />
@@ -51,6 +52,7 @@
     <ClInclude Include="Public.h" />
     <ClInclude Include="Queue.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="Trace.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{AB3E45E7-C524-47C1-9677-728BA2A19344}</ProjectGuid>
