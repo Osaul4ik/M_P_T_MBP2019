@@ -13,6 +13,10 @@
 #pragma alloc_text (PAGE, AmtPtpEvtDeviceD0Exit)
 #pragma alloc_text (PAGE, SelectInterruptInterface)
 #pragma alloc_text (PAGE, AmtPtpAcquireConfigControlDevice)
+// Detaches from the driver-lifetime control device via WDFWAITLOCK
+// (AmtPtpAcquireConfigControlDevice's counterpart) - PASSIVE_LEVEL only,
+// same as that function.
+#pragma alloc_text (PAGE, AmtPtpEvtDeviceContextCleanup)
 #endif
 
 #define ACTIVE_CONTACTS_ALIGNMENT 64
@@ -303,9 +307,9 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     // NOTE: this FDO is a lower filter on the HIDClass stack and exposes no
     // device interface of its own (GUID_DEVINTERFACE_AmtPtpDeviceUsbKm was
     // removed - see Public.h). User-mode (AmtPtpConfigGui) talks to the
-    // separate KMDF control device instead (AmtPtpCreateConfigControlDevice
-    // below), via its own DOS symbolic link and SDDL. No name/SDDL is
-    // needed on this device object itself.
+    // separate, driver-lifetime KMDF control device instead
+    // (AmtPtpAcquireConfigControlDevice below), via its own DOS symbolic
+    // link and SDDL. No name/SDDL is needed on this device object itself.
     status = WdfDeviceCreate(&DeviceInit, &deviceAttributes, &device);
     if (!NT_SUCCESS(status)) {
         return status;
@@ -404,10 +408,17 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
         }
     }
 
-    // The GUI talks to a separate KMDF control device.
-    // This physical device remains a lower filter; no user-mode device
-    // interface is created on the filter FDO itself.
-    status = AmtPtpCreateConfigControlDevice(device);
+    // The GUI talks to a separate KMDF control device that is
+    // driver-lifetime, not FDO-lifetime (see AmtPtpAcquireConfigControlDevice
+    // for why a per-FDO control device cannot survive surprise removal/
+    // re-enumeration). This call creates it on the first FDO instance and
+    // just re-points it at `device` on every later one; the corresponding
+    // detach happens in AmtPtpEvtDeviceContextCleanup below, and the
+    // corresponding delete happens once, at driver unload, in
+    // AmtPtpDeviceUsbKmEvtDriverContextCleanup (Driver.c). This physical
+    // device remains a lower filter; no user-mode device interface is
+    // created on the filter FDO itself.
+    status = AmtPtpAcquireConfigControlDevice(device);
     if (!NT_SUCCESS(status)) {
         return status;
     }
@@ -757,27 +768,52 @@ AmtPtpEvtDeviceD0Exit(
 }
 
 // AmtPtpEvtDeviceContextCleanup
-// Frees the manually-aligned ActiveContacts pool allocated in AmtPtpDeviceUsbKmCreateDevice. 
+// Frees the manually-aligned ActiveContacts pool allocated in
+// AmtPtpDeviceUsbKmCreateDevice, and detaches this FDO from the shared
+// GUI-facing control device.
 
 VOID
 AmtPtpEvtDeviceContextCleanup(
     _In_ WDFOBJECT Device)
 {
-    PDEVICE_CONTEXT pDeviceContext;
-    pDeviceContext = DeviceGetContext((WDFDEVICE)Device);
+    WDFDEVICE        fdo = (WDFDEVICE)Device;
+    PDEVICE_CONTEXT  pDeviceContext;
+    PDRIVER_CONTEXT  driverContext;
 
-    // The control device is owned by this PnP device instance. Delete it
-    // before releasing the physical device context so the GUI endpoint
-    // cannot outlive the target WDFDEVICE.
-    if (pDeviceContext->ConfigControlDevice != NULL) {
+    PAGED_CODE();
+
+    pDeviceContext = DeviceGetContext(fdo);
+
+    // The control device (DRIVER_CONTEXT::ConfigControlDevice) is
+    // driver-lifetime, not FDO-lifetime - see AmtPtpAcquireConfigControlDevice
+    // for the full rationale. This routine must therefore never delete it;
+    // deletion happens exactly once, at driver unload, in
+    // AmtPtpDeviceUsbKmEvtDriverContextCleanup (Driver.c). All this FDO
+    // does on its own teardown is stop being the control device's current
+    // target, under the same lock AmtPtpAcquireConfigControlDevice uses, so
+    // the two can never interleave.
+    //
+    // The TargetDevice == fdo check matters: on a fast surprise-removal/
+    // re-enumeration, the replacement FDO's EvtDeviceAdd can already have
+    // called AmtPtpAcquireConfigControlDevice and re-pointed TargetDevice
+    // at the NEW FDO before this (the OLD FDO's) cleanup gets to run.
+    // Clearing unconditionally here would then null out the new FDO's live
+    // pointer instead of this stale one, leaving the GUI's IOCTLs failing
+    // as if no device were attached even though one legitimately is.
+    driverContext = DriverGetContext(WdfDeviceGetDriver(fdo));
+
+    WdfWaitLockAcquire(driverContext->ConfigControlDeviceLock, NULL);
+
+    if (driverContext->ConfigControlDevice != NULL) {
         PAMT_CONFIG_CONTROL_CONTEXT controlContext =
-            AmtConfigControlGetContext(pDeviceContext->ConfigControlDevice);
-        if (controlContext != NULL)
-            controlContext->TargetDevice = NULL;
+            AmtConfigControlGetContext(driverContext->ConfigControlDevice);
 
-        WdfObjectDelete(pDeviceContext->ConfigControlDevice);
-        pDeviceContext->ConfigControlDevice = NULL;
+        if (controlContext->TargetDevice == fdo) {
+            controlContext->TargetDevice = NULL;
+        }
     }
+
+    WdfWaitLockRelease(driverContext->ConfigControlDeviceLock);
 
     AmtFreeAlignedContactPool(pDeviceContext->ActiveContacts);
     pDeviceContext->ActiveContacts = NULL;
