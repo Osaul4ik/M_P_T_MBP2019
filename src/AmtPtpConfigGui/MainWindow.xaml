@@ -927,6 +927,10 @@
                     <Button Content="Delete" MinWidth="90" Height="36" Click="DeleteProfile_Click"/>
                     <CheckBox x:Name="ChkProMode" Content="Pro Mode" Style="{StaticResource AndroidSwitch}"
                               Margin="14,0,0,0" VerticalAlignment="Center" Checked="ProMode_Changed" Unchecked="ProMode_Changed"/>
+                    <CheckBox x:Name="ChkDebugMode" Content="Debug logging" Style="{StaticResource AndroidSwitch}"
+                              Margin="14,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"
+                              Checked="DebugMode_Changed" Unchecked="DebugMode_Changed"
+                              ToolTip="Turns on the driver's [AmtPtp] trace output (view with Sysinternals DebugView, run as admin, Capture Kernel + Enable Verbose Kernel Output). Persists across reboot/replug; off by default."/>
                 </WrapPanel>
             </Grid>
         </Border>

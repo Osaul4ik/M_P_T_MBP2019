@@ -113,6 +113,14 @@ namespace AmtPtpConfigGui.Native
         public static readonly uint IoctlResetScrollConfig =
             CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 11, MethodBuffered, FileWriteAccess);
 
+        // Runtime debug-trace switch (DEVICE_CONTEXT::TraceDebugEnabled -
+        // driver-side Trace.h/Trace.c). Plain ULONG (0/1) in and out, mirrors
+        // Public.h's IOCTL_AMT_PTP_GET/SET_DEBUG_MODE exactly.
+        public static readonly uint IoctlGetDebugMode =
+            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 13, MethodBuffered, FileReadAccess);
+        public static readonly uint IoctlSetDebugMode =
+            CtlCode(FileDeviceUnknown, AmtPtpIoctlIndex + 14, MethodBuffered, FileWriteAccess);
+
         private const string ControlDevicePath = @"\\.\AmtPtpDeviceUsbKm";
 
         private const uint GenericRead = 0x80000000;
@@ -664,6 +672,69 @@ namespace AmtPtpConfigGui.Native
                     return DeviceIoControl(
                         _handle,
                         IoctlSetLiveEnabled,
+                        inBuf,
+                        sizeof(int),
+                        IntPtr.Zero,
+                        0,
+                        out _,
+                        IntPtr.Zero);
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(inBuf);
+                }
+            }
+        }
+
+        public bool TryGetDebugMode(out bool enabled)
+        {
+            lock (_ioLock)
+            {
+                enabled = false;
+                if (_handle == null || _handle.IsInvalid)
+                    return false;
+
+                IntPtr outBuf = Marshal.AllocHGlobal(sizeof(int));
+                try
+                {
+                    bool ok = DeviceIoControl(
+                        _handle,
+                        IoctlGetDebugMode,
+                        IntPtr.Zero,
+                        0,
+                        outBuf,
+                        sizeof(int),
+                        out uint bytesReturned,
+                        IntPtr.Zero);
+
+                    if (!ok || bytesReturned < sizeof(int))
+                        return false;
+
+                    enabled = Marshal.ReadInt32(outBuf) != 0;
+                    return true;
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(outBuf);
+                }
+            }
+        }
+
+        public bool SetDebugMode(bool enabled)
+        {
+            lock (_ioLock)
+            {
+                if (_handle == null || _handle.IsInvalid)
+                    return false;
+
+                IntPtr inBuf = Marshal.AllocHGlobal(sizeof(int));
+                try
+                {
+                    Marshal.WriteInt32(inBuf, enabled ? 1 : 0);
+
+                    return DeviceIoControl(
+                        _handle,
+                        IoctlSetDebugMode,
                         inBuf,
                         sizeof(int),
                         IntPtr.Zero,

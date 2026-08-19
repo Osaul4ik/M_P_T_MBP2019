@@ -1382,6 +1382,53 @@ namespace AmtPtpConfigGui
             var visibility = ChkProMode.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             ScrollAdvancedPanel.Visibility = visibility;
             PointerAdvancedPanel.Visibility = visibility;
+            if (ChkDebugMode != null)
+                ChkDebugMode.Visibility = visibility;
+        }
+
+        // Guards ChkDebugMode.Checked/Unchecked while we're populating the
+        // checkbox from a driver read (Reconnect) rather than from the user
+        // clicking it - same pattern as _suppressEvents/_suppressPointerEvents
+        // for the Palm/Pointer sliders.
+        private bool _suppressDebugModeEvent;
+
+        private void DebugMode_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!_uiReady || _suppressDebugModeEvent)
+                return;
+
+            bool enabled = ChkDebugMode?.IsChecked == true;
+            if (!_device.SetDebugMode(enabled))
+            {
+                // Revert the checkbox rather than show a state the driver
+                // never actually applied (e.g. device unplugged mid-click).
+                _suppressDebugModeEvent = true;
+                try
+                {
+                    if (ChkDebugMode != null)
+                        ChkDebugMode.IsChecked = !enabled;
+                }
+                finally
+                {
+                    _suppressDebugModeEvent = false;
+                }
+            }
+        }
+
+        private void LoadDebugModeIntoControl(bool enabled)
+        {
+            if (ChkDebugMode == null)
+                return;
+
+            _suppressDebugModeEvent = true;
+            try
+            {
+                ChkDebugMode.IsChecked = enabled;
+            }
+            finally
+            {
+                _suppressDebugModeEvent = false;
+            }
         }
 
         // ---------------------------------------------------------------
@@ -1491,6 +1538,15 @@ namespace AmtPtpConfigGui
                     _geometry = PadGeometry.Fallback;
                     _geometryFromDevice = false;
                 }
+
+                // Best-effort: an unreadable DebugMode just leaves the
+                // checkbox at its previous/default (off) state - same
+                // "never fatal to the rest of Reconnect" treatment as the
+                // geometry/config reads above.
+                if (_device.TryGetDebugMode(out var debugEnabled))
+                    LoadDebugModeIntoControl(debugEnabled);
+                else
+                    LoadDebugModeIntoControl(false);
             }
             else
             {
@@ -1506,6 +1562,7 @@ namespace AmtPtpConfigGui
                 LoadScrollConfigIntoControls(ScrollConfig.Default);
                 _geometry = PadGeometry.Fallback;
                 _geometryFromDevice = false;
+                LoadDebugModeIntoControl(false);
 
                 // Surface exactly which SetupAPI/CreateFile step failed and
                 // why, right in the GUI - no debugger or Event Viewer needed.

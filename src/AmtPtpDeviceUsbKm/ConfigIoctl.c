@@ -773,6 +773,82 @@ exit:
 }
 
 // ----------------------------------------------------------------------------
+// Runtime debug-trace switch (see Trace.h/Trace.c). GET/SET a plain ULONG
+// (0/1), same shape as AmtPtpSetLiveEnabled but with no per-file ownership
+// tracking - unlike Live, any GUI instance may read or flip this, and it
+// persists to the registry immediately on SET so it survives a
+// reboot/replug (mirrors AmtPtpSetPalmConfig's "apply then best-effort
+// save" sequence).
+// ----------------------------------------------------------------------------
+
+NTSTATUS
+AmtPtpGetDebugMode(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
+{
+    NTSTATUS        status;
+    PDEVICE_CONTEXT pDeviceContext;
+    PULONG          pOutValue;
+    size_t          outLen = 0;
+
+    pDeviceContext = DeviceGetContext(Device);
+
+    status = WdfRequestRetrieveOutputBuffer(
+        Request, sizeof(ULONG), (PVOID*)&pOutValue, &outLen);
+    if (!NT_SUCCESS(status)) {
+        goto exit;
+    }
+
+    *pOutValue = pDeviceContext->TraceDebugEnabled ? 1u : 0u;
+
+    WdfRequestSetInformation(Request, sizeof(ULONG));
+    status = STATUS_SUCCESS;
+
+exit:
+    return status;
+}
+
+NTSTATUS
+AmtPtpSetDebugMode(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
+{
+    NTSTATUS        status;
+    PDEVICE_CONTEXT pDeviceContext;
+    PULONG          pInValue;
+    size_t          inLen = 0;
+    WDFKEY          key;
+
+    pDeviceContext = DeviceGetContext(Device);
+
+    status = WdfRequestRetrieveInputBuffer(
+        Request, sizeof(ULONG), (PVOID*)&pInValue, &inLen);
+    if (!NT_SUCCESS(status)) {
+        goto exit;
+    }
+
+    // Applies immediately - the very next AmtTrace() call site (any
+    // thread, any IRQL <= DISPATCH_LEVEL) sees the new value. No lock
+    // needed: a single BOOLEAN write/read has no torn-value hazard on any
+    // architecture this driver targets, and a trace line landing on the
+    // "wrong" side of a flip by one call site is harmless.
+    pDeviceContext->TraceDebugEnabled = (*pInValue != 0);
+
+    // Best-effort persistence, same as AmtPalmConfigSaveToRegistry - the
+    // in-memory switch above already took effect regardless of whether
+    // this succeeds.
+    status = WdfDeviceOpenRegistryKey(
+        Device, PLUGPLAY_REGKEY_DEVICE, KEY_WRITE, WDF_NO_OBJECT_ATTRIBUTES, &key);
+    if (NT_SUCCESS(status)) {
+        AmtRegistryWriteDword(key, AMT_TRACE_DEBUGMODE_VALUE_NAME,
+            pDeviceContext->TraceDebugEnabled ? 1u : 0u);
+        WdfRegistryClose(key);
+    }
+
+    WdfRequestSetInformation(Request, 0);
+    status = STATUS_SUCCESS;
+
+exit:
+    return status;
+}
+
+// ----------------------------------------------------------------------------
 // Control-device dispatch - called for IOCTLs arriving through
 // \\.\\AmtPtpDeviceUsbKm. The control device itself has no DEVICE_CONTEXT;
 // its small context stores the PnP filter FDO that owns the real state.
@@ -856,6 +932,14 @@ AmtPtpConfigControlEvtIoDeviceControl(
 
     case IOCTL_AMT_PTP_GET_DEVICE_INFO:
         status = AmtPtpGetDeviceInfo(targetDevice, Request);
+        break;
+
+    case IOCTL_AMT_PTP_GET_DEBUG_MODE:
+        status = AmtPtpGetDebugMode(targetDevice, Request);
+        break;
+
+    case IOCTL_AMT_PTP_SET_DEBUG_MODE:
+        status = AmtPtpSetDebugMode(targetDevice, Request);
         break;
 
     default:

@@ -272,6 +272,20 @@ typedef struct _AMT_DEVICE_INFO
 
 #define AMT_DEVICE_INFO_VERSION 1
 
+// Runtime debug-trace switch (DEVICE_CONTEXT::TraceDebugEnabled - see
+// Trace.h/Trace.c in the driver). Simple ULONG (0/1) in and out, same
+// "raw ULONG buffer" shape as IOCTL_AMT_PTP_SET_LIVE_ENABLED - there is no
+// dedicated config struct because there is only one field. Unlike
+// LiveEnabled this is NOT per-file/per-owner: any GUI instance may read or
+// flip it, and it also persists to the registry (DebugMode under this
+// device's Device Parameters key) so it survives a reboot/replug, matching
+// how PalmConfig/PointerConfig/ScrollConfig persist.
+#define IOCTL_AMT_PTP_GET_DEBUG_MODE \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 13, METHOD_BUFFERED, FILE_READ_DATA)
+
+#define IOCTL_AMT_PTP_SET_DEBUG_MODE \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, AMT_PTP_IOCTL_INDEX + 14, METHOD_BUFFERED, FILE_WRITE_DATA)
+
 typedef struct _AMT_SCROLL_CONFIG
 {
     ULONG StructVersion;
@@ -326,4 +340,4 @@ typedef struct _AMT_PAD_GEOMETRY
     LONG  YMax;
 } AMT_PAD_GEOMETRY, *PAMT_PAD_GEOMETRY;
 
-#define AMT_PAD_GEOMETRY_VERSION 1
+#define AMT_PAD_GEOMETRY_VERSION 1і
