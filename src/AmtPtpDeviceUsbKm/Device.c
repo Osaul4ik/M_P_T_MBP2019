@@ -406,6 +406,21 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
         if (!NT_SUCCESS(status)) {
             return status;
         }
+
+        // MS-RECOMMENDED SYNCHRONIZATION: guards D0ExitInProgress together
+        // with a consistent snapshot of InterruptPipe/UsbDevice, shared
+        // between AmtPtpEvtDeviceD0Exit (PASSIVE_LEVEL) and
+        // AmtPtpEvtReaderRestartTimer/AmtPtpEvtUsbInterruptReadersFailed
+        // (which per the continuous-reader completion contract can run at
+        // up to DISPATCH_LEVEL) - see the D0ExitLock comment in Device.h
+        // for why a WDFSPINLOCK, not WDFWAITLOCK (PASSIVE_LEVEL-only,
+        // disqualified by that DISPATCH_LEVEL caller) or a bare Interlocked
+        // flag (individually atomic ops, not atomic as the check-then-read
+        // sequence this needs), is the correct primitive here.
+        status = WdfSpinLockCreate(&lockAttributes, &deviceContext->D0ExitLock);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
     }
 
     // The GUI talks to a separate KMDF control device that is
@@ -683,10 +698,13 @@ AmtPtpEvtDeviceD0Entry(
     // in a previous power session is irrelevant now.
     pDeviceContext->ReaderRecoveryStage = READER_RECOVERY_RESET_PIPE;
 
-    // Clear the D0Exit/ReaderRestartTimer race flag (see Device.h) - a
-    // fresh D0 session means AmtPtpEvtReaderRestartTimer is safe to touch
-    // InterruptPipe/UsbDevice again.
-    InterlockedExchange(&pDeviceContext->D0ExitInProgress, 0);
+    // Clear the D0Exit/ReaderRestartTimer race flag under D0ExitLock (see
+    // Device.h) - a fresh D0 session means AmtPtpEvtReaderRestartTimer and
+    // AmtPtpEvtUsbInterruptReadersFailed are safe to touch InterruptPipe/
+    // UsbDevice again.
+    WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
+    pDeviceContext->D0ExitInProgress = FALSE;
+    WdfSpinLockRelease(pDeviceContext->D0ExitLock);
 
     pDeviceContext->LastReportTime =
         KeQueryPerformanceCounter(&pDeviceContext->PerfFrequency);
@@ -812,15 +830,20 @@ AmtPtpEvtDeviceD0Exit(
     // full power-off in the log.
     AmtTrace(pDeviceContext, "D0Exit: ENTER, TargetState=%s", DbgDevicePowerString(TargetState));
 
-    // BUG FIX: set this (non-blocking Interlocked, matches the WdfTimerStop
-    // Wait=FALSE reasoning right below) before touching anything else, so
-    // AmtPtpEvtReaderRestartTimer - which can genuinely still be mid-flight
-    // at this exact moment, see the D0ExitInProgress comment in Device.h -
-    // notices and backs off instead of racing the WdfIoTargetStop call
-    // below on the same InterruptPipe. Root-caused a real Bug Check 0x10D
+    // MS-RECOMMENDED SYNCHRONIZATION: set this under D0ExitLock (see the
+    // D0ExitLock comment in Device.h) before touching anything else, so
+    // AmtPtpEvtReaderRestartTimer/AmtPtpEvtUsbInterruptReadersFailed -
+    // which can genuinely still be mid-flight at this exact moment -
+    // notice and back off instead of racing the WdfIoTargetStop call below
+    // on the same InterruptPipe. Root-caused a real Bug Check 0x10D
     // (WDF_VIOLATION, Parameter1=0x5, Parameter2=0x0 - a NULL handle
-    // reaching a framework object method) during a sleep transition.
-    InterlockedExchange(&pDeviceContext->D0ExitInProgress, 1);
+    // reaching a framework object method) during a sleep transition. The
+    // lock acquisition itself is a short, non-blocking spin (never held
+    // across a blocking call), so this does not reintroduce the WdfTimerStop
+    // Wait=TRUE risk discussed below.
+    WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
+    pDeviceContext->D0ExitInProgress = TRUE;
+    WdfSpinLockRelease(pDeviceContext->D0ExitLock);
 
     // Do NOT wait here (Wait = FALSE). AmtPtpEvtReaderRestartTimer can be
     // mid-flight in WdfUsbTargetDeviceResetPortSynchronously, which per its
@@ -845,19 +868,28 @@ AmtPtpEvtDeviceD0Exit(
     // (VOID). A blocked-forever power IRP is the far worse failure mode.
     WdfTimerStop(pDeviceContext->ReaderRestartTimer, FALSE);
 
-    // BUG FIX: NULL-guard - see the D0ExitInProgress comment in Device.h.
-    // InterruptPipe is ordinarily non-NULL here (only AmtPtpEvtDeviceReleaseHardware
-    // nulls it), but the whole point of this fix is that this driver has
-    // observed physical device loss during S3 (STATUS_NO_SUCH_DEVICE in the
-    // reader-recovery ladder), and this and ReleaseHardware are not proven
-    // to be mutually exclusive from a driver-owned timer callback's
-    // perspective the way they are for WDF's own PnP/power callbacks.
-    // Skipping the stop when the pipe is already gone is strictly safer
-    // than passing a NULL handle into WdfUsbTargetPipeGetIoTarget.
-    if (pDeviceContext->InterruptPipe != NULL) {
-        WdfIoTargetStop(
-            WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe),
-            WdfIoTargetCancelSentIo);
+    // MS-RECOMMENDED SYNCHRONIZATION: snapshot InterruptPipe under the same
+    // D0ExitLock instead of reading pDeviceContext->InterruptPipe directly -
+    // see the D0ExitLock comment in Device.h. InterruptPipe is ordinarily
+    // non-NULL here (only AmtPtpEvtDeviceReleaseHardware nulls it), but this
+    // driver has observed physical device loss during S3 (STATUS_NO_SUCH_DEVICE
+    // in the reader-recovery ladder), and this and ReleaseHardware are not
+    // proven to be mutually exclusive from a driver-owned timer/completion
+    // callback's perspective the way they are for WDF's own PnP/power
+    // callbacks. Skipping the stop when the pipe is already gone is strictly
+    // safer than passing a NULL handle into WdfUsbTargetPipeGetIoTarget.
+    {
+        WDFUSBPIPE snapshotPipe;
+
+        WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
+        snapshotPipe = pDeviceContext->InterruptPipe;
+        WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+
+        if (snapshotPipe != NULL) {
+            WdfIoTargetStop(
+                WdfUsbTargetPipeGetIoTarget(snapshotPipe),
+                WdfIoTargetCancelSentIo);
+        }
     }
 
     wellspringOffStatus = AmtPtpSetWellspringMode(pDeviceContext, FALSE);

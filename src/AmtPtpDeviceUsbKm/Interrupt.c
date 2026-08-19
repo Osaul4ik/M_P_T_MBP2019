@@ -633,23 +633,31 @@ AmtPtpEvtReaderRestartTimer(
 {
     WDFDEVICE        device = (WDFDEVICE)WdfTimerGetParentObject(Timer);
     PDEVICE_CONTEXT  pCtx   = DeviceGetContext(device);
+    WDFUSBPIPE       localInterruptPipe;
 
     PAGED_CODE();
 
-    // BUG FIX: this used to say D0Exit "cancels this timer synchronously
-    // before stopping the target, so in practice that window is not
-    // reachable" - untrue since D0Exit's WdfTimerStop call was changed to
-    // Wait=FALSE (see the D0ExitInProgress comment in Device.h), and the
-    // untruth is what let this timer callback race D0Exit's own
+    // MS-RECOMMENDED SYNCHRONIZATION: this used to say D0Exit "cancels this
+    // timer synchronously before stopping the target, so in practice that
+    // window is not reachable" - untrue since D0Exit's WdfTimerStop call
+    // was changed to Wait=FALSE (see the D0ExitLock comment in Device.h),
+    // and the untruth is what let this timer callback race D0Exit's own
     // WdfIoTargetStop on the same InterruptPipe, root-caused to a real Bug
-    // Check 0x10D (WDF_VIOLATION) during a sleep transition. Check the
-    // flag D0Exit now sets before touching InterruptPipe/UsbDevice at all;
-    // bail exactly like the "device not connected"/EXHAUSTED paths below
-    // (harmless - the next D0Entry resets both this and the ladder stage).
-    if (InterlockedCompareExchange(&pCtx->D0ExitInProgress, 0, 0) != 0) {
+    // Check 0x10D (WDF_VIOLATION) during a sleep transition. Take D0ExitLock
+    // and, in the same critical section, check the flag D0Exit sets *and*
+    // snapshot InterruptPipe into a local - so this function never observes
+    // a state that was true at the check but stale by the time the pointer
+    // is used a few lines (or, worse, several calls) later. Bail exactly
+    // like the "device not connected"/EXHAUSTED paths below (harmless -
+    // the next D0Entry resets both this and the ladder stage).
+    WdfSpinLockAcquire(pCtx->D0ExitLock);
+    if (pCtx->D0ExitInProgress) {
+        WdfSpinLockRelease(pCtx->D0ExitLock);
         AmtTrace(pCtx, "ReaderRestartTimer: D0Exit in progress, backing off");
         return;
     }
+    localInterruptPipe = pCtx->InterruptPipe;
+    WdfSpinLockRelease(pCtx->D0ExitLock);
 
     // If this fires in the narrow window after D0Exit already stopped the
     // target but before the next D0Entry restarts it, these recovery calls
@@ -703,13 +711,13 @@ AmtPtpEvtReaderRestartTimer(
         return;
     }
 
-    // BUG FIX: defense-in-depth NULL guard alongside the D0ExitInProgress
-    // check above - see the D0ExitInProgress comment in Device.h. The flag
-    // check above closes the main race window, but this still costs
-    // nothing and protects against InterruptPipe going NULL
-    // (AmtPtpEvtDeviceReleaseHardware) for any other reason between here
-    // and the checks above.
-    if (pCtx->InterruptPipe == NULL) {
+    // Defense-in-depth NULL guard on the snapshot taken under D0ExitLock
+    // above - see the D0ExitLock comment in Device.h. The lock-protected
+    // check+snapshot closes the main race window; this still costs nothing
+    // and protects against InterruptPipe having already been NULL at
+    // snapshot time (AmtPtpEvtDeviceReleaseHardware nulled it just before
+    // this function took the lock).
+    if (localInterruptPipe == NULL) {
         AmtTrace(pCtx, "ReaderRestartTimer: InterruptPipe is NULL, bailing out");
         pCtx->ReaderRecoveryStage = READER_RECOVERY_EXHAUSTED;
         return;
@@ -729,13 +737,13 @@ AmtPtpEvtReaderRestartTimer(
     //     WdfIoTargetStop").
     // (See Microsoft Learn / wdfusb.h reference for each function.)
     WdfIoTargetStop(
-        WdfUsbTargetPipeGetIoTarget(pCtx->InterruptPipe),
+        WdfUsbTargetPipeGetIoTarget(localInterruptPipe),
         WdfIoTargetCancelSentIo);
 
     switch (pCtx->ReaderRecoveryStage) {
     case READER_RECOVERY_RESET_PIPE: {
         NTSTATUS rungStatus = WdfUsbTargetPipeResetSynchronously(
-            pCtx->InterruptPipe,
+            localInterruptPipe,
             WDF_NO_HANDLE,
             NULL);
         AmtTrace(pCtx, "ReaderRestartTimer: RESET_PIPE -> status=0x%08X", rungStatus);
@@ -773,7 +781,7 @@ AmtPtpEvtReaderRestartTimer(
     // what carries the ladder forward to the next rung.
     {
         NTSTATUS restartStatus = WdfIoTargetStart(
-            WdfUsbTargetPipeGetIoTarget(pCtx->InterruptPipe));
+            WdfUsbTargetPipeGetIoTarget(localInterruptPipe));
         AmtTrace(pCtx, "ReaderRestartTimer: EXIT, WdfIoTargetStart -> status=0x%08X, next stage=%d",
             restartStatus, (int)pCtx->ReaderRecoveryStage);
     }
@@ -795,6 +803,35 @@ AmtPtpEvtUsbInterruptReadersFailed(
     // recovery logic below doesn't otherwise need their exact values.
     AmtTrace(pCtx, "ReadersFailed: Status=0x%08X, UsbdStatus=0x%08X, stage=%d",
         Status, UsbdStatus, (int)pCtx->ReaderRecoveryStage);
+
+    // MS-RECOMMENDED SYNCHRONIZATION: this is the second, previously-
+    // unguarded path into ReaderRestartTimer - see the D0ExitLock comment
+    // in Device.h. WdfIoTargetStop(..., WdfIoTargetCancelSentIo) in
+    // AmtPtpEvtDeviceD0Exit cancels any reads still in flight on this pipe,
+    // and per the documented continuous-reader contract that cancellation
+    // itself is what drives this very callback (EvtUsbTargetPipeReadersFailed
+    // fires "after all read requests have been completed", cancellation
+    // included) - so this can run synchronously *inside* D0Exit's
+    // WdfIoTargetStop call, i.e. after D0ExitInProgress is already set but
+    // before D0Exit has finished. Calling WdfTimerStart here unconditionally
+    // would re-arm the exact timer D0Exit just tried to stop. Take the same
+    // D0ExitLock D0Exit/ReaderRestartTimer use - this callback can run at up
+    // to DISPATCH_LEVEL (same completion path as EvtUsbTargetPipeReadComplete),
+    // which is exactly why this is a WDFSPINLOCK and not a WDFWAITLOCK. Bail
+    // out exactly like the EXHAUSTED path below; D0Entry gives the ladder a
+    // clean slate either way.
+    {
+        BOOLEAN d0ExitInProgress;
+
+        WdfSpinLockAcquire(pCtx->D0ExitLock);
+        d0ExitInProgress = pCtx->D0ExitInProgress;
+        WdfSpinLockRelease(pCtx->D0ExitLock);
+
+        if (d0ExitInProgress) {
+            AmtTrace(pCtx, "ReadersFailed: D0Exit in progress, not arming restart timer");
+            return FALSE;
+        }
+    }
 
     // Escalating recovery (reset-pipe -> reset-port -> cycle-port) instead
     // of an immediate unconditional restart. Returning TRUE unconditionally

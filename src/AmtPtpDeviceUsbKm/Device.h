@@ -265,19 +265,35 @@ typedef struct _DEVICE_CONTEXT
     WDFTIMER               ReaderRestartTimer;
     READER_RECOVERY_STAGE  ReaderRecoveryStage;
 
-    // Set (InterlockedExchange) at the very start of AmtPtpEvtDeviceD0Exit,
-    // cleared at the start of AmtPtpEvtDeviceD0Entry. Checked by
-    // AmtPtpEvtReaderRestartTimer before it touches InterruptPipe/UsbDevice,
-    // so a timer callback already in flight when D0Exit begins backs off
-    // instead of racing D0Exit's own WdfIoTargetStop on the same pipe. Plain
-    // LONG + Interlocked* (not WDFSPINLOCK) deliberately - the timer's own
-    // work involves PASSIVE_LEVEL calls that can block for real (port
-    // reset/cycle), which must never happen while holding a spinlock, and
-    // D0Exit must never block waiting for this flag (see the WdfTimerStop
-    // Wait=FALSE reasoning above) - a single interlocked flag give D0Exit
-    // a non-blocking "I'm tearing down" signal and the timer a cheap check,
-    // which is all this race actually needs.
-    volatile LONG           D0ExitInProgress;
+    // MS-RECOMMENDED SYNCHRONIZATION (revised): set under D0ExitLock at the
+    // very start of AmtPtpEvtDeviceD0Exit, cleared under the same lock at
+    // the start of AmtPtpEvtDeviceD0Entry. AmtPtpEvtReaderRestartTimer and
+    // AmtPtpEvtUsbInterruptReadersFailed both take D0ExitLock, check this
+    // flag, and - in the same critical section - snapshot InterruptPipe/
+    // UsbDevice into locals before releasing the lock, so a caller can
+    // never observe this flag clear and then read a pipe/device handle
+    // that D0Exit or AmtPtpEvtDeviceReleaseHardware changed a moment later.
+    // A bare Interlocked flag (the previous version of this fix) made each
+    // individual read/write atomic but not the check-then-read sequence as
+    // a whole, leaving a narrow window if a stray timer fire from just
+    // before D0Exit landed after a fast D0Entry had already cleared the
+    // flag. This BOOLEAN is only ever touched with D0ExitLock held - no
+    // Interlocked/volatile needed once every access goes through the lock.
+    BOOLEAN                  D0ExitInProgress;
+
+    // Guards D0ExitInProgress above together with consistent read access to
+    // InterruptPipe/UsbDevice below. WDFSPINLOCK, not WDFWAITLOCK, because
+    // AmtPtpEvtUsbInterruptReadersFailed can run at up to DISPATCH_LEVEL
+    // (it fires from the same completion path as EvtUsbTargetPipeReadComplete,
+    // which the WDK documents as "typically DISPATCH_LEVEL, but no higher")
+    // and WDFWAITLOCK only supports PASSIVE_LEVEL acquisition. Held only
+    // across the flag set/check and the pointer snapshot themselves - never
+    // across WdfIoTargetStop/WdfUsbTargetPipeResetSynchronously/
+    // WdfUsbTargetDeviceResetPortSynchronously/AmtPtpCyclePort, all of
+    // which are PASSIVE_LEVEL-only blocking calls that would violate IRQL
+    // rules (and defeat the whole point of avoiding WdfTimerStop's
+    // Wait=TRUE) if issued while a spinlock is held.
+    WDFSPINLOCK              D0ExitLock;
 
     // QPC frequency cached at D0Entry
     LARGE_INTEGER PerfFrequency;
