@@ -334,16 +334,16 @@ AmtPtpReportFeatures(
 	PHID_XFER_PACKET pHidPacket;
 	WDF_REQUEST_PARAMETERS RequestParameters;
 	size_t ReportSize;
+	PDEVICE_CONTEXT pDeviceContext;
 
 	PAGED_CODE();
 
 	status = STATUS_SUCCESS;
 
-	// AmtPtpReportFeatures (GET_FEATURE) doesn't need per-device state -
-	// unlike AmtPtpSetFeatures, every case below only reads/writes the
-	// caller's buffer. Dropping the unused DeviceGetContext() call that
-	// used to sit here (dead code / unused local).
-	UNREFERENCED_PARAMETER(Device);
+	// AmtPtpReportFeatures (GET_FEATURE) doesn't need per-device state for
+	// its actual report handling below - only for the DebugMode-gated
+	// AmtTrace() calls, so this is fetched purely for diagnostics.
+	pDeviceContext = DeviceGetContext(Device);
 
 	WDF_REQUEST_PARAMETERS_INIT(&RequestParameters);
 	WdfRequestGetParameters(Request, &RequestParameters);
@@ -405,7 +405,9 @@ AmtPtpReportFeatures(
 		}
 		default:
 		{
-
+			// DIAG: an unrecognized GET_FEATURE report ID - worth seeing
+			// in DebugView64 when correlating wake-time IOCTL traffic.
+			AmtTrace(pDeviceContext, "ReportFeatures: unsupported reportId=0x%02X", pHidPacket->reportId);
 			status = STATUS_NOT_SUPPORTED;
 			goto exit;
 		}
@@ -430,6 +432,10 @@ AmtPtpSetFeatures(
 	PDEVICE_CONTEXT pDeviceContext;
 
 	status = STATUS_SUCCESS;
+	// NULL until the UserBuffer assignment below succeeds - the EXIT trace
+	// checks this before dereferencing, since goto exit can be reached
+	// (BUFFER_TOO_SMALL) before that assignment ever runs.
+	pHidPacket = NULL;
 	pDeviceContext = DeviceGetContext(Device);
 	NT_ASSERT(pDeviceContext != NULL);
 
@@ -450,6 +456,8 @@ AmtPtpSetFeatures(
 		status = STATUS_INVALID_DEVICE_REQUEST;
 		goto exit;
 	}
+
+	AmtTrace(pDeviceContext, "SetFeatures: ENTER, reportId=0x%02X", pHidPacket->reportId);
 
 	switch (pHidPacket->reportId)
 	{
@@ -479,7 +487,45 @@ AmtPtpSetFeatures(
 				{
 
 					if (!bWellspringMode) {
-						status = AmtPtpSetWellspringMode(pDeviceContext, TRUE);
+						// This is the exact request Windows' own
+						// multitouch input-mode configuration step sends
+						// right after the device comes up (see the
+						// WELLSPRING_MODE_SETFEATURE_* comment in
+						// Device.h): a lost race against the underlying
+						// USB hardware still settling from a resume is
+						// what shows up in the System event log as
+						// source "MTConfig", "An attempt to configure the
+						// input mode of a multitouch device failed" - so
+						// this gets the same bounded retry-with-backoff
+						// D0Entry already uses for the identical race on
+						// its own SetWellspringMode call, instead of the
+						// single fire-and-forget attempt this had before.
+						ULONG attempt;
+
+						for (attempt = 0; attempt < WELLSPRING_MODE_SETFEATURE_MAX_ATTEMPTS; attempt++) {
+							status = AmtPtpSetWellspringMode(pDeviceContext, TRUE);
+							AmtTrace(pDeviceContext,
+								"SetFeatures: SetWellspringMode attempt %lu/%lu -> status=0x%08X",
+								attempt + 1, WELLSPRING_MODE_SETFEATURE_MAX_ATTEMPTS, status);
+
+							if (NT_SUCCESS(status)) {
+								break;
+							}
+
+							if (attempt + 1 < WELLSPRING_MODE_SETFEATURE_MAX_ATTEMPTS) {
+								LARGE_INTEGER delay;
+								// AmtPtpSetFeatures runs at PASSIVE_LEVEL
+								// (see the prototype in Device.h) via the
+								// default queue's EvtIoInternalDeviceControl,
+								// which is not a hot path - a short
+								// blocking pause here is the same
+								// trade-off already made in D0Entry.
+								delay.QuadPart = WDF_REL_TIMEOUT_IN_MS(
+									WELLSPRING_MODE_SETFEATURE_RETRY_DELAY_MS_UNIT * (attempt + 1));
+								KeDelayExecutionThread(KernelMode, FALSE, &delay);
+							}
+						}
+
 						if (!NT_SUCCESS(status)) {
 							goto exit;
 						}
@@ -495,6 +541,7 @@ AmtPtpSetFeatures(
 					// STATUS_INVALID_PARAMETER reflects that distinction and
 					// lets the caller/HID class driver detect the rejection
 					// instead of believing the mode switch took effect.
+					AmtTrace(pDeviceContext, "SetFeatures: unrecognized InputMode=%u", devInputMode->Mode);
 					status = STATUS_INVALID_PARAMETER;
 					goto exit;
 				}
@@ -519,11 +566,14 @@ AmtPtpSetFeatures(
 		}
 		default:
 		{
+			AmtTrace(pDeviceContext, "SetFeatures: unsupported reportId=0x%02X", pHidPacket->reportId);
 			status = STATUS_NOT_SUPPORTED;
 			goto exit;
 		}
 	}
 
 exit:
+	AmtTrace(pDeviceContext, "SetFeatures: EXIT, reportId=0x%02X, status=0x%08X",
+		pHidPacket != NULL ? pHidPacket->reportId : 0, status);
 	return status;
 }

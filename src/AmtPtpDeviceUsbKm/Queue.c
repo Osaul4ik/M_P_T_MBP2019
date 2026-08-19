@@ -83,10 +83,23 @@ AmtPtpDeviceUsbKmEvtIoDeviceControl(
 {
     NTSTATUS status;
     WDFDEVICE device = WdfIoQueueGetDevice(Queue);
+    PDEVICE_CONTEXT pDeviceContext = DeviceGetContext(device);
     BOOLEAN requestPending = FALSE;
 
     UNREFERENCED_PARAMETER(InputBufferLength);
     UNREFERENCED_PARAMETER(OutputBufferLength);
+
+    // DIAG: every IOCTL this filter sees except IOCTL_HID_READ_REPORT,
+    // which is the per-frame hot path and would flood DebugView64 if
+    // traced here. Everything else - descriptors, attributes, GET/
+    // SET_FEATURE - only happens around enumeration and wake, so tracing
+    // it (still gated by the usual DebugMode switch in AmtTrace()) is
+    // cheap and gives the wake-time IOCTL timeline needed to correlate
+    // against a System-log "MTConfig" failure - see the
+    // WELLSPRING_MODE_SETFEATURE_* comment in Device.h.
+    if (IoControlCode != IOCTL_HID_READ_REPORT) {
+        AmtTrace(pDeviceContext, "EvtIoDeviceControl: ENTER, IoControlCode=0x%08X", IoControlCode);
+    }
 
     switch (IoControlCode)
     {
@@ -116,8 +129,14 @@ AmtPtpDeviceUsbKmEvtIoDeviceControl(
     case IOCTL_HID_DEACTIVATE_DEVICE:
     case IOCTL_HID_SEND_IDLE_NOTIFICATION_REQUEST:
     default:
+        AmtTrace(pDeviceContext, "EvtIoDeviceControl: unsupported IoControlCode=0x%08X", IoControlCode);
         status = STATUS_NOT_SUPPORTED;
         break;
+    }
+
+    if (IoControlCode != IOCTL_HID_READ_REPORT) {
+        AmtTrace(pDeviceContext, "EvtIoDeviceControl: EXIT, IoControlCode=0x%08X, status=0x%08X",
+            IoControlCode, status);
     }
 
     if (requestPending != TRUE) {
