@@ -683,6 +683,11 @@ AmtPtpEvtDeviceD0Entry(
     // in a previous power session is irrelevant now.
     pDeviceContext->ReaderRecoveryStage = READER_RECOVERY_RESET_PIPE;
 
+    // Clear the D0Exit/ReaderRestartTimer race flag (see Device.h) - a
+    // fresh D0 session means AmtPtpEvtReaderRestartTimer is safe to touch
+    // InterruptPipe/UsbDevice again.
+    InterlockedExchange(&pDeviceContext->D0ExitInProgress, 0);
+
     pDeviceContext->LastReportTime =
         KeQueryPerformanceCounter(&pDeviceContext->PerfFrequency);
 
@@ -807,6 +812,16 @@ AmtPtpEvtDeviceD0Exit(
     // full power-off in the log.
     AmtTrace(pDeviceContext, "D0Exit: ENTER, TargetState=%s", DbgDevicePowerString(TargetState));
 
+    // BUG FIX: set this (non-blocking Interlocked, matches the WdfTimerStop
+    // Wait=FALSE reasoning right below) before touching anything else, so
+    // AmtPtpEvtReaderRestartTimer - which can genuinely still be mid-flight
+    // at this exact moment, see the D0ExitInProgress comment in Device.h -
+    // notices and backs off instead of racing the WdfIoTargetStop call
+    // below on the same InterruptPipe. Root-caused a real Bug Check 0x10D
+    // (WDF_VIOLATION, Parameter1=0x5, Parameter2=0x0 - a NULL handle
+    // reaching a framework object method) during a sleep transition.
+    InterlockedExchange(&pDeviceContext->D0ExitInProgress, 1);
+
     // Do NOT wait here (Wait = FALSE). AmtPtpEvtReaderRestartTimer can be
     // mid-flight in WdfUsbTargetDeviceResetPortSynchronously, which per its
     // documented signature takes no WDFREQUEST/WDF_REQUEST_SEND_OPTIONS
@@ -830,9 +845,20 @@ AmtPtpEvtDeviceD0Exit(
     // (VOID). A blocked-forever power IRP is the far worse failure mode.
     WdfTimerStop(pDeviceContext->ReaderRestartTimer, FALSE);
 
-    WdfIoTargetStop(
-        WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe),
-        WdfIoTargetCancelSentIo);
+    // BUG FIX: NULL-guard - see the D0ExitInProgress comment in Device.h.
+    // InterruptPipe is ordinarily non-NULL here (only AmtPtpEvtDeviceReleaseHardware
+    // nulls it), but the whole point of this fix is that this driver has
+    // observed physical device loss during S3 (STATUS_NO_SUCH_DEVICE in the
+    // reader-recovery ladder), and this and ReleaseHardware are not proven
+    // to be mutually exclusive from a driver-owned timer callback's
+    // perspective the way they are for WDF's own PnP/power callbacks.
+    // Skipping the stop when the pipe is already gone is strictly safer
+    // than passing a NULL handle into WdfUsbTargetPipeGetIoTarget.
+    if (pDeviceContext->InterruptPipe != NULL) {
+        WdfIoTargetStop(
+            WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe),
+            WdfIoTargetCancelSentIo);
+    }
 
     wellspringOffStatus = AmtPtpSetWellspringMode(pDeviceContext, FALSE);
 

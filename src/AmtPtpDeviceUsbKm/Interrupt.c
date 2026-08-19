@@ -636,12 +636,26 @@ AmtPtpEvtReaderRestartTimer(
 
     PAGED_CODE();
 
+    // BUG FIX: this used to say D0Exit "cancels this timer synchronously
+    // before stopping the target, so in practice that window is not
+    // reachable" - untrue since D0Exit's WdfTimerStop call was changed to
+    // Wait=FALSE (see the D0ExitInProgress comment in Device.h), and the
+    // untruth is what let this timer callback race D0Exit's own
+    // WdfIoTargetStop on the same InterruptPipe, root-caused to a real Bug
+    // Check 0x10D (WDF_VIOLATION) during a sleep transition. Check the
+    // flag D0Exit now sets before touching InterruptPipe/UsbDevice at all;
+    // bail exactly like the "device not connected"/EXHAUSTED paths below
+    // (harmless - the next D0Entry resets both this and the ladder stage).
+    if (InterlockedCompareExchange(&pCtx->D0ExitInProgress, 0, 0) != 0) {
+        AmtTrace(pCtx, "ReaderRestartTimer: D0Exit in progress, backing off");
+        return;
+    }
+
     // If this fires in the narrow window after D0Exit already stopped the
     // target but before the next D0Entry restarts it, these recovery calls
     // and the final WdfIoTargetStart simply fail (target/device not in a
     // startable state) and nothing further happens - no special-casing
-    // needed. D0Exit additionally cancels this timer synchronously before
-    // stopping the target, so in practice that window is not reachable.
+    // needed.
     if (pCtx->ReaderRecoveryStage >= READER_RECOVERY_EXHAUSTED) {
         // Already tried every rung this D0 session. Stay silent - and
         // leave the pipe target untouched - until the next D0Entry
@@ -685,6 +699,18 @@ AmtPtpEvtReaderRestartTimer(
         // next real D0Entry (from the eventual PrepareHardware once the
         // device reappears) resets ReaderRecoveryStage back to
         // READER_RECOVERY_RESET_PIPE regardless.
+        pCtx->ReaderRecoveryStage = READER_RECOVERY_EXHAUSTED;
+        return;
+    }
+
+    // BUG FIX: defense-in-depth NULL guard alongside the D0ExitInProgress
+    // check above - see the D0ExitInProgress comment in Device.h. The flag
+    // check above closes the main race window, but this still costs
+    // nothing and protects against InterruptPipe going NULL
+    // (AmtPtpEvtDeviceReleaseHardware) for any other reason between here
+    // and the checks above.
+    if (pCtx->InterruptPipe == NULL) {
+        AmtTrace(pCtx, "ReaderRestartTimer: InterruptPipe is NULL, bailing out");
         pCtx->ReaderRecoveryStage = READER_RECOVERY_EXHAUSTED;
         return;
     }

@@ -240,12 +240,44 @@ typedef struct _DEVICE_CONTEXT
     // pipe that keeps failing right after a resume (endpoint not yet
     // settled) gets resubmitted in a tight loop with no delay - real CPU
     // and USB-controller cost, not just a cosmetic retry. Reset in
-    // AmtPtpEvtDeviceD0Entry and on every successful read completion;
-    // cancelled synchronously in AmtPtpEvtDeviceD0Exit before the pipe's
-    // I/O target is stopped, so it can never fire against a pipe that is
-    // concurrently being torn down.
+    // AmtPtpEvtDeviceD0Entry and on every successful read completion.
+    //
+    // BUG FIX (was: "cancelled synchronously in AmtPtpEvtDeviceD0Exit
+    // before the pipe's I/O target is stopped, so it can never fire
+    // against a pipe that is concurrently being torn down" - that
+    // description stopped being true when D0Exit's WdfTimerStop call was
+    // changed to Wait=FALSE to avoid Bug Check 0x9F on a stuck recovery
+    // call; nobody updated this comment or added the synchronization the
+    // old comment assumed). AmtPtpEvtReaderRestartTimer (Interrupt.c) can
+    // now genuinely still be executing - including inside a blocking
+    // WdfUsbTargetPipeResetSynchronously/ResetPortSynchronously call - at
+    // the exact moment AmtPtpEvtDeviceD0Exit runs. Confirmed as the cause
+    // of a real Bug Check 0x10D (WDF_VIOLATION, Parameter1=0x5 "handle of
+    // incorrect type", Parameter2=0x0) during a sleep transition: with S3
+    // known to genuinely disconnect this device (see the
+    // WdfUsbTargetDeviceIsConnectedSynchronous comment below), InterruptPipe
+    // can go NULL (AmtPtpEvtDeviceReleaseHardware) while one of these two
+    // racing call paths is mid-read of it, producing a NULL handle passed
+    // into WdfUsbTargetPipeGetIoTarget. D0ExitInProgress below closes that
+    // window without reintroducing the 0x9F risk: D0Exit sets it (Interlocked,
+    // no blocking) before doing anything else, and the timer callback
+    // checks it - and NULL-guards InterruptPipe itself - before every use.
     WDFTIMER               ReaderRestartTimer;
     READER_RECOVERY_STAGE  ReaderRecoveryStage;
+
+    // Set (InterlockedExchange) at the very start of AmtPtpEvtDeviceD0Exit,
+    // cleared at the start of AmtPtpEvtDeviceD0Entry. Checked by
+    // AmtPtpEvtReaderRestartTimer before it touches InterruptPipe/UsbDevice,
+    // so a timer callback already in flight when D0Exit begins backs off
+    // instead of racing D0Exit's own WdfIoTargetStop on the same pipe. Plain
+    // LONG + Interlocked* (not WDFSPINLOCK) deliberately - the timer's own
+    // work involves PASSIVE_LEVEL calls that can block for real (port
+    // reset/cycle), which must never happen while holding a spinlock, and
+    // D0Exit must never block waiting for this flag (see the WdfTimerStop
+    // Wait=FALSE reasoning above) - a single interlocked flag give D0Exit
+    // a non-blocking "I'm tearing down" signal and the timer a cheap check,
+    // which is all this race actually needs.
+    volatile LONG           D0ExitInProgress;
 
     // QPC frequency cached at D0Entry
     LARGE_INTEGER PerfFrequency;
