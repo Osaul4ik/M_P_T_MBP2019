@@ -115,9 +115,22 @@ typedef struct _PTP_DEVICE_INPUT_MODE_REPORT {
 
 #pragma pack(push)
 #pragma pack(1)
+// BUG FIX: this previously had an extra "DeviceMode" byte between ReportID
+// and the bitfield byte that does NOT exist in the actual HID report
+// descriptor for REPORTID_FUNCSWITCH (see the REPORTID_FUNCSWITCH
+// collection in Hid.h's descriptor macro: REPORT_SIZE=1 * REPORT_COUNT=2
+// for ButtonSwitch/SurfaceSwitch, then REPORT_COUNT=6 constant padding -
+// 8 bits = exactly one data byte, wire size ReportID+1 = 2 bytes total).
+// sizeof() of the old 3-byte struct made AmtPtpSetFeatures's
+// HidValidateReportSize() check (Hid.c) require 3 bytes for a report
+// Windows only ever sends as 2, so every SET_FEATURE(REPORTID_FUNCSWITCH)
+// - which Windows issues as part of its own multitouch input-mode
+// configuration on every resume - was unconditionally rejected with
+// STATUS_INVALID_BUFFER_SIZE. This is the underlying cause of the
+// "MTConfig"/EventID 1 "An attempt to configure the input mode of a
+// multitouch device failed" System-log entries seen after sleep/wake.
 typedef struct _PTP_DEVICE_SELECTIVE_REPORT_MODE_REPORT {
 	UCHAR ReportID;
-	UCHAR DeviceMode;
 	UCHAR ButtonReport : 1;
 	UCHAR SurfaceReport : 1;
 	UCHAR Padding : 6;
