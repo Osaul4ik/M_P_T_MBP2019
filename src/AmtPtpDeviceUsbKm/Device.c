@@ -578,6 +578,86 @@ AmtPtpEvtDeviceReleaseHardware(
     return STATUS_SUCCESS;
 }
 
+// Attempt callback shape for AmtPtpD0EntryRetryAfterD3Final, named in the
+// same EVT_WDF_*-style convention WDF itself uses for callback typedefs
+// (see e.g. EVT_WDF_DEVICE_D0_ENTRY in wdfdevice.h) even though this one
+// is private to this file.
+typedef NTSTATUS
+(*PFN_AMT_D0ENTRY_ATTEMPT)(_In_ PDEVICE_CONTEXT DeviceContext);
+
+// AmtPtpD0EntryRetryAfterD3Final
+//
+// Shared bounded-retry-with-linear-backoff policy for a PASSIVE_LEVEL
+// operation performed from EvtDeviceD0Entry that may transiently fail in
+// the narrow window right after a full power-off (PreviousState ==
+// WdfPowerDeviceD3Final), before the device has finished settling on the
+// parent hub (re-enumeration/link-training can still be in progress). A
+// D0Entry reached from a lighter (non-D3Final) transition never needs this
+// slack, so callers pass MaxAttempts == 1 for that case and Attempt runs
+// exactly once with no delay.
+//
+// Factored out so this policy is defined in exactly one place: both
+// D0Entry operations that need it (SetWellspringMode's control transfer
+// and the interrupt pipe's WdfIoTargetStart) call through here instead of
+// each carrying its own copy of the loop, which is how the two previously
+// drifted out of sync - retry was added for SetWellspringMode alone, and
+// WdfIoTargetStart silently kept its single fire-and-forget attempt even
+// though it is subject to the identical race (see the comment on
+// INTERRUPT_PIPE_D0ENTRY_MAX_ATTEMPTS in Device.h for why that asymmetry
+// is a correctness bug, not just an inconsistency).
+_IRQL_requires_(PASSIVE_LEVEL)
+static NTSTATUS
+AmtPtpD0EntryRetryAfterD3Final(
+    _In_ PDEVICE_CONTEXT           DeviceContext,
+    _In_ ULONG                     MaxAttempts,
+    _In_ ULONG                     RetryDelayMsUnit,
+    _In_ PCSTR                     OperationName,
+    _In_ PFN_AMT_D0ENTRY_ATTEMPT   Attempt
+    )
+{
+    ULONG    attempt;
+    NTSTATUS status = STATUS_UNSUCCESSFUL;
+
+    for (attempt = 0; attempt < MaxAttempts; attempt++) {
+        status = Attempt(DeviceContext);
+        AmtTrace(DeviceContext, "D0Entry: %s attempt %lu/%lu -> status=0x%08X",
+            OperationName, attempt + 1, MaxAttempts, status);
+
+        if (NT_SUCCESS(status)) {
+            break;
+        }
+
+        if (attempt + 1 < MaxAttempts) {
+            LARGE_INTEGER delay;
+            // D0Entry runs at PASSIVE_LEVEL, so a short blocking pause
+            // here is sanctioned by the WDF power-callback contract -
+            // this is not a hot path.
+            delay.QuadPart = WDF_REL_TIMEOUT_IN_MS(RetryDelayMsUnit * (attempt + 1));
+            KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+    }
+
+    return status;
+}
+
+// Attempt shims for AmtPtpD0EntryRetryAfterD3Final - it calls through a
+// PDEVICE_CONTEXT -> NTSTATUS function pointer so both D0Entry operations
+// share one loop; these adapt each operation's real signature to that
+// shape.
+
+static NTSTATUS
+AmtPtpD0EntrySetWellspringModeAttempt(_In_ PDEVICE_CONTEXT DeviceContext)
+{
+    return AmtPtpSetWellspringMode(DeviceContext, TRUE);
+}
+
+static NTSTATUS
+AmtPtpD0EntryStartInterruptPipeAttempt(_In_ PDEVICE_CONTEXT DeviceContext)
+{
+    return WdfIoTargetStart(
+        WdfUsbTargetPipeGetIoTarget(DeviceContext->InterruptPipe));
+}
+
 // AmtPtpEvtDeviceD0Entry
 
 NTSTATUS
@@ -655,47 +735,42 @@ AmtPtpEvtDeviceD0Entry(
     // hints from a previous power session.
     RtlZeroMemory(&pDeviceContext->RecentLifts, sizeof(pDeviceContext->RecentLifts));
 
-    // Wellspring-mode setup is best-effort; only the start result matters.
-    //
-    // After a real power-off (PreviousState == WdfPowerDeviceD3Final), the
-    // device may not yet accept control transfers in the very first
-    // instant it reappears in D0 - re-enumeration/link-training on the
-    // parent hub can still be settling. A single fire-and-forget attempt
-    // here silently left Wellspring mode never re-armed if that first
-    // attempt lost the race, which reads to the user as "trackpad
-    // unresponsive after wake" even though the interrupt pipe itself comes
-    // up fine. Retry a bounded few times with a short pause; a D0Entry
-    // reached from a lighter (non-D3Final) transition doesn't need this
-    // slack, so it gets a single attempt as before.
+    // Wellspring-mode setup is best-effort; only the interrupt-pipe start
+    // result below determines this function's return value. Retried a
+    // bounded few times after a real power-off - see
+    // AmtPtpD0EntryRetryAfterD3Final and the WELLSPRING_MODE_D0ENTRY_*
+    // constants (Device.h) for why.
     {
         ULONG maxAttempts = (PreviousState == WdfPowerDeviceD3Final)
             ? WELLSPRING_MODE_D0ENTRY_MAX_ATTEMPTS
             : 1;
-        ULONG attempt;
 
-        for (attempt = 0; attempt < maxAttempts; attempt++) {
-            NTSTATUS wellspringStatus = AmtPtpSetWellspringMode(pDeviceContext, TRUE);
-            AmtTrace(pDeviceContext, "D0Entry: SetWellspringMode attempt %lu/%lu -> status=0x%08X",
-                attempt + 1, maxAttempts, wellspringStatus);
-            if (NT_SUCCESS(wellspringStatus)) {
-                break;
-            }
-
-            if (attempt + 1 < maxAttempts) {
-                LARGE_INTEGER delay;
-                // D0Entry runs at PASSIVE_LEVEL, so a short blocking pause
-                // here is sanctioned by the WDF power-callback contract -
-                // this is not a hot path.
-                delay.QuadPart = WDF_REL_TIMEOUT_IN_MS(
-                    WELLSPRING_MODE_D0ENTRY_RETRY_DELAY_MS_UNIT * (attempt + 1));
-                KeDelayExecutionThread(KernelMode, FALSE, &delay);
-            }
-        }
+        (VOID)AmtPtpD0EntryRetryAfterD3Final(
+            pDeviceContext,
+            maxAttempts,
+            WELLSPRING_MODE_D0ENTRY_RETRY_DELAY_MS_UNIT,
+            "SetWellspringMode",
+            AmtPtpD0EntrySetWellspringModeAttempt);
     }
 
-    status = WdfIoTargetStart(
-        WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe));
-    AmtTrace(pDeviceContext, "D0Entry: WdfIoTargetStart -> status=0x%08X", status);
+    // Starting the interrupt pipe's I/O target is subject to the identical
+    // post-D3Final settling window as SetWellspringMode above, and its
+    // result IS this function's return value - see the
+    // INTERRUPT_PIPE_D0ENTRY_MAX_ATTEMPTS comment (Device.h) for why this
+    // one gets its own retry rather than the single fire-and-forget
+    // attempt an earlier version of this function left it with.
+    {
+        ULONG maxAttempts = (PreviousState == WdfPowerDeviceD3Final)
+            ? INTERRUPT_PIPE_D0ENTRY_MAX_ATTEMPTS
+            : 1;
+
+        status = AmtPtpD0EntryRetryAfterD3Final(
+            pDeviceContext,
+            maxAttempts,
+            INTERRUPT_PIPE_D0ENTRY_RETRY_DELAY_MS_UNIT,
+            "WdfIoTargetStart",
+            AmtPtpD0EntryStartInterruptPipeAttempt);
+    }
     if (!NT_SUCCESS(status)) {
         goto end;
     }

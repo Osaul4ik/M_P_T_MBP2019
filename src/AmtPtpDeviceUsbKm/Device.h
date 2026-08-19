@@ -327,6 +327,22 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 #define WELLSPRING_MODE_D0ENTRY_MAX_ATTEMPTS       3
 #define WELLSPRING_MODE_D0ENTRY_RETRY_DELAY_MS_UNIT 50
 
+// Bounded retries for the D0Entry interrupt-pipe WdfIoTargetStart, after
+// the same D3Final -> D0 transition. This is subject to the identical
+// "device not accepting requests yet" window as SetWellspringMode above,
+// but unlike that best-effort control transfer, WdfIoTargetStart's result
+// IS this driver's EvtDeviceD0Entry return value: per the WDF "Reporting
+// Device Failures" documentation, a callback that reports !NT_SUCCESS
+// causes the framework to ask the bus driver to reenumerate the device
+// (full FDO teardown/recreate), and after a few consecutive such failures
+// the framework stops attempting to restart it at all. A lost race here
+// is therefore far more disruptive than a lost race on the Wellspring
+// transfer, and giving one of the two a retry while leaving the other bare
+// is a bug, not a style choice - both go through the same shared retry
+// helper (AmtPtpD0EntryRetryAfterD3Final in Device.c).
+#define INTERRUPT_PIPE_D0ENTRY_MAX_ATTEMPTS        3
+#define INTERRUPT_PIPE_D0ENTRY_RETRY_DELAY_MS_UNIT 50
+
 NTSTATUS
 AmtPtpDeviceUsbKmCreateDevice(
     _Inout_ PWDFDEVICE_INIT DeviceInit
