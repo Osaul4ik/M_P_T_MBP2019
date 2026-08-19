@@ -343,6 +343,15 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 #define INTERRUPT_PIPE_D0ENTRY_MAX_ATTEMPTS        3
 #define INTERRUPT_PIPE_D0ENTRY_RETRY_DELAY_MS_UNIT 50
 
+// Bounded retries for the IOCTL_HID_SET_FEATURE / REPORTID_REPORTMODE path
+// in AmtPtpSetFeatures (Hid.c), i.e. Windows' own multitouch input-mode
+// configuration step (source "MTConfig" in the System event log) rather
+// than our D0Entry path. Same underlying race - the device may still be
+// settling from a USB resume when this SET_FEATURE lands - so it gets the
+// same bounded retry-with-backoff shape as WELLSPRING_MODE_D0ENTRY_* above.
+#define WELLSPRING_MODE_SETFEATURE_MAX_ATTEMPTS        3
+#define WELLSPRING_MODE_SETFEATURE_RETRY_DELAY_MS_UNIT 50
+
 NTSTATUS
 AmtPtpDeviceUsbKmCreateDevice(
     _Inout_ PWDFDEVICE_INIT DeviceInit
