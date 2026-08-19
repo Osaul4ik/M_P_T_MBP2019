@@ -20,26 +20,51 @@ DriverEntry(
     WDF_DRIVER_CONFIG config;
     NTSTATUS status;
     WDF_OBJECT_ATTRIBUTES attributes;
+    WDFDRIVER driver;
+    PDRIVER_CONTEXT driverContext;
 
-    // Register the driver cleanup callback.
-    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    // DRIVER_CONTEXT (Driver.h) so this driver instance has one place to
+    // hold the driver-lifetime config control device - see the comment
+    // next to DRIVER_CONTEXT for why it lives here and not per-FDO.
+    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, DRIVER_CONTEXT);
     attributes.EvtCleanupCallback = AmtPtpDeviceUsbKmEvtDriverContextCleanup;
 
     WDF_DRIVER_CONFIG_INIT(&config,
                            AmtPtpDeviceUsbKmEvtDeviceAdd
                            );
 
+    // WDF_NO_HANDLE was used here before DRIVER_CONTEXT existed. The
+    // driver handle is now needed both to reach that context below and,
+    // via WdfDeviceGetDriver(), from AmtPtpAcquireConfigControlDevice at
+    // every EvtDeviceAdd.
     status = WdfDriverCreate(DriverObject,
                              RegistryPath,
                              &attributes,
                              &config,
-                             WDF_NO_HANDLE
+                             &driver
                              );
 
     if (!NT_SUCCESS(status)) {
         return status;
     }
-    return status;
+
+    driverContext = DriverGetContext(driver);
+
+    // ConfigControlDevice starts NULL (WDF zero-fills new context memory);
+    // only the lock needs explicit creation. Parented to the driver object
+    // so the framework tears it down automatically alongside everything
+    // else once AmtPtpDeviceUsbKmEvtDriverContextCleanup returns - no
+    // matching WdfObjectDelete is needed for the lock itself, unlike the
+    // control device (see that cleanup routine below).
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    attributes.ParentObject = driver;
+
+    status = WdfWaitLockCreate(&attributes, &driverContext->ConfigControlDeviceLock);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -88,8 +113,21 @@ AmtPtpDeviceUsbKmEvtDriverContextCleanup(
     )
 // Release resources allocated in DriverEntry.
 {
-    UNREFERENCED_PARAMETER(DriverObject);
+    PDRIVER_CONTEXT driverContext;
 
-    PAGED_CODE ();
+    PAGED_CODE();
 
+    driverContext = DriverGetContext((WDFDRIVER)DriverObject);
+
+    // Unlike an ordinary child device object, a KMDF control device object
+    // (WdfControlDeviceInitAllocate) is not implicitly deleted by the
+    // framework's parent/child teardown - the WDF documentation requires
+    // the driver to delete it explicitly, typically here, at driver
+    // unload. This is also the only place ConfigControlDevice is ever
+    // deleted now: AmtPtpEvtDeviceContextCleanup (Device.c) only detaches
+    // from it per-FDO, it never deletes it.
+    if (driverContext->ConfigControlDevice != NULL) {
+        WdfObjectDelete(driverContext->ConfigControlDevice);
+        driverContext->ConfigControlDevice = NULL;
+    }
 }

@@ -12,7 +12,7 @@
 // segment (PREfast C28172).
 #pragma alloc_text (PAGE, AmtPtpEvtDeviceD0Exit)
 #pragma alloc_text (PAGE, SelectInterruptInterface)
-#pragma alloc_text (PAGE, AmtPtpCreateConfigControlDevice)
+#pragma alloc_text (PAGE, AmtPtpAcquireConfigControlDevice)
 #endif
 
 #define ACTIVE_CONTACTS_ALIGNMENT 64
@@ -81,124 +81,200 @@ AmtPtpGetDeviceConfig(_In_ const PUSB_DEVICE_DESCRIPTOR DeviceDescriptor)
     return NULL;
 }
 
-// AmtPtpCreateConfigControlDevice
+// AmtPtpAcquireConfigControlDevice
 //
-// Creates a real KMDF control device for the configuration GUI. The PnP
-// device remains a lower filter; the GUI endpoint is deliberately separate
-// from the USB/HID stack so CreateFile() is handled by KMDF rather than being
-// forwarded to the lower USB driver.
+// Gives the calling FDO ownership of the GUI-facing KMDF control device -
+// creating it on the very first call from any FDO instance, and simply
+// re-pointing it at TargetDevice on every later call.
+//
+// BACKGROUND / WHY NOT ONE CONTROL DEVICE PER FDO (as before):
+//
+// This device's parent USB hub does a real surprise-removal/re-enumeration
+// on most sleep/wake cycles (see the D0Entry/D0Exit trace around
+// WdfPowerDeviceD3 -> STATUS_NO_SUCH_DEVICE -> D3Final -> ReleaseHardware
+// in the sleep/wake investigation) - a brand new PDO/FDO pair gets created
+// afterward, not a resume of the same one. The control device previously
+// went through the same per-FDO lifecycle: created in EvtDeviceAdd under
+// the fixed name L"\\Device\\AmtPtpDeviceUsbKm", deleted in the old FDO's
+// AmtPtpEvtDeviceContextCleanup.
+//
+// A KMDF control device with an open user-mode handle is NOT force-closed
+// by surprise removal the way the FDO's own handles are - WdfObjectDelete
+// on it simply waits for the last handle to close. AmtPtpConfigGui keeps
+// exactly one such handle open for its entire lifetime (DeviceIo.cs -
+// TryConnect() is called once; there is no SystemEvents.PowerModeChanged
+// or WM_POWERBROADCAST handling to close and reopen it around sleep). So
+// with the GUI running across a sleep/wake cycle:
+//
+//   1. The old FDO is surprise-removed; its EvtDeviceContextCleanup runs,
+//      but WdfObjectDelete on the old control device cannot complete
+//      while the GUI's handle is still open - the name stays reserved.
+//   2. The parent hub re-enumerates; a new FDO's EvtDeviceAdd runs and
+//      tries to create a NEW control device under the SAME fixed name.
+//      WdfDeviceInitAssignName fails with STATUS_OBJECT_NAME_COLLISION
+//      because the old one has not actually been deleted yet.
+//   3. That failure propagates out of EvtDeviceAdd, so the new FDO never
+//      comes up at all - not "slow", completely dead - until whatever
+//      unblocks the old handle (closing the GUI) lets the old control
+//      device finish being deleted, freeing the name for the FDO created
+//      on the NEXT sleep/wake cycle.
+//
+// Making the control device driver-lifetime instead of FDO-lifetime
+// removes the collision structurally: its name is claimed exactly once
+// per driver load, so no later EvtDeviceAdd ever contests it. The GUI's
+// handle can then legitimately stay open across any number of surprise
+// removals - AMT_CONFIG_CONTROL_CONTEXT::TargetDevice just goes NULL
+// between the old FDO's cleanup and the new FDO's AddDevice, causing
+// ConfigIoctl.c's handlers to fail cleanly (STATUS_DEVICE_NOT_READY-style
+// "no target device") instead of the whole stack refusing to load.
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS
-AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice)
+AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice)
 {
-    PWDFDEVICE_INIT       controlInit = NULL;
-    WDF_OBJECT_ATTRIBUTES controlAttributes;
-    WDF_IO_QUEUE_CONFIG    queueConfig;
-    WDFDEVICE              controlDevice = NULL;
+    PDRIVER_CONTEXT             driverContext;
     PAMT_CONFIG_CONTROL_CONTEXT controlContext;
-    NTSTATUS                status;
+    NTSTATUS                    status;
 
     PAGED_CODE();
 
-    DECLARE_CONST_UNICODE_STRING(sddl,
-        L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)");
-    DECLARE_CONST_UNICODE_STRING(ntName,
-        L"\\Device\\AmtPtpDeviceUsbKm");
-    DECLARE_CONST_UNICODE_STRING(dosName,
-        L"\\DosDevices\\AmtPtpDeviceUsbKm");
+    driverContext = DriverGetContext(WdfDeviceGetDriver(TargetDevice));
 
-    controlInit = WdfControlDeviceInitAllocate(
-        WdfDeviceGetDriver(TargetDevice),
-        &sddl);
+    // Guards both branches below: creation (first caller only) and
+    // re-attachment (every later caller, including a fast surprise-
+    // removal/re-enumeration racing AmtPtpEvtDeviceContextCleanup's
+    // detach for the FDO instance being replaced). Never held across an
+    // I/O completion or anything that could stall - just the pointer
+    // read/create/write below.
+    WdfWaitLockAcquire(driverContext->ConfigControlDeviceLock, NULL);
 
-    if (controlInit == NULL) {
-        return STATUS_INSUFFICIENT_RESOURCES;
+    if (driverContext->ConfigControlDevice != NULL) {
+        // Not the first FDO instance this driver load has seen - the
+        // control device already exists, just move it onto the new FDO.
+        controlContext = AmtConfigControlGetContext(driverContext->ConfigControlDevice);
+        controlContext->TargetDevice = TargetDevice;
+
+        WdfWaitLockRelease(driverContext->ConfigControlDeviceLock);
+        return STATUS_SUCCESS;
     }
 
-    status = WdfDeviceInitAssignName(controlInit, &ntName);
-    if (!NT_SUCCESS(status)) {
-        WdfDeviceInitFree(controlInit);
-        return status;
-    }
-
-    WdfDeviceInitSetExclusive(controlInit, FALSE);
-
-    // Wire up EvtFileClose so a handle closing for ANY reason - including
-    // the GUI process dying without running its own cleanup - is caught by
-    // the driver itself and used to force LiveEnabled back off.
+    // First FDO instance this driver load has seen - create the control
+    // device now. Everything below is unchanged from the original
+    // per-FDO implementation except where noted.
     {
-        WDF_FILEOBJECT_CONFIG fileConfig;
-        WDF_OBJECT_ATTRIBUTES fileContextAttributes;
+        PWDFDEVICE_INIT       controlInit = NULL;
+        WDF_OBJECT_ATTRIBUTES controlAttributes;
+        WDF_IO_QUEUE_CONFIG   queueConfig;
+        WDFDEVICE             controlDevice = NULL;
+
+        DECLARE_CONST_UNICODE_STRING(sddl,
+            L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)");
+        DECLARE_CONST_UNICODE_STRING(ntName,
+            L"\\Device\\AmtPtpDeviceUsbKm");
+        DECLARE_CONST_UNICODE_STRING(dosName,
+            L"\\DosDevices\\AmtPtpDeviceUsbKm");
+
+        controlInit = WdfControlDeviceInitAllocate(
+            WdfDeviceGetDriver(TargetDevice),
+            &sddl);
+
+        if (controlInit == NULL) {
+            status = STATUS_INSUFFICIENT_RESOURCES;
+            goto unlock_and_return;
+        }
+
+        status = WdfDeviceInitAssignName(controlInit, &ntName);
+        if (!NT_SUCCESS(status)) {
+            WdfDeviceInitFree(controlInit);
+            goto unlock_and_return;
+        }
+
+        WdfDeviceInitSetExclusive(controlInit, FALSE);
+
+        // Wire up EvtFileClose so a handle closing for ANY reason -
+        // including the GUI process dying without running its own
+        // cleanup - is caught by the driver itself and used to force
+        // LiveEnabled back off.
+        {
+            WDF_FILEOBJECT_CONFIG fileConfig;
+            WDF_OBJECT_ATTRIBUTES fileContextAttributes;
+            WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
+                &fileContextAttributes,
+                AMT_CONFIG_CONTROL_FILE_CONTEXT);
+
+            WDF_FILEOBJECT_CONFIG_INIT(
+                &fileConfig,
+                WDF_NO_EVENT_CALLBACK,             // EvtDeviceFileCreate
+                AmtPtpConfigControlEvtFileClose,   // EvtFileClose
+                WDF_NO_EVENT_CALLBACK);            // EvtFileCleanup
+
+            WdfDeviceInitSetFileObjectConfig(
+                controlInit,
+                &fileConfig,
+                &fileContextAttributes);
+        }
+
         WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
-            &fileContextAttributes,
-            AMT_CONFIG_CONTROL_FILE_CONTEXT);
+            &controlAttributes,
+            AMT_CONFIG_CONTROL_CONTEXT);
+        controlAttributes.EvtCleanupCallback = AmtPtpConfigControlEvtConfigControlCleanup;
+        controlAttributes.ExecutionLevel = WdfExecutionLevelPassive;
 
-        WDF_FILEOBJECT_CONFIG_INIT(
-            &fileConfig,
-            WDF_NO_EVENT_CALLBACK,             // EvtDeviceFileCreate
-            AmtPtpConfigControlEvtFileClose,   // EvtFileClose
-            WDF_NO_EVENT_CALLBACK);            // EvtFileCleanup
+        status = WdfDeviceCreate(
+            &controlInit,
+            &controlAttributes,
+            &controlDevice);
 
-        WdfDeviceInitSetFileObjectConfig(
-            controlInit,
-            &fileConfig,
-            &fileContextAttributes);
+        if (!NT_SUCCESS(status)) {
+            // controlInit came from WdfControlDeviceInitAllocate (not from
+            // EvtDriverDeviceAdd), so on a failed WdfDeviceCreate the
+            // driver - not the framework - owns freeing it.
+            WdfDeviceInitFree(controlInit);
+            goto unlock_and_return;
+        }
+
+        controlContext = AmtConfigControlGetContext(controlDevice);
+        controlContext->TargetDevice = TargetDevice;
+
+        status = WdfDeviceCreateSymbolicLink(
+            controlDevice,
+            &dosName);
+
+        if (!NT_SUCCESS(status)) {
+            WdfObjectDelete(controlDevice);
+            goto unlock_and_return;
+        }
+
+        WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(
+            &queueConfig,
+            WdfIoQueueDispatchSequential);
+
+        queueConfig.EvtIoDeviceControl = AmtPtpConfigControlEvtIoDeviceControl;
+
+        status = WdfIoQueueCreate(
+            controlDevice,
+            &queueConfig,
+            WDF_NO_OBJECT_ATTRIBUTES,
+            WDF_NO_HANDLE);
+
+        if (!NT_SUCCESS(status)) {
+            WdfObjectDelete(controlDevice);
+            goto unlock_and_return;
+        }
+
+        // A control device does not receive I/O until this call completes.
+        WdfControlFinishInitializing(controlDevice);
+
+        // Published only now that the control device is fully live -
+        // AmtPtpEvtDeviceContextCleanup and the next AddDevice both read
+        // this under the same lock, so neither can observe a half-built
+        // control device.
+        driverContext->ConfigControlDevice = controlDevice;
+        status = STATUS_SUCCESS;
     }
 
-    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
-        &controlAttributes,
-        AMT_CONFIG_CONTROL_CONTEXT);
-    controlAttributes.EvtCleanupCallback = AmtPtpConfigControlEvtConfigControlCleanup;
-    controlAttributes.ExecutionLevel = WdfExecutionLevelPassive;
-
-    status = WdfDeviceCreate(
-        &controlInit,
-        &controlAttributes,
-        &controlDevice);
-
-    if (!NT_SUCCESS(status)) {
-        // controlInit came from WdfControlDeviceInitAllocate (not from
-        // EvtDriverDeviceAdd), so on a failed WdfDeviceCreate the driver -
-        // not the framework - owns freeing it. Missing this leaked the
-        // WDFDEVICE_INIT structure on this error path.
-        WdfDeviceInitFree(controlInit);
-        return status;
-    }
-
-    controlContext = AmtConfigControlGetContext(controlDevice);
-    controlContext->TargetDevice = TargetDevice;
-
-    status = WdfDeviceCreateSymbolicLink(
-        controlDevice,
-        &dosName);
-
-    if (!NT_SUCCESS(status)) {
-        WdfObjectDelete(controlDevice);
-        return status;
-    }
-
-    WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(
-        &queueConfig,
-        WdfIoQueueDispatchSequential);
-
-    queueConfig.EvtIoDeviceControl = AmtPtpConfigControlEvtIoDeviceControl;
-
-    status = WdfIoQueueCreate(
-        controlDevice,
-        &queueConfig,
-        WDF_NO_OBJECT_ATTRIBUTES,
-        WDF_NO_HANDLE);
-
-    if (!NT_SUCCESS(status)) {
-        WdfObjectDelete(controlDevice);
-        return status;
-    }
-
-    // A control device does not receive I/O until this call has completed.
-    WdfControlFinishInitializing(controlDevice);
-
-    DeviceGetContext(TargetDevice)->ConfigControlDevice = controlDevice;
-    return STATUS_SUCCESS;
+unlock_and_return:
+    WdfWaitLockRelease(driverContext->ConfigControlDeviceLock);
+    return status;
 }
 
 // AmtPtpDeviceUsbKmCreateDevice

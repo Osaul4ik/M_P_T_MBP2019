@@ -56,6 +56,43 @@ AmtRawToSignedInt(_In_ USHORT x)
     return (signed short)x;
 }
 
+// Driver-wide (WDFDRIVER) context.
+//
+// Holds the single, driver-lifetime KMDF control device the GUI talks to
+// (see AmtPtpAcquireConfigControlDevice in Device.c for the full
+// rationale). This is deliberately NOT part of DEVICE_CONTEXT: the
+// control device's named object (\Device\AmtPtpDeviceUsbKm) must survive
+// across surprise-removal/re-enumeration of the underlying USB FDO, which
+// happens on every sleep/wake where the parent hub momentarily drops the
+// device. Tying the control device's lifetime to one FDO instance instead
+// of the driver means a GUI handle left open across such a cycle keeps
+// the old control device (and its name) alive past the point where the
+// next FDO instance tries to create a new one under the same name -
+// WdfDeviceInitAssignName then fails with STATUS_OBJECT_NAME_COLLISION,
+// which fails that FDO's entire EvtDeviceAdd and leaves the touchpad
+// completely non-functional until something else clears the name (e.g.
+// the GUI process exiting). Creating the control device once per driver
+// load, and only ever re-pointing AMT_CONFIG_CONTROL_CONTEXT::TargetDevice
+// at whichever FDO is currently live, removes the collision entirely.
+typedef struct _DRIVER_CONTEXT
+{
+    // The one control device for the lifetime of this driver. NULL until
+    // the first successful AmtPtpAcquireConfigControlDevice call, deleted
+    // explicitly in AmtPtpDeviceUsbKmEvtDriverContextCleanup - per the WDF
+    // control-device-object contract, this is never torn down implicitly
+    // by parent/child device-object cleanup the way an FDO's children are.
+    WDFDEVICE   ConfigControlDevice;
+
+    // Serializes creation of ConfigControlDevice (first EvtDeviceAdd only)
+    // against re-attachment of ConfigControlDevice's TargetDevice pointer
+    // (every later EvtDeviceAdd/EvtDeviceContextCleanup) so a fast
+    // surprise-removal/re-enumeration cycle can never interleave a
+    // detach from the old FDO with an attach from the new one.
+    WDFWAITLOCK ConfigControlDeviceLock;
+} DRIVER_CONTEXT, *PDRIVER_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DRIVER_CONTEXT, DriverGetContext)
+
 // WDF driver events.
 
 DRIVER_INITIALIZE DriverEntry;

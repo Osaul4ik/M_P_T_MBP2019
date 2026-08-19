@@ -124,10 +124,12 @@ typedef struct _DEVICE_CONTEXT
     // caller-provided output-buffer size before forwarding them.
     WDFQUEUE        InputQueue;
 
-    // User-mode configuration endpoint. This is a separate KMDF control
-    // device; the PnP FDO remains a lower filter and does not expose the
-    // GUI interface directly on the USB/HID stack.
-    WDFDEVICE       ConfigControlDevice;
+    // NOTE: the GUI's config control device is intentionally NOT a field
+    // here. It is driver-lifetime state (DRIVER_CONTEXT::ConfigControlDevice
+    // in Driver.h), created once and reattached to whichever FDO is
+    // current via AmtPtpAcquireConfigControlDevice - see that function's
+    // comment in Device.c for why a per-FDO control device is unsafe
+    // across surprise removal/re-enumeration.
 
     // Opt-in live monitor state. FALSE is the normal/idle state and the
     // interrupt path does not copy any live-monitor data when it is false.
@@ -339,9 +341,17 @@ EVT_WDF_OBJECT_CONTEXT_CLEANUP  AmtPtpEvtDeviceContextCleanup;
 // The PnP device is a lower filter. User-mode configuration therefore uses
 // a separate KMDF control device with a DOS symbolic link instead of a
 // device interface attached to the USB/HID filter FDO.
+//
+// The control device is driver-lifetime, not FDO-lifetime: the first call
+// (from any FDO's EvtDeviceAdd) creates it under DRIVER_CONTEXT and every
+// later call just re-points its TargetDevice at the calling FDO. See the
+// comment on DRIVER_CONTEXT (Driver.h) and on this function's definition
+// (Device.c) for why - in short, a per-FDO control device with a fixed
+// name cannot survive the surprise-removal/re-enumeration that this
+// device's parent USB hub performs on nearly every sleep/wake.
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS
-AmtPtpCreateConfigControlDevice(_In_ WDFDEVICE TargetDevice);
+AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice);
 
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL AmtPtpConfigControlEvtIoDeviceControl;
 
