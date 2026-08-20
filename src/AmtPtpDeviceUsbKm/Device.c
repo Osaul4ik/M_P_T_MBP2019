@@ -707,6 +707,16 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
         }
     }
 
+    // As above with pDeviceContext itself: by this point UsbDevice is
+    // non-NULL either because it already was (the if above was skipped)
+    // or because AmtPtpPrepareHardwareRetryOnLowResources returned success,
+    // which - via the AmtPtpPrepareHwCreateUsbDeviceAttempt function
+    // pointer - means WdfUsbTargetDeviceCreate populated it. PREfast
+    // cannot follow that through the indirect call, so it still treats
+    // UsbDevice as possibly NULL on every use below; assume it away here
+    // rather than adding a redundant runtime check.
+    _Analysis_assume_(pDeviceContext->UsbDevice != NULL);
+
     WdfUsbTargetDeviceGetDeviceDescriptor(
         pDeviceContext->UsbDevice, &pDeviceContext->DeviceDescriptor);
 
