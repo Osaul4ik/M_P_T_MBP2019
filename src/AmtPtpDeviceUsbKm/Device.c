@@ -766,13 +766,29 @@ AmtPtpEvtDeviceD0Entry(
     // fresh D0Entry always means a clean slate for the reader-recovery
     // escalation ladder in Interrupt.c - whatever failure streak happened
     // in a previous power session is irrelevant now.
+    //
+    // BUG FIX: RecoveryLock is now held across this entire function's
+    // startup sequence (SetWellspringMode retries, the interrupt pipe's
+    // WdfIoTargetStart retries, and the failure-path WdfIoTargetStop
+    // below), not just the initial state bump. The two-level
+    // synchronization model (see Device.h) documents RecoveryLock as
+    // guaranteeing "at most one of { WdfIoTargetStop, ...,
+    // WdfIoTargetStart } sequence is ever in flight at a time" - D0Entry's
+    // own WdfIoTargetStart is one of those calls, and releasing
+    // RecoveryLock right after the generation bump left it running
+    // unserialized against AmtPtpEvtReaderRestartTimer/
+    // AmtPtpEvtDeviceReleaseHardware, exactly the class of race this whole
+    // lifecycle redesign exists to close. D0Entry runs at PASSIVE_LEVEL
+    // (documented WDF contract for EvtDeviceD0Entry), so holding a
+    // WDFWAITLOCK across these blocking calls is sanctioned - identical to
+    // how AmtPtpEvtDeviceD0Exit already holds RecoveryLock across its own
+    // WdfIoTargetStop/SetWellspringMode(FALSE) sequence.
     WdfWaitLockAcquire(pDeviceContext->RecoveryLock, NULL);
     WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
     pDeviceContext->RecoveryGeneration++;
     pDeviceContext->D0ExitInProgress    = FALSE;
     pDeviceContext->ReaderRecoveryStage = READER_RECOVERY_RESET_PIPE;
     WdfSpinLockRelease(pDeviceContext->D0ExitLock);
-    WdfWaitLockRelease(pDeviceContext->RecoveryLock);
 
     pDeviceContext->LastReportTime =
         KeQueryPerformanceCounter(&pDeviceContext->PerfFrequency);
@@ -873,6 +889,8 @@ end:
             WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe),
             WdfIoTargetCancelSentIo);
     }
+
+    WdfWaitLockRelease(pDeviceContext->RecoveryLock);
 
     AmtTrace(pDeviceContext, "D0Entry: EXIT, status=0x%08X", status);
 

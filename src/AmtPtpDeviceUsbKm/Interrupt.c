@@ -173,12 +173,23 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // A successful transfer clears the reader-recovery escalation ladder
     // (AmtPtpEvtUsbInterruptReadersFailed / AmtPtpEvtReaderRestartTimer) -
     // a blip early in a power session should not leave the next unrelated
-    // failure escalating straight to a port reset or port cycle. Not
-    // lock-protected: it is a heuristic recovery-progress marker, not
-    // correctness-critical, and the worst case of a benign race with that
-    // callback is retrying one rung of the ladder an extra time, never a
-    // correctness issue.
+    // failure escalating straight to a port reset or port cycle.
+    //
+    // MS-RECOMMENDED SYNCHRONIZATION: this write races the read-modify-
+    // write AmtPtpEvtReaderRestartTimer does on the same field under
+    // D0ExitLock (Interrupt.c), and the unlocked reads
+    // AmtPtpEvtUsbInterruptReadersFailed used to do below - both this
+    // routine and ReadersFailed run on the same DPC-level completion path,
+    // so an unlocked write here is not just a correctness nicety: without
+    // the lock's release/acquire barrier there is no guarantee the timer
+    // callback (which can be running on a different CPU) ever observes
+    // this reset promptly, or that this write and the timer's own
+    // ReaderRecoveryStage++ don't tear against each other. D0ExitLock is a
+    // spinlock with no blocking calls inside, so taking it here costs
+    // nothing correctness- or performance-wise on the hot path.
+    WdfSpinLockAcquire(pCtx->D0ExitLock);
     pCtx->ReaderRecoveryStage = READER_RECOVERY_RESET_PIPE;
+    WdfSpinLockRelease(pCtx->D0ExitLock);
 
     // Validate packet shape before dequeuing a HID request and before taking
     // StateLock. This ensures malformed/short USB packets cannot leave an
@@ -697,10 +708,37 @@ AmtPtpEvtReaderRestartTimer(
         lifecycleStale =
             pCtx->D0ExitInProgress ||
             (pCtx->RecoveryGeneration != snapshotGeneration);
+
+        // BUG FIX: re-read ReaderRecoveryStage here too, not just
+        // D0ExitInProgress/RecoveryGeneration. AmtPtpEvtUsbInterruptPipeReadComplete
+        // resets ReaderRecoveryStage to READER_RECOVERY_RESET_PIPE on every
+        // successful transfer WITHOUT bumping RecoveryGeneration (a
+        // successful read is not a lifecycle transition), so a stage
+        // snapshotted in Phase 1 can go stale purely from ladder progress -
+        // no D0Exit/D0Entry/ReleaseHardware involved at all - and the
+        // generation check above would not catch it. Without this refresh,
+        // the switch below could act on a rung the driver has already
+        // moved past (e.g. still executing RESET_PORT after a read already
+        // succeeded and reset the ladder to RESET_PIPE), and the
+        // escalation step further down - which increments the *current*
+        // field value, not this local - would then diverge from the rung
+        // actually executed.
+        if (!lifecycleStale) {
+            stage = pCtx->ReaderRecoveryStage;
+        }
         WdfSpinLockRelease(pCtx->D0ExitLock);
 
         if (lifecycleStale) {
             AmtTrace(pCtx, "ReaderRestartTimer: lifecycle changed since snapshot, aborting");
+            WdfWaitLockRelease(pCtx->RecoveryLock);
+            return;
+        }
+
+        if (stage >= READER_RECOVERY_EXHAUSTED) {
+            // The ladder was already reset/exhausted by something else
+            // (e.g. a successful read, or another timer fire) between
+            // Phase 1 and here - nothing left to do this fire.
+            AmtTrace(pCtx, "ReaderRestartTimer: stage changed to EXHAUSTED since snapshot, aborting");
             WdfWaitLockRelease(pCtx->RecoveryLock);
             return;
         }
@@ -849,13 +887,8 @@ AmtPtpEvtUsbInterruptReadersFailed(
     WDFIOTARGET      ioTarget = WdfUsbTargetPipeGetIoTarget(Pipe);
     WDFDEVICE        device   = WdfIoTargetGetDevice(ioTarget);
     PDEVICE_CONTEXT  pCtx     = DeviceGetContext(device);
-
-    // DIAG: this is the very first callback to see a broken interrupt
-    // read - Status/UsbdStatus here are the actual root cause of any
-    // downstream Code 10, so they're worth capturing even though the
-    // recovery logic below doesn't otherwise need their exact values.
-    AmtTrace(pCtx, "ReadersFailed: Status=0x%08X, UsbdStatus=0x%08X, stage=%d",
-        Status, UsbdStatus, (int)pCtx->ReaderRecoveryStage);
+    BOOLEAN                d0ExitInProgress;
+    READER_RECOVERY_STAGE  stage;
 
     // MS-RECOMMENDED SYNCHRONIZATION: this is the second, previously-
     // unguarded path into ReaderRestartTimer - see the D0ExitLock comment
@@ -867,23 +900,38 @@ AmtPtpEvtUsbInterruptReadersFailed(
     // included) - so this can run synchronously *inside* D0Exit's
     // WdfIoTargetStop call, i.e. after D0ExitInProgress is already set but
     // before D0Exit has finished. Calling WdfTimerStart here unconditionally
-    // would re-arm the exact timer D0Exit just tried to stop. Take the same
-    // D0ExitLock D0Exit/ReaderRestartTimer use - this callback can run at up
-    // to DISPATCH_LEVEL (same completion path as EvtUsbTargetPipeReadComplete),
-    // which is exactly why this is a WDFSPINLOCK and not a WDFWAITLOCK. Bail
-    // out exactly like the EXHAUSTED path below; D0Entry gives the ladder a
-    // clean slate either way.
-    {
-        BOOLEAN d0ExitInProgress;
+    // would re-arm the exact timer D0Exit just tried to stop.
+    //
+    // D0ExitInProgress and ReaderRecoveryStage are snapshotted together
+    // under one D0ExitLock critical section, not as two separate
+    // lock/unlock pairs - a previous revision checked D0ExitInProgress,
+    // released the lock, and only then read ReaderRecoveryStage
+    // unprotected. That left a window where D0Exit could set
+    // D0ExitInProgress and the timer callback could concurrently mutate
+    // ReaderRecoveryStage between the two reads, and - on top of the
+    // torn-snapshot risk - an unlocked read has no ordering guarantee that
+    // this callback (which may run on a different CPU than the timer
+    // callback that last wrote the field) observes the latest value at
+    // all. Take the same D0ExitLock D0Exit/ReaderRestartTimer use - this
+    // callback can run at up to DISPATCH_LEVEL (same completion path as
+    // EvtUsbTargetPipeReadComplete), which is exactly why this is a
+    // WDFSPINLOCK and not a WDFWAITLOCK.
+    WdfSpinLockAcquire(pCtx->D0ExitLock);
+    d0ExitInProgress = pCtx->D0ExitInProgress;
+    stage            = pCtx->ReaderRecoveryStage;
+    WdfSpinLockRelease(pCtx->D0ExitLock);
 
-        WdfSpinLockAcquire(pCtx->D0ExitLock);
-        d0ExitInProgress = pCtx->D0ExitInProgress;
-        WdfSpinLockRelease(pCtx->D0ExitLock);
+    // DIAG: this is the very first callback to see a broken interrupt
+    // read - Status/UsbdStatus here are the actual root cause of any
+    // downstream Code 10, so they're worth capturing even though the
+    // recovery logic below doesn't otherwise need their exact values.
+    // Uses the just-snapshotted local, not a fresh unlocked field read.
+    AmtTrace(pCtx, "ReadersFailed: Status=0x%08X, UsbdStatus=0x%08X, stage=%d",
+        Status, UsbdStatus, (int)stage);
 
-        if (d0ExitInProgress) {
-            AmtTrace(pCtx, "ReadersFailed: D0Exit in progress, not arming restart timer");
-            return FALSE;
-        }
+    if (d0ExitInProgress) {
+        AmtTrace(pCtx, "ReadersFailed: D0Exit in progress, not arming restart timer");
+        return FALSE;
     }
 
     // Escalating recovery (reset-pipe -> reset-port -> cycle-port) instead
@@ -894,7 +942,7 @@ AmtPtpEvtUsbInterruptReadersFailed(
     // USB-controller cost, observable as elevated temperature after wake -
     // and never actually attempted the recovery a stuck endpoint or port
     // typically needs.
-    if (pCtx->ReaderRecoveryStage >= READER_RECOVERY_EXHAUSTED) {
+    if (stage >= READER_RECOVERY_EXHAUSTED) {
         // Give up until the next D0Entry resets the ladder. The device
         // stays silent rather than burning power in an unbounded loop;
         // AmtPtpEvtDeviceD0Entry (a genuine replug, or the next sleep/wake
