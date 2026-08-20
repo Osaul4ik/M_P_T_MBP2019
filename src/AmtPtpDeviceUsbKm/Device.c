@@ -525,6 +525,131 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     return status;
 }
 
+// ---------------------------------------------------------------------
+// PrepareHardware low-resources retry
+// ---------------------------------------------------------------------
+// WdfUsbTargetDeviceCreate, WdfUsbTargetDeviceSelectConfig (inside
+// SelectInterruptInterface below) and WdfUsbTargetPipeConfigContinuousReader
+// (inside AmtPtpConfigContReaderForInterruptEndPoint, Interrupt.c) all
+// allocate pool internally on this driver's behalf. Every one of them was
+// already NT_SUCCESS-checked and fails closed - nothing dereferences on
+// failure. `verifier /query` on this module confirms that fail-closed
+// behavior is exactly what's being exercised: "Randomized low resources
+// simulation" (0x00000004) deliberately fails exactly one pool allocation
+// for this driver per boot ("Pool Allocations Failed Deliberately: 1") to
+// prove drivers handle it instead of bugchecking or leaking - which this
+// one already did, with no crash and no bytes leaked.
+//
+// The remaining problem is PnP-level, not memory-safety. Unlike
+// AmtPtpEvtDeviceD0Entry below - which WDF re-invokes on every sleep/wake,
+// and which already retries SetWellspringMode/WdfIoTargetStart through
+// AmtPtpD0EntryRetry - EvtDevicePrepareHardware runs exactly once per PnP
+// Start, including the automatic ReleaseHardware -> PrepareHardware
+// re-arrival cycle visible in the DebugView trace after some sleep/wake
+// transitions (see the DIAG comments on both of those callbacks). If the
+// verifier's one deliberate failure - or any other transient
+// STATUS_INSUFFICIENT_RESOURCES, e.g. genuine low memory - lands inside
+// that re-arrival's PrepareHardware, there is no second Start attempt: PnP
+// fails the device with Code 10 and nothing, neither this driver nor the
+// OS, retries a failed Start automatically. The device is then stuck until
+// the user manually disables/re-enables it or it is physically
+// re-enumerated.
+//
+// A short bounded retry restricted to STATUS_INSUFFICIENT_RESOURCES closes
+// that gap the same way AmtPtpD0EntryRetry already does for the
+// sleep/wake path, without masking a genuine, persistent
+// resource-exhaustion condition - that case still exhausts the retry
+// budget and fails exactly as before.
+//
+// If the retry budget above is exhausted anyway (a genuinely persistent
+// condition, or simply bad luck with the retry timing), the three
+// allocation-sensitive failure paths below also call WdfDeviceSetFailed(
+// Device, WdfDeviceFailedAttemptRestart). Per its documented contract,
+// this asks the PnP manager to reenumerate the device and give
+// EvtDevicePrepareHardware a fresh Start attempt automatically - the
+// documented alternative to a driver silently returning failure and
+// leaving the device parked at Code 10 until the user intervenes or a
+// physical re-enumeration happens to occur on its own. WDF caps
+// consecutive restart attempts internally, so a truly persistent failure
+// still gives up and fails normally rather than looping forever. This is
+// deliberately NOT applied to the STATUS_NOT_SUPPORTED /
+// STATUS_INVALID_PARAMETER paths further down (unrecognized hardware, bad
+// DeviceInfo table entry) - those are structural, not transient, and no
+// number of restarts will ever change their outcome.
+#define PREPARE_HARDWARE_ALLOC_MAX_ATTEMPTS   3
+#define PREPARE_HARDWARE_ALLOC_RETRY_DELAY_MS 20
+
+typedef NTSTATUS
+(*PFN_AMT_PREPARE_HW_ATTEMPT)(_In_ WDFDEVICE Device);
+
+_IRQL_requires_(PASSIVE_LEVEL)
+static NTSTATUS
+AmtPtpPrepareHardwareRetryOnLowResources(
+    _In_ WDFDEVICE                  Device,
+    _In_ PDEVICE_CONTEXT            DeviceContext,
+    _In_ PCSTR                      OperationName,
+    _In_ PFN_AMT_PREPARE_HW_ATTEMPT Attempt
+    )
+{
+    ULONG    attempt;
+    NTSTATUS status = STATUS_UNSUCCESSFUL;
+
+    for (attempt = 0; attempt < PREPARE_HARDWARE_ALLOC_MAX_ATTEMPTS; attempt++) {
+        status = Attempt(Device);
+        AmtTrace(DeviceContext, "PrepareHardware: %s attempt %lu/%lu -> status=0x%08X",
+            OperationName, attempt + 1, PREPARE_HARDWARE_ALLOC_MAX_ATTEMPTS, status);
+
+        if (NT_SUCCESS(status) || status != STATUS_INSUFFICIENT_RESOURCES) {
+            // Success, or a non-resource failure: stop immediately either
+            // way. Only STATUS_INSUFFICIENT_RESOURCES is treated as the
+            // transient condition worth retrying - anything else (bad
+            // device state, unsupported hardware, etc.) is a real failure
+            // and must take the normal error path unchanged.
+            break;
+        }
+
+        if (attempt + 1 < PREPARE_HARDWARE_ALLOC_MAX_ATTEMPTS) {
+            LARGE_INTEGER delay;
+            // EvtDevicePrepareHardware is documented PASSIVE_LEVEL (and
+            // PAGED_CODE()-asserted in the caller), so a short blocking
+            // pause here is the same sanctioned trade-off
+            // AmtPtpD0EntryRetry already makes on the sleep/wake path.
+            delay.QuadPart = WDF_REL_TIMEOUT_IN_MS(
+                PREPARE_HARDWARE_ALLOC_RETRY_DELAY_MS * (attempt + 1));
+            KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+    }
+
+    return status;
+}
+
+// Adapter shims giving WdfUsbTargetDeviceCreate, SelectInterruptInterface
+// and AmtPtpConfigContReaderForInterruptEndPoint the single-WDFDEVICE-
+// argument shape AmtPtpPrepareHardwareRetryOnLowResources' function
+// pointer expects, so all three share the one retry loop above instead of
+// three near-identical copies of it.
+
+static NTSTATUS
+AmtPtpPrepareHwCreateUsbDeviceAttempt(_In_ WDFDEVICE Device)
+{
+    PDEVICE_CONTEXT pDeviceContext = DeviceGetContext(Device);
+
+    return WdfUsbTargetDeviceCreate(
+        Device, WDF_NO_OBJECT_ATTRIBUTES, &pDeviceContext->UsbDevice);
+}
+
+static NTSTATUS
+AmtPtpPrepareHwSelectInterruptInterfaceAttempt(_In_ WDFDEVICE Device)
+{
+    return SelectInterruptInterface(Device);
+}
+
+static NTSTATUS
+AmtPtpPrepareHwConfigContReaderAttempt(_In_ WDFDEVICE Device)
+{
+    return AmtPtpConfigContReaderForInterruptEndPoint(DeviceGetContext(Device));
+}
+
 // AmtPtpDeviceUsbKmEvtDevicePrepareHardware
 
 NTSTATUS
@@ -562,11 +687,22 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
         pDeviceContext->UsbDevice);
 
     if (pDeviceContext->UsbDevice == NULL) {
-        status = WdfUsbTargetDeviceCreate(
-            Device, WDF_NO_OBJECT_ATTRIBUTES, &pDeviceContext->UsbDevice);
+        status = AmtPtpPrepareHardwareRetryOnLowResources(
+            Device, pDeviceContext, "WdfUsbTargetDeviceCreate",
+            AmtPtpPrepareHwCreateUsbDeviceAttempt);
         if (!NT_SUCCESS(status)) {
             AmtTrace(pDeviceContext, "PrepareHardware: WdfUsbTargetDeviceCreate FAILED, status=0x%08X",
                 status);
+            // See the WdfDeviceSetFailed rationale comment above
+            // AmtPtpPrepareHardwareRetryOnLowResources: ask PnP for a real
+            // Start retry, but only for the transient resource-exhaustion
+            // case the retry loop above was for - a non-resource failure
+            // here (e.g. a genuinely broken USB stack handle) would just
+            // waste PnP's limited consecutive-restart budget on an outcome
+            // that cannot change.
+            if (status == STATUS_INSUFFICIENT_RESOURCES) {
+                WdfDeviceSetFailed(Device, WdfDeviceFailedAttemptRestart);
+            }
             return status;
         }
     }
@@ -610,17 +746,36 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
         pDeviceContext->UsbDeviceTraits = 0;
     }
 
-    status = SelectInterruptInterface(Device);
+    status = AmtPtpPrepareHardwareRetryOnLowResources(
+        Device, pDeviceContext, "SelectInterruptInterface",
+        AmtPtpPrepareHwSelectInterruptInterfaceAttempt);
     if (!NT_SUCCESS(status)) {
         AmtTrace(pDeviceContext, "PrepareHardware: SelectInterruptInterface FAILED, status=0x%08X",
             status);
+        // SelectInterruptInterface can also fail with STATUS_INVALID_DEVICE_STATE
+        // (no interrupt pipe among the configured ones) - a structural
+        // mismatch, not the transient low-resources condition the retry
+        // loop above targets, so only request a restart for that specific
+        // status, exactly as done for WdfUsbTargetDeviceCreate above.
+        if (status == STATUS_INSUFFICIENT_RESOURCES) {
+            WdfDeviceSetFailed(Device, WdfDeviceFailedAttemptRestart);
+        }
         return status;
     }
 
-    status = AmtPtpConfigContReaderForInterruptEndPoint(pDeviceContext);
+    status = AmtPtpPrepareHardwareRetryOnLowResources(
+        Device, pDeviceContext, "ConfigContReaderForInterruptEndPoint",
+        AmtPtpPrepareHwConfigContReaderAttempt);
     if (!NT_SUCCESS(status)) {
         AmtTrace(pDeviceContext, "PrepareHardware: ConfigContReaderForInterruptEndPoint FAILED, status=0x%08X",
             status);
+        // Same reasoning: AmtPtpConfigContReaderForInterruptEndPoint can
+        // also fail with STATUS_UNKNOWN_REVISION for an unsupported
+        // tp_type - structural, not transient, so restart is requested
+        // only for the resource-exhaustion case.
+        if (status == STATUS_INSUFFICIENT_RESOURCES) {
+            WdfDeviceSetFailed(Device, WdfDeviceFailedAttemptRestart);
+        }
         return status;
     }
 
