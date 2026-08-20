@@ -488,6 +488,28 @@ _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS
 AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice);
 
+// AmtPtpConfigControlSnapshotTargetDevice
+//
+// The only safe way to read AMT_CONFIG_CONTROL_CONTEXT::TargetDevice.
+// Every WRITE to that field (AmtPtpAcquireConfigControlDevice's re-attach
+// branch, AmtPtpEvtDeviceContextCleanup's NULL-out) already runs under
+// DRIVER_CONTEXT::ConfigControlDeviceLock - a WDFWAITLOCK, so PASSIVE_LEVEL
+// only, but otherwise cheap and never held across a blocking call. Every
+// IOCTL handler used to read the field directly with no lock at all
+// (ConfigIoctl.c), which is exactly the same class of bug the
+// D0ExitLock/RecoveryLock two-phase pattern elsewhere in this driver
+// exists to prevent: a sleep-triggered surprise-removal/re-enumeration can
+// null the field out (or re-point it at a brand-new FDO) between an
+// unlocked check and an unlocked use a few lines later, with
+// AmtPtpGetLiveFrame's separate check-then-dereference (called at up to
+// 30 Hz whenever the GUI's Live preview is on) the worst offender - the
+// two reads are not even the same snapshot, let alone a locked one.
+// Every call site in ConfigIoctl.c now takes exactly one snapshot through
+// this helper and uses that local for the rest of the call.
+_IRQL_requires_(PASSIVE_LEVEL)
+WDFDEVICE
+AmtPtpConfigControlSnapshotTargetDevice(_In_ WDFDEVICE ControlDevice);
+
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL AmtPtpConfigControlEvtIoDeviceControl;
 
 // Fires when the last handle to \\DosDevices\\AmtPtpDeviceUsbKm closes -

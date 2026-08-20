@@ -864,7 +864,6 @@ AmtPtpConfigControlEvtIoDeviceControl(
 )
 {
     WDFDEVICE controlDevice;
-    PAMT_CONFIG_CONTROL_CONTEXT controlContext;
     WDFDEVICE targetDevice;
     NTSTATUS status;
 
@@ -872,8 +871,17 @@ AmtPtpConfigControlEvtIoDeviceControl(
     UNREFERENCED_PARAMETER(InputBufferLength);
 
     controlDevice = WdfIoQueueGetDevice(Queue);
-    controlContext = AmtConfigControlGetContext(controlDevice);
-    targetDevice = controlContext->TargetDevice;
+
+    // BUG FIX: this used to read controlContext->TargetDevice directly,
+    // with no lock - the same unguarded-read hazard the D0ExitLock/
+    // RecoveryLock pattern elsewhere in this driver exists to close. A
+    // sleep-triggered surprise-removal/re-enumeration nulls (or re-points)
+    // this field from a different thread under ConfigControlDeviceLock;
+    // reading it here without that lock could hand a handler a
+    // NULL/stale WDFDEVICE it then dereferences via DeviceGetContext.
+    // AmtPtpConfigControlSnapshotTargetDevice takes the one lock every
+    // writer already uses.
+    targetDevice = AmtPtpConfigControlSnapshotTargetDevice(controlDevice);
 
     if (targetDevice == NULL) {
         WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
@@ -964,25 +972,30 @@ AmtPtpConfigControlEvtIoDeviceControl(
 NTSTATUS
 AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
 {
-    PAMT_CONFIG_CONTROL_CONTEXT controlContext;
     PAMT_CONFIG_CONTROL_FILE_CONTEXT fileContext;
     PDEVICE_CONTEXT targetContext;
+    WDFDEVICE targetDevice;
     WDFFILEOBJECT fileObject;
     PULONG enabled;
     size_t inputLength = 0;
 
-    controlContext = AmtConfigControlGetContext(Device);
     fileObject = WdfRequestGetFileObject(Request);
     fileContext = fileObject != NULL
         ? AmtConfigControlFileGetContext(fileObject)
         : NULL;
 
-    if (controlContext == NULL || controlContext->TargetDevice == NULL ||
-        fileContext == NULL) {
+    // BUG FIX: was two separate unguarded reads of
+    // controlContext->TargetDevice (a NULL-check here, then a dereference
+    // via DeviceGetContext below) - a classic check-then-use TOCTOU on a
+    // field a concurrent sleep/wake re-enumeration can null out between
+    // the two. One locked snapshot closes that window.
+    targetDevice = AmtPtpConfigControlSnapshotTargetDevice(Device);
+
+    if (targetDevice == NULL || fileContext == NULL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    targetContext = DeviceGetContext(controlContext->TargetDevice);
+    targetContext = DeviceGetContext(targetDevice);
 
     NTSTATUS status = WdfRequestRetrieveInputBuffer(
         Request, sizeof(ULONG), (PVOID*)&enabled, &inputLength);
@@ -1026,24 +1039,34 @@ AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
 NTSTATUS
 AmtPtpGetLiveFrame(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
 {
-    PAMT_CONFIG_CONTROL_CONTEXT controlContext;
     PAMT_CONFIG_CONTROL_FILE_CONTEXT fileContext;
     PDEVICE_CONTEXT targetContext;
+    WDFDEVICE targetDevice;
     PAMT_LIVE_FRAME output;
     size_t outputLength = 0;
 
-    controlContext = AmtConfigControlGetContext(Device);
     WDFFILEOBJECT fileObject = WdfRequestGetFileObject(Request);
     fileContext = fileObject != NULL
         ? AmtConfigControlFileGetContext(fileObject)
         : NULL;
 
-    if (controlContext == NULL || controlContext->TargetDevice == NULL ||
-        fileContext == NULL) {
+    // BUG FIX: same TOCTOU as AmtPtpSetLiveEnabled, but the highest-traffic
+    // instance of it - the GUI calls this at up to 30 Hz for the whole
+    // time its Live preview is on, so the old check-then-use window
+    // (controlContext->TargetDevice == NULL check, then a second unguarded
+    // read of the same field for DeviceGetContext a few lines later) got
+    // exercised far more often than the one-shot SetLiveEnabled/dispatcher
+    // reads - and lines up exactly with the sleep-triggered
+    // surprise-removal/re-enumeration window this driver already goes to
+    // such lengths to synchronize against elsewhere (D0ExitLock/
+    // RecoveryLock). One locked snapshot, used once.
+    targetDevice = AmtPtpConfigControlSnapshotTargetDevice(Device);
+
+    if (targetDevice == NULL || fileContext == NULL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    targetContext = DeviceGetContext(controlContext->TargetDevice);
+    targetContext = DeviceGetContext(targetDevice);
 
     NTSTATUS status = WdfRequestRetrieveOutputBuffer(
         Request, sizeof(AMT_LIVE_FRAME), (PVOID*)&output, &outputLength);
@@ -1093,20 +1116,25 @@ VOID
 AmtPtpConfigControlEvtFileClose(_In_ WDFFILEOBJECT FileObject)
 {
     WDFDEVICE                   controlDevice;
-    PAMT_CONFIG_CONTROL_CONTEXT controlContext;
     PAMT_CONFIG_CONTROL_FILE_CONTEXT fileContext;
     PDEVICE_CONTEXT             targetContext;
+    WDFDEVICE                   targetDevice;
 
     controlDevice = WdfFileObjectGetDevice(FileObject);
-    controlContext = AmtConfigControlGetContext(controlDevice);
     fileContext = AmtConfigControlFileGetContext(FileObject);
 
+    // BUG FIX: same unlocked check-then-use of TargetDevice as the other
+    // handlers in this file - a handle can close (crash, taskkill, unplug)
+    // at the same moment a sleep-triggered re-enumeration is nulling this
+    // field out, and the old code read it twice, unlocked, to get there.
+    targetDevice = AmtPtpConfigControlSnapshotTargetDevice(controlDevice);
+
     if (fileContext == NULL || !fileContext->LiveOwner ||
-        controlContext == NULL || controlContext->TargetDevice == NULL) {
+        targetDevice == NULL) {
         return;
     }
 
-    targetContext = DeviceGetContext(controlContext->TargetDevice);
+    targetContext = DeviceGetContext(targetDevice);
 
     WdfSpinLockAcquire(targetContext->LiveLock);
     if (targetContext->LiveOwnerFileObject == FileObject) {

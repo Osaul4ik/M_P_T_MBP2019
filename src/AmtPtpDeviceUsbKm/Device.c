@@ -28,6 +28,11 @@
 // (AmtPtpAcquireConfigControlDevice's counterpart) - PASSIVE_LEVEL only,
 // same as that function.
 #pragma alloc_text (PAGE, AmtPtpEvtDeviceContextCleanup)
+// Same WDFWAITLOCK-only, PASSIVE_LEVEL-only shape as
+// AmtPtpAcquireConfigControlDevice above - safe to page, called from every
+// ConfigIoctl.c handler (PASSIVE_LEVEL default queue) instead of each of
+// them reading TargetDevice unlocked.
+#pragma alloc_text (PAGE, AmtPtpConfigControlSnapshotTargetDevice)
 #endif
 
 #define ACTIVE_CONTACTS_ALIGNMENT 64
@@ -290,6 +295,33 @@ AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice)
 unlock_and_return:
     WdfWaitLockRelease(driverContext->ConfigControlDeviceLock);
     return status;
+}
+
+// AmtPtpConfigControlSnapshotTargetDevice
+//
+// See the prototype comment in Device.h. Single locked read of
+// AMT_CONFIG_CONTROL_CONTEXT::TargetDevice, under the same
+// ConfigControlDeviceLock every writer already uses - callers get one
+// consistent snapshot instead of re-reading the field (possibly more than
+// once, possibly torn against a concurrent AddDevice/Cleanup) on their own.
+_IRQL_requires_(PASSIVE_LEVEL)
+WDFDEVICE
+AmtPtpConfigControlSnapshotTargetDevice(_In_ WDFDEVICE ControlDevice)
+{
+    PDRIVER_CONTEXT             driverContext;
+    PAMT_CONFIG_CONTROL_CONTEXT controlContext;
+    WDFDEVICE                   targetDevice;
+
+    PAGED_CODE();
+
+    driverContext  = DriverGetContext(WdfDeviceGetDriver(ControlDevice));
+    controlContext = AmtConfigControlGetContext(ControlDevice);
+
+    WdfWaitLockAcquire(driverContext->ConfigControlDeviceLock, NULL);
+    targetDevice = controlContext->TargetDevice;
+    WdfWaitLockRelease(driverContext->ConfigControlDeviceLock);
+
+    return targetDevice;
 }
 
 // AmtPtpDeviceUsbKmCreateDevice
