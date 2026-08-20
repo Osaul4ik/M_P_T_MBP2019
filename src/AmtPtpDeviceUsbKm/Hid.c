@@ -466,6 +466,14 @@ AmtPtpSetFeatures(
 	}
 
 	AmtTrace(pDeviceContext, "SetFeatures: ENTER, reportId=0x%02X", pHidPacket->reportId);
+	// AmtTrace()'s internal NULL check on its own local copy of this
+	// argument (see Trace.h) re-taints pDeviceContext as "possibly NULL"
+	// for PREfast from this point on, even though the earlier
+	// _Analysis_assume_ already covered it - re-assert here so the
+	// dereferences inside the switch below (including the RecoveryLock
+	// use added for the SetWellspringMode race fix) don't get flagged
+	// again downstream.
+	_Analysis_assume_(pDeviceContext != NULL);
 
 	switch (pHidPacket->reportId)
 	{
@@ -602,6 +610,12 @@ AmtPtpSetFeatures(
 							}
 						}
 
+						// See the AmtTrace()-retaint note above the ENTER trace
+						// earlier in this function - the AmtTrace() calls inside
+						// the retry loop above (progress/failure logging) retaint
+						// pDeviceContext as possibly-NULL again by the time
+						// execution reaches here.
+						_Analysis_assume_(pDeviceContext != NULL);
 						WdfWaitLockRelease(pDeviceContext->RecoveryLock);
 
 						if (!NT_SUCCESS(status)) {
