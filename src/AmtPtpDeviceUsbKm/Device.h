@@ -115,7 +115,15 @@ typedef struct _DEVICE_CONTEXT
     // critical section does not include live snapshot publication.
     WDFSPINLOCK     LiveLock;
 
-    // USB - touched every interrupt/report cycle.
+    // USB - touched every interrupt/report cycle. Governed by the
+    // two-level D0ExitLock/RecoveryLock model documented below: every
+    // reader of UsbDevice/InterruptPipe/UsbInterface either takes only a
+    // short D0ExitLock snapshot, or - for any actual (possibly blocking)
+    // use of the handle - holds RecoveryLock across that use, matching
+    // the same lock AmtPtpEvtDeviceD0Exit/AmtPtpEvtDeviceReleaseHardware
+    // take before nulling these fields. AmtPtpSetFeatures's
+    // AmtPtpSetWellspringMode retry loop (Hid.c) is a RecoveryLock holder
+    // for this reason, not just the D0Entry/D0Exit paths.
     WDFUSBDEVICE    UsbDevice;
     WDFUSBPIPE      InterruptPipe;
 

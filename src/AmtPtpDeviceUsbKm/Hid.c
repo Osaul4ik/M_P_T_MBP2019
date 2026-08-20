@@ -500,7 +500,73 @@ AmtPtpSetFeatures(
 						// D0Entry already uses for the identical race on
 						// its own SetWellspringMode call, instead of the
 						// single fire-and-forget attempt this had before.
-						ULONG attempt;
+						ULONG   attempt;
+						ULONG   snapshotGeneration;
+						BOOLEAN lifecycleGone;
+
+						// BUG FIX: AmtPtpSetWellspringMode reads
+						// DeviceContext->UsbDevice with no synchronization
+						// of its own. D0Entry and D0Exit only ever call it
+						// with RecoveryLock already held (see Device.c),
+						// but this handler runs on the default,
+						// power-managed queue's EvtIoInternalDeviceControl
+						// at PASSIVE_LEVEL with no lock at all on this
+						// path. AmtPtpEvtDeviceReleaseHardware nulls
+						// UsbDevice under D0ExitLock and - per its own
+						// comment - "can be reached without an
+						// intervening D0Exit/D0Entry pair (e.g. surprise
+						// removal)", so without a lock here it could null
+						// the handle out from under a retry attempt
+						// already inside AmtPtpSetWellspringMode, handing
+						// WdfUsbTargetDeviceSendControlTransferSynchronously
+						// a NULL WDFUSBDEVICE. Apply the same two-level
+						// D0ExitLock/RecoveryLock discipline documented in
+						// Device.h and used by AmtPtpEvtReaderRestartTimer:
+						// a quick Phase 1 snapshot under D0ExitLock, then a
+						// Phase 2 re-validation under D0ExitLock once
+						// RecoveryLock is held. RecoveryLock is then held
+						// across the whole retry loop below - the same
+						// lock AmtPtpEvtDeviceD0Exit and
+						// AmtPtpEvtDeviceReleaseHardware must acquire
+						// before nulling UsbDevice, so neither can tear
+						// the handle down while it is held here.
+
+						// Phase 1 (DISPATCH-safe): quick check-and-snapshot
+						// under D0ExitLock only. No blocking call is made
+						// while this lock is held.
+						WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
+						lifecycleGone = pDeviceContext->D0ExitInProgress ||
+							(pDeviceContext->UsbDevice == NULL);
+						snapshotGeneration = pDeviceContext->RecoveryGeneration;
+						WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+
+						if (lifecycleGone) {
+							AmtTrace(pDeviceContext,
+								"SetFeatures: device torn down/tearing down, skipping SetWellspringMode");
+							status = STATUS_DEVICE_NOT_CONNECTED;
+							goto exit;
+						}
+
+						// Phase 2 (PASSIVE_LEVEL): acquire RecoveryLock to
+						// serialize with any in-flight D0Exit/
+						// ReleaseHardware cleanup, then re-validate the
+						// Phase 1 snapshot - lifecycle may have moved on
+						// while this handler was waiting for the lock.
+						WdfWaitLockAcquire(pDeviceContext->RecoveryLock, NULL);
+
+						WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
+						lifecycleGone = pDeviceContext->D0ExitInProgress ||
+							(pDeviceContext->RecoveryGeneration != snapshotGeneration) ||
+							(pDeviceContext->UsbDevice == NULL);
+						WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+
+						if (lifecycleGone) {
+							WdfWaitLockRelease(pDeviceContext->RecoveryLock);
+							AmtTrace(pDeviceContext,
+								"SetFeatures: lifecycle changed since snapshot, skipping SetWellspringMode");
+							status = STATUS_DEVICE_NOT_CONNECTED;
+							goto exit;
+						}
 
 						for (attempt = 0; attempt < WELLSPRING_MODE_SETFEATURE_MAX_ATTEMPTS; attempt++) {
 							status = AmtPtpSetWellspringMode(pDeviceContext, TRUE);
@@ -519,12 +585,16 @@ AmtPtpSetFeatures(
 								// default queue's EvtIoInternalDeviceControl,
 								// which is not a hot path - a short
 								// blocking pause here is the same
-								// trade-off already made in D0Entry.
+								// trade-off already made in D0Entry, and is
+								// sanctioned while holding RecoveryLock for
+								// the same reason it is sanctioned there.
 								delay.QuadPart = WDF_REL_TIMEOUT_IN_MS(
 									WELLSPRING_MODE_SETFEATURE_RETRY_DELAY_MS_UNIT * (attempt + 1));
 								KeDelayExecutionThread(KernelMode, FALSE, &delay);
 							}
 						}
+
+						WdfWaitLockRelease(pDeviceContext->RecoveryLock);
 
 						if (!NT_SUCCESS(status)) {
 							goto exit;
