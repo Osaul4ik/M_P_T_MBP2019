@@ -9,7 +9,7 @@ jobs:
 
     steps:
       - name: Identify machine
-        shell: powershell -ExecutionPolicy Bypass -NoProfile
+        shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
 
