@@ -626,4 +626,53 @@ VOID AmtScrollRuntimeRebuild(
     _Out_ AMT_SCROLL_RUNTIME* Runtime
 );
 
+// ---------------------------------------------------------------------
+// RECOVERY/LIFECYCLE D0ExitLock HELPERS
+// ---------------------------------------------------------------------
+// Pure extraction of the repeated D0ExitLock critical sections used by
+// AmtPtpEvtDeviceD0Exit, AmtPtpEvtDeviceReleaseHardware,
+// AmtPtpEvtDeviceD0Entry, AmtPtpEvtUsbInterruptPipeReadComplete,
+// AmtPtpEvtUsbInterruptReadersFailed, and AmtPtpEvtReaderRestartTimer (see
+// the two-level synchronization model comment above D0ExitInProgress in
+// this header). Each helper covers exactly one identical-shaped critical
+// section that appeared 2+ times verbatim - it changes no locking order,
+// no IRQL contract, and no field semantics versus the code it replaces.
+// Sites whose D0ExitLock section does something *different* from its
+// neighbors (e.g. the stage-refresh-plus-D0ExitInProgress-check in
+// AmtPtpEvtReaderRestartTimer's Phase 1/Phase 2, or the stage-advance
+// later in the same function) are deliberately left inline rather than
+// forced into one of these, to keep each helper's contract exact and
+// auditable. A third helper (a generic D0ExitInProgress+stage+generation
+// snapshot) was considered and dropped: only one call site (in
+// AmtPtpEvtUsbInterruptReadersFailed) actually matches its shape - the
+// other candidate (AmtPtpEvtReaderRestartTimer's Phase 1) also snapshots
+// InterruptPipe and has an inline early-return, so wrapping it would have
+// meant distorting that site to fit the helper instead of the other way
+// around.
+//
+// Both are DISPATCH_LEVEL-safe (D0ExitLock is a WDFSPINLOCK) and never
+// block.
+
+// Common "Step 1" of AmtPtpEvtDeviceD0Exit and
+// AmtPtpEvtDeviceReleaseHardware: mark the lifecycle as terminating and
+// bump the generation token, in one D0ExitLock critical section, before
+// either function does anything else (WdfTimerStop, RecoveryLock, etc.).
+// Callers are unchanged otherwise - this only replaces the 4-line
+// Acquire/set/set/Release block that was identical in both places.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID AmtPtpRecoveryBeginTermination(_In_ PDEVICE_CONTEXT DeviceContext);
+
+// If RecoveryGeneration still equals SnapshotGeneration (i.e. no
+// D0Exit/D0Entry/ReleaseHardware has started since the caller's snapshot),
+// sets ReaderRecoveryStage to READER_RECOVERY_EXHAUSTED. Returns TRUE if
+// the generation matched (state was updated), FALSE if the snapshot was
+// stale (nothing was touched - a newer lifecycle session owns the field
+// now). Replaces the identical
+// "Acquire/if(generation==snapshot){stage=EXHAUSTED}/Release" block used
+// at three call sites in AmtPtpEvtReaderRestartTimer.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+BOOLEAN AmtPtpRecoveryMarkExhaustedIfCurrent(
+    _In_ PDEVICE_CONTEXT DeviceContext,
+    _In_ ULONG           SnapshotGeneration);
+
 EXTERN_C_END

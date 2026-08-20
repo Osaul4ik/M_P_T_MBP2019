@@ -564,6 +564,43 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
     return status;
 }
 
+// ---------------------------------------------------------------------
+// RECOVERY/LIFECYCLE D0ExitLock HELPERS
+// ---------------------------------------------------------------------
+// See the prototype comments in Device.h for what each of these does and
+// does NOT cover. Pure extraction of critical sections that were byte-
+// identical across 2+ call sites in this file and Interrupt.c - no change
+// to locking order, IRQL contract, or field semantics.
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+AmtPtpRecoveryBeginTermination(
+    _In_ PDEVICE_CONTEXT DeviceContext)
+{
+    WdfSpinLockAcquire(DeviceContext->D0ExitLock);
+    DeviceContext->D0ExitInProgress = TRUE;
+    DeviceContext->RecoveryGeneration++;
+    WdfSpinLockRelease(DeviceContext->D0ExitLock);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+BOOLEAN
+AmtPtpRecoveryMarkExhaustedIfCurrent(
+    _In_ PDEVICE_CONTEXT DeviceContext,
+    _In_ ULONG           SnapshotGeneration)
+{
+    BOOLEAN current;
+
+    WdfSpinLockAcquire(DeviceContext->D0ExitLock);
+    current = (DeviceContext->RecoveryGeneration == SnapshotGeneration);
+    if (current) {
+        DeviceContext->ReaderRecoveryStage = READER_RECOVERY_EXHAUSTED;
+    }
+    WdfSpinLockRelease(DeviceContext->D0ExitLock);
+
+    return current;
+}
+
 // AmtPtpEvtDeviceReleaseHardware
 //
 // Symmetric counterpart to AmtPtpDeviceUsbKmEvtDevicePrepareHardware. Per
@@ -604,10 +641,7 @@ AmtPtpEvtDeviceReleaseHardware(
     // D0ExitLock sees this and backs off, and any timer callback that
     // already snapshotted an older generation notices the mismatch on its
     // post-RecoveryLock re-check (see AmtPtpEvtReaderRestartTimer).
-    WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
-    pDeviceContext->D0ExitInProgress = TRUE;
-    pDeviceContext->RecoveryGeneration++;
-    WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+    AmtPtpRecoveryBeginTermination(pDeviceContext);
 
     // Do not wait for the timer callback to finish (see the identical
     // reasoning in AmtPtpEvtDeviceD0Exit below) - it may be mid-flight in
@@ -930,10 +964,7 @@ AmtPtpEvtDeviceD0Exit(
     // if D0Entry has, by then, already cleared D0ExitInProgress again for a
     // new session. The lock acquisition itself is a short, non-blocking
     // spin (never held across a blocking call).
-    WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
-    pDeviceContext->D0ExitInProgress = TRUE;
-    pDeviceContext->RecoveryGeneration++;
-    WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+    AmtPtpRecoveryBeginTermination(pDeviceContext);
 
     // Do NOT wait here (Wait = FALSE). AmtPtpEvtReaderRestartTimer can be
     // mid-flight in WdfUsbTargetDeviceResetPortSynchronously, which per its

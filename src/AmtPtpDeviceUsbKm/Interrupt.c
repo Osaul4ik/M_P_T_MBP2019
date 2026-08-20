@@ -684,11 +684,7 @@ AmtPtpEvtReaderRestartTimer(
 
     if (localInterruptPipe == NULL) {
         AmtTrace(pCtx, "ReaderRestartTimer: InterruptPipe is NULL, bailing out");
-        WdfSpinLockAcquire(pCtx->D0ExitLock);
-        if (pCtx->RecoveryGeneration == snapshotGeneration) {
-            pCtx->ReaderRecoveryStage = READER_RECOVERY_EXHAUSTED;
-        }
-        WdfSpinLockRelease(pCtx->D0ExitLock);
+        (VOID)AmtPtpRecoveryMarkExhaustedIfCurrent(pCtx, snapshotGeneration);
         return;
     }
 
@@ -760,11 +756,7 @@ AmtPtpEvtReaderRestartTimer(
     if (!NT_SUCCESS(WdfUsbTargetDeviceIsConnectedSynchronous(pCtx->UsbDevice))) {
         AmtTrace(pCtx, "ReaderRestartTimer: device not connected, "
             "skipping reset ladder - waiting for PnP re-enumeration");
-        WdfSpinLockAcquire(pCtx->D0ExitLock);
-        if (pCtx->RecoveryGeneration == snapshotGeneration) {
-            pCtx->ReaderRecoveryStage = READER_RECOVERY_EXHAUSTED;
-        }
-        WdfSpinLockRelease(pCtx->D0ExitLock);
+        (VOID)AmtPtpRecoveryMarkExhaustedIfCurrent(pCtx, snapshotGeneration);
         WdfWaitLockRelease(pCtx->RecoveryLock);
         return;
     }
@@ -810,11 +802,7 @@ AmtPtpEvtReaderRestartTimer(
         AmtTrace(pCtx, "ReaderRestartTimer: CYCLE_PORT -> status=0x%08X, "
             "handing lifecycle to PnP", rungStatus);
 
-        WdfSpinLockAcquire(pCtx->D0ExitLock);
-        if (pCtx->RecoveryGeneration == snapshotGeneration) {
-            pCtx->ReaderRecoveryStage = READER_RECOVERY_EXHAUSTED;
-        }
-        WdfSpinLockRelease(pCtx->D0ExitLock);
+        (VOID)AmtPtpRecoveryMarkExhaustedIfCurrent(pCtx, snapshotGeneration);
 
         WdfWaitLockRelease(pCtx->RecoveryLock);
         return;
