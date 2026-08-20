@@ -263,36 +263,90 @@ typedef struct _DEVICE_CONTEXT
     // no blocking) before doing anything else, and the timer callback
     // checks it - and NULL-guards InterruptPipe itself - before every use.
     WDFTIMER               ReaderRestartTimer;
+
+    // Lifecycle-protected - every read/write goes through D0ExitLock (see
+    // below). Never left as a plain concurrent-access variable: it is
+    // read/written from both the PASSIVE_LEVEL D0Entry/D0Exit/
+    // ReleaseHardware/timer paths and the DISPATCH_LEVEL
+    // AmtPtpEvtUsbInterruptReadersFailed path.
     READER_RECOVERY_STAGE  ReaderRecoveryStage;
 
-    // MS-RECOMMENDED SYNCHRONIZATION (revised): set under D0ExitLock at the
-    // very start of AmtPtpEvtDeviceD0Exit, cleared under the same lock at
-    // the start of AmtPtpEvtDeviceD0Entry. AmtPtpEvtReaderRestartTimer and
+    // TWO-LEVEL SYNCHRONIZATION MODEL
+    // ---------------------------------------------------------------
+    // D0ExitLock (WDFSPINLOCK) and RecoveryLock (WDFWAITLOCK) below serve
+    // deliberately different, non-overlapping purposes - conflating them
+    // into one primitive is what earlier revisions of this driver got
+    // wrong, in two different directions (a bare Interlocked flag that
+    // wasn't atomic as a check-then-read sequence; then a single spinlock
+    // that either had to be dropped around every blocking USB call, losing
+    // its exclusion guarantee, or held across them, violating IRQL rules).
+    //
+    //   D0ExitLock  - DISPATCH_LEVEL-safe. Guards only short, non-blocking
+    //                  state transitions: D0ExitInProgress,
+    //                  ReaderRecoveryStage, RecoveryGeneration, and
+    //                  snapshot reads of InterruptPipe/UsbDevice/
+    //                  UsbInterface. Never held across a blocking WDF/USB
+    //                  call.
+    //   RecoveryLock - PASSIVE_LEVEL-only. Serializes the actual recovery
+    //                  lifecycle work: reader recovery (the
+    //                  READER_RECOVERY_STAGE ladder), D0Exit cleanup, and
+    //                  ReleaseHardware cleanup. Guarantees at most one of
+    //                  { WdfIoTargetStop, WdfUsbTargetPipeResetSynchronously,
+    //                  WdfUsbTargetDeviceResetPortSynchronously,
+    //                  AmtPtpCyclePort, WdfIoTargetStart } sequence is ever
+    //                  in flight at a time. Never acquired from
+    //                  DISPATCH_LEVEL.
+    //
+    // A caller that needs both takes D0ExitLock first for a quick
+    // check-and-snapshot, releases it, then acquires RecoveryLock for the
+    // actual (possibly blocking) work, then re-validates its snapshot under
+    // D0ExitLock once more before touching anything - see
+    // AmtPtpEvtReaderRestartTimer for the canonical shape. D0ExitLock is
+    // never held while waiting on RecoveryLock and never held across any
+    // blocking call - only across the handful of instructions needed for a
+    // state transition or a pointer snapshot.
+    WDFWAITLOCK               RecoveryLock;
+
+    // Set under D0ExitLock at the very start of AmtPtpEvtDeviceD0Exit and
+    // AmtPtpEvtDeviceReleaseHardware, cleared under the same lock at the
+    // start of AmtPtpEvtDeviceD0Entry. AmtPtpEvtReaderRestartTimer and
     // AmtPtpEvtUsbInterruptReadersFailed both take D0ExitLock, check this
     // flag, and - in the same critical section - snapshot InterruptPipe/
-    // UsbDevice into locals before releasing the lock, so a caller can
-    // never observe this flag clear and then read a pipe/device handle
-    // that D0Exit or AmtPtpEvtDeviceReleaseHardware changed a moment later.
-    // A bare Interlocked flag (the previous version of this fix) made each
-    // individual read/write atomic but not the check-then-read sequence as
-    // a whole, leaving a narrow window if a stray timer fire from just
-    // before D0Exit landed after a fast D0Entry had already cleared the
-    // flag. This BOOLEAN is only ever touched with D0ExitLock held - no
-    // Interlocked/volatile needed once every access goes through the lock.
+    // UsbDevice/RecoveryGeneration into locals before releasing the lock,
+    // so a caller can never observe this flag clear and then read a
+    // pipe/device handle that D0Exit or AmtPtpEvtDeviceReleaseHardware
+    // changed a moment later. This BOOLEAN is only ever touched with
+    // D0ExitLock held - no Interlocked/volatile needed once every access
+    // goes through the lock.
     BOOLEAN                  D0ExitInProgress;
 
-    // Guards D0ExitInProgress above together with consistent read access to
-    // InterruptPipe/UsbDevice below. WDFSPINLOCK, not WDFWAITLOCK, because
+    // Lifecycle generation token. Incremented under D0ExitLock at the start
+    // of every new D0Entry/D0Exit/ReleaseHardware transition. A recovery
+    // path (timer callback) that snapshots this value before dropping
+    // D0ExitLock, then re-checks it after acquiring RecoveryLock and
+    // re-taking D0ExitLock, can detect that lifecycle has moved on in the
+    // interim (e.g. a stale queued timer callback from a D0 session that
+    // has already exited and re-entered) and bail out instead of operating
+    // on state that belongs to a different generation. A bare
+    // D0ExitInProgress flag alone cannot express this: it only says
+    // "lifecycle is currently transitioning", not "this is/isn't the same
+    // lifecycle session the snapshot was taken from".
+    ULONG                     RecoveryGeneration;
+
+    // Guards D0ExitInProgress, ReaderRecoveryStage, and RecoveryGeneration
+    // above, together with consistent snapshot reads of InterruptPipe/
+    // UsbDevice/UsbInterface. WDFSPINLOCK, not WDFWAITLOCK, because
     // AmtPtpEvtUsbInterruptReadersFailed can run at up to DISPATCH_LEVEL
     // (it fires from the same completion path as EvtUsbTargetPipeReadComplete,
     // which the WDK documents as "typically DISPATCH_LEVEL, but no higher")
     // and WDFWAITLOCK only supports PASSIVE_LEVEL acquisition. Held only
-    // across the flag set/check and the pointer snapshot themselves - never
-    // across WdfIoTargetStop/WdfUsbTargetPipeResetSynchronously/
-    // WdfUsbTargetDeviceResetPortSynchronously/AmtPtpCyclePort, all of
-    // which are PASSIVE_LEVEL-only blocking calls that would violate IRQL
-    // rules (and defeat the whole point of avoiding WdfTimerStop's
-    // Wait=TRUE) if issued while a spinlock is held.
+    // across flag set/check and pointer-snapshot instructions themselves -
+    // never across WdfIoTargetStop/WdfUsbTargetPipeResetSynchronously/
+    // WdfUsbTargetDeviceResetPortSynchronously/AmtPtpCyclePort/
+    // WdfWaitLockAcquire, all of which are PASSIVE_LEVEL-only or blocking
+    // calls that would violate IRQL rules (or defeat the whole point of
+    // avoiding WdfTimerStop's Wait=TRUE) if issued while a spinlock is
+    // held.
     WDFSPINLOCK              D0ExitLock;
 
     // QPC frequency cached at D0Entry

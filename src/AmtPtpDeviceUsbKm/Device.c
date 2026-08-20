@@ -340,6 +340,15 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
 
         WDF_TIMER_CONFIG_INIT(&timerConfig, AmtPtpEvtReaderRestartTimer);
 
+        // Explicit, not relying on the (TRUE) default: this callback's own
+        // synchronization is entirely D0ExitLock/RecoveryLock/
+        // RecoveryGeneration (see Device.h) - it does not rely on, and must
+        // not rely on, WDF's automatic-serialization device callback lock,
+        // which is a separate mechanism scoped to the device's default
+        // PASSIVE/DISPATCH callback synchronization and not coordinated
+        // with the lifecycle locks this driver defines itself.
+        timerConfig.AutomaticSerialization = FALSE;
+
         WDF_OBJECT_ATTRIBUTES_INIT(&timerAttributes);
         timerAttributes.ParentObject   = device;
         timerAttributes.ExecutionLevel = WdfExecutionLevelPassive;
@@ -407,17 +416,27 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
             return status;
         }
 
-        // MS-RECOMMENDED SYNCHRONIZATION: guards D0ExitInProgress together
-        // with a consistent snapshot of InterruptPipe/UsbDevice, shared
-        // between AmtPtpEvtDeviceD0Exit (PASSIVE_LEVEL) and
-        // AmtPtpEvtReaderRestartTimer/AmtPtpEvtUsbInterruptReadersFailed
-        // (which per the continuous-reader completion contract can run at
-        // up to DISPATCH_LEVEL) - see the D0ExitLock comment in Device.h
-        // for why a WDFSPINLOCK, not WDFWAITLOCK (PASSIVE_LEVEL-only,
-        // disqualified by that DISPATCH_LEVEL caller) or a bare Interlocked
+        // MS-RECOMMENDED SYNCHRONIZATION: guards D0ExitInProgress/
+        // ReaderRecoveryStage/RecoveryGeneration together with a consistent
+        // snapshot of InterruptPipe/UsbDevice - see the two-level
+        // synchronization model comment on D0ExitLock/RecoveryLock in
+        // Device.h for why a WDFSPINLOCK, not WDFWAITLOCK (PASSIVE_LEVEL-
+        // only, disqualified by the DISPATCH_LEVEL
+        // AmtPtpEvtUsbInterruptReadersFailed caller) or a bare Interlocked
         // flag (individually atomic ops, not atomic as the check-then-read
         // sequence this needs), is the correct primitive here.
         status = WdfSpinLockCreate(&lockAttributes, &deviceContext->D0ExitLock);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+
+        // PASSIVE_LEVEL-only counterpart to D0ExitLock - serializes the
+        // actual (blocking) recovery/D0Exit/ReleaseHardware cleanup work so
+        // WdfIoTargetStop/WdfUsbTargetPipeResetSynchronously/
+        // WdfUsbTargetDeviceResetPortSynchronously/AmtPtpCyclePort/
+        // WdfIoTargetStart never run concurrently against each other. See
+        // the Device.h comment on RecoveryLock for the full model.
+        status = WdfWaitLockCreate(&lockAttributes, &deviceContext->RecoveryLock);
         if (!NT_SUCCESS(status)) {
             return status;
         }
@@ -578,17 +597,62 @@ AmtPtpEvtDeviceReleaseHardware(
     AmtTrace(pDeviceContext, "ReleaseHardware: ENTER, UsbDevice=%p InterruptPipe=%p",
         pDeviceContext->UsbDevice, pDeviceContext->InterruptPipe);
 
-    // WdfUsbTargetDeviceCreate's returned WDFUSBDEVICE, and the interface/
-    // pipe handles derived from it via SelectInterruptInterface, are all
-    // parented to Device and torn down by the framework automatically -
-    // this callback only needs to drop this driver's own references to
-    // them so AmtPtpDeviceUsbKmEvtDevicePrepareHardware's
+    // Step 1: short, DISPATCH-safe state transition. Mark lifecycle
+    // terminating and bump RecoveryGeneration *before* touching anything
+    // else, so any DISPATCH_LEVEL AmtPtpEvtUsbInterruptReadersFailed or a
+    // PASSIVE_LEVEL AmtPtpEvtReaderRestartTimer that is only now taking
+    // D0ExitLock sees this and backs off, and any timer callback that
+    // already snapshotted an older generation notices the mismatch on its
+    // post-RecoveryLock re-check (see AmtPtpEvtReaderRestartTimer).
+    WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
+    pDeviceContext->D0ExitInProgress = TRUE;
+    pDeviceContext->RecoveryGeneration++;
+    WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+
+    // Do not wait for the timer callback to finish (see the identical
+    // reasoning in AmtPtpEvtDeviceD0Exit below) - it may be mid-flight in
+    // an unbounded blocking USB call. RecoveryLock below is what actually
+    // guarantees this function does not run concurrently with it.
+    WdfTimerStop(pDeviceContext->ReaderRestartTimer, FALSE);
+
+    // Step 2: serialize with any in-flight recovery/D0Exit cleanup at
+    // PASSIVE_LEVEL. ReleaseHardware itself runs at PASSIVE_LEVEL
+    // (PAGED_CODE above), so a blocking wait here is sanctioned.
+    WdfWaitLockAcquire(pDeviceContext->RecoveryLock, NULL);
+
+    // Best-effort: stop the interrupt pipe's I/O target if it is still
+    // running. Normally D0Exit already did this, but ReleaseHardware can
+    // also be reached without an intervening D0Exit/D0Entry pair (e.g.
+    // surprise removal), so this must not assume the target is already
+    // stopped.
+    if (pDeviceContext->InterruptPipe != NULL) {
+        WdfIoTargetStop(
+            WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe),
+            WdfIoTargetCancelSentIo);
+    }
+
+    // Step 3: invalidate the USB handles under D0ExitLock so no concurrent
+    // DISPATCH_LEVEL reader of InterruptPipe/UsbDevice/UsbInterface can
+    // observe a torn/partial update. WdfUsbTargetDeviceCreate's returned
+    // WDFUSBDEVICE, and the interface/pipe handles derived from it via
+    // SelectInterruptInterface, are all parented to Device and torn down by
+    // the framework automatically - this callback only needs to drop this
+    // driver's own references to them so
+    // AmtPtpDeviceUsbKmEvtDevicePrepareHardware's
     // "if (pDeviceContext->UsbDevice == NULL)" guard re-acquires a fresh
     // set on the next PrepareHardware instead of skipping acquisition and
-    // reusing now-invalid handles.
+    // reusing now-invalid handles. After this point, no recovery callback
+    // may use these old USB objects - the generation bump in step 1 already
+    // ensures no *new* recovery attempt will act on this D0 session, and
+    // RecoveryLock ensures nothing is using them concurrently with this
+    // clear.
+    WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
     pDeviceContext->InterruptPipe = NULL;
     pDeviceContext->UsbInterface  = NULL;
     pDeviceContext->UsbDevice     = NULL;
+    WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+
+    WdfWaitLockRelease(pDeviceContext->RecoveryLock);
 
     return STATUS_SUCCESS;
 }
@@ -693,18 +757,22 @@ AmtPtpEvtDeviceD0Entry(
     AmtTrace(pDeviceContext, "D0Entry: ENTER, PreviousState=%s, InterruptPipe=%p",
         DbgDevicePowerString(PreviousState), pDeviceContext->InterruptPipe);
 
-    // A fresh D0Entry always means a clean slate for the reader-recovery
+    // Establish a fresh lifecycle generation before anything else runs.
+    // RecoveryLock is taken first so this cannot interleave with a
+    // still-finishing D0Exit/ReleaseHardware cleanup (which also holds
+    // RecoveryLock across its own D0ExitLock-protected state transition) -
+    // that ordering is what guarantees an old-generation timer callback can
+    // never observe the new generation's state as if it were its own. A
+    // fresh D0Entry always means a clean slate for the reader-recovery
     // escalation ladder in Interrupt.c - whatever failure streak happened
     // in a previous power session is irrelevant now.
-    pDeviceContext->ReaderRecoveryStage = READER_RECOVERY_RESET_PIPE;
-
-    // Clear the D0Exit/ReaderRestartTimer race flag under D0ExitLock (see
-    // Device.h) - a fresh D0 session means AmtPtpEvtReaderRestartTimer and
-    // AmtPtpEvtUsbInterruptReadersFailed are safe to touch InterruptPipe/
-    // UsbDevice again.
+    WdfWaitLockAcquire(pDeviceContext->RecoveryLock, NULL);
     WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
-    pDeviceContext->D0ExitInProgress = FALSE;
+    pDeviceContext->RecoveryGeneration++;
+    pDeviceContext->D0ExitInProgress    = FALSE;
+    pDeviceContext->ReaderRecoveryStage = READER_RECOVERY_RESET_PIPE;
     WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+    WdfWaitLockRelease(pDeviceContext->RecoveryLock);
 
     pDeviceContext->LastReportTime =
         KeQueryPerformanceCounter(&pDeviceContext->PerfFrequency);
@@ -830,19 +898,23 @@ AmtPtpEvtDeviceD0Exit(
     // full power-off in the log.
     AmtTrace(pDeviceContext, "D0Exit: ENTER, TargetState=%s", DbgDevicePowerString(TargetState));
 
-    // MS-RECOMMENDED SYNCHRONIZATION: set this under D0ExitLock (see the
-    // D0ExitLock comment in Device.h) before touching anything else, so
-    // AmtPtpEvtReaderRestartTimer/AmtPtpEvtUsbInterruptReadersFailed -
-    // which can genuinely still be mid-flight at this exact moment -
-    // notice and back off instead of racing the WdfIoTargetStop call below
-    // on the same InterruptPipe. Root-caused a real Bug Check 0x10D
-    // (WDF_VIOLATION, Parameter1=0x5, Parameter2=0x0 - a NULL handle
-    // reaching a framework object method) during a sleep transition. The
-    // lock acquisition itself is a short, non-blocking spin (never held
-    // across a blocking call), so this does not reintroduce the WdfTimerStop
-    // Wait=TRUE risk discussed below.
+    // Step 1: short, DISPATCH-safe state transition (see the two-level
+    // synchronization model comment in Device.h). Set this before touching
+    // anything else, so AmtPtpEvtReaderRestartTimer/
+    // AmtPtpEvtUsbInterruptReadersFailed - which can genuinely still be
+    // mid-flight at this exact moment - notice and back off instead of
+    // racing the WdfIoTargetStop call below on the same InterruptPipe.
+    // Root-caused a real Bug Check 0x10D (WDF_VIOLATION, Parameter1=0x5,
+    // Parameter2=0x0 - a NULL handle reaching a framework object method)
+    // during a sleep transition. Bumping RecoveryGeneration here as well
+    // means a timer callback that snapshotted the *previous* generation
+    // before this point will fail its post-RecoveryLock re-check below even
+    // if D0Entry has, by then, already cleared D0ExitInProgress again for a
+    // new session. The lock acquisition itself is a short, non-blocking
+    // spin (never held across a blocking call).
     WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
     pDeviceContext->D0ExitInProgress = TRUE;
+    pDeviceContext->RecoveryGeneration++;
     WdfSpinLockRelease(pDeviceContext->D0ExitLock);
 
     // Do NOT wait here (Wait = FALSE). AmtPtpEvtReaderRestartTimer can be
@@ -857,27 +929,27 @@ AmtPtpEvtDeviceD0Exit(
     // manager times out waiting for this callback and Windows bugchecks,
     // which is unrecoverable short of a hard reboot.
     //
-    // This trades away the race the previous (blocking) version of this
-    // call was guarding against: a recovery call from a stale timer fire
-    // finishing after D0Exit has already stopped the pipe target. That
-    // race is benign here - InterruptPipe/UsbDevice stay valid handles
-    // across an ordinary D0Exit (they are only nulled out in
-    // AmtPtpEvtDeviceReleaseHardware, a distinct, much rarer callback), so
-    // a late recovery call just targets an already-stopped I/O target and
-    // returns an error, which every call site here already discards via
-    // (VOID). A blocked-forever power IRP is the far worse failure mode.
+    // RecoveryLock below - not this call - is what actually guarantees no
+    // recovery step is concurrently touching the pipe once this function
+    // proceeds: a late timer callback either hasn't reached RecoveryLock
+    // yet (and will fail its re-check once it does) or is already inside
+    // RecoveryLock, in which case this function's own RecoveryLock
+    // acquisition below simply waits its turn.
     WdfTimerStop(pDeviceContext->ReaderRestartTimer, FALSE);
 
-    // MS-RECOMMENDED SYNCHRONIZATION: snapshot InterruptPipe under the same
-    // D0ExitLock instead of reading pDeviceContext->InterruptPipe directly -
-    // see the D0ExitLock comment in Device.h. InterruptPipe is ordinarily
-    // non-NULL here (only AmtPtpEvtDeviceReleaseHardware nulls it), but this
-    // driver has observed physical device loss during S3 (STATUS_NO_SUCH_DEVICE
-    // in the reader-recovery ladder), and this and ReleaseHardware are not
-    // proven to be mutually exclusive from a driver-owned timer/completion
-    // callback's perspective the way they are for WDF's own PnP/power
-    // callbacks. Skipping the stop when the pipe is already gone is strictly
-    // safer than passing a NULL handle into WdfUsbTargetPipeGetIoTarget.
+    // Step 2: serialize the actual cleanup with any in-flight recovery at
+    // PASSIVE_LEVEL. D0Exit itself runs at PASSIVE_LEVEL (PAGED_CODE
+    // above), so a blocking wait here is sanctioned by the WDF power-
+    // callback contract.
+    WdfWaitLockAcquire(pDeviceContext->RecoveryLock, NULL);
+
+    // Step 3: re-snapshot InterruptPipe under D0ExitLock now that
+    // RecoveryLock is held. InterruptPipe is ordinarily non-NULL here (only
+    // AmtPtpEvtDeviceReleaseHardware nulls it), but this driver has
+    // observed physical device loss during S3 (STATUS_NO_SUCH_DEVICE in the
+    // reader-recovery ladder). Skipping the stop when the pipe is already
+    // gone is strictly safer than passing a NULL handle into
+    // WdfUsbTargetPipeGetIoTarget.
     {
         WDFUSBPIPE snapshotPipe;
 
@@ -893,6 +965,8 @@ AmtPtpEvtDeviceD0Exit(
     }
 
     wellspringOffStatus = AmtPtpSetWellspringMode(pDeviceContext, FALSE);
+
+    WdfWaitLockRelease(pDeviceContext->RecoveryLock);
 
     AmtTrace(pDeviceContext, "D0Exit: EXIT, SetWellspringMode(FALSE) -> status=0x%08X",
         wellspringOffStatus);
