@@ -26,7 +26,7 @@ jobs:
           Write-Host "RUNNER_ARCH=$env:RUNNER_ARCH"
 
       - name: Check Wellspring driver
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
 
