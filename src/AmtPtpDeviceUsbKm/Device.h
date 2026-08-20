@@ -480,6 +480,14 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 #define WELLSPRING_MODE_D0ENTRY_MAX_ATTEMPTS       3
 #define WELLSPRING_MODE_D0ENTRY_RETRY_DELAY_MS_UNIT 50
 
+// A normal D3 -> D0 resume can reach D0Entry before the USB child has
+// finished re-enumerating on the parent hub. Keep this retry budget small:
+// one short retry is enough to bridge the transient window without turning
+// a normal resume into a long blocking delay. In this path Device.c retries
+// only STATUS_NO_SUCH_DEVICE; all other failures remain immediate failures.
+#define WELLSPRING_MODE_D0ENTRY_RESUME_MAX_ATTEMPTS        2
+#define WELLSPRING_MODE_D0ENTRY_RESUME_RETRY_DELAY_MS_UNIT 50
+
 // Bounded retries for the D0Entry interrupt-pipe WdfIoTargetStart, after
 // the same D3Final -> D0 transition. This is subject to the identical
 // "device not accepting requests yet" window as SetWellspringMode above,
@@ -492,9 +500,15 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 // is therefore far more disruptive than a lost race on the Wellspring
 // transfer, and giving one of the two a retry while leaving the other bare
 // is a bug, not a style choice - both go through the same shared retry
-// helper (AmtPtpD0EntryRetryAfterD3Final in Device.c).
+// helper (AmtPtpD0EntryRetry in Device.c).
 #define INTERRUPT_PIPE_D0ENTRY_MAX_ATTEMPTS        3
 #define INTERRUPT_PIPE_D0ENTRY_RETRY_DELAY_MS_UNIT 50
+
+// Small, separate retry budget for the same transient D3 -> D0 USB
+// re-enumeration window described above. Device.c retries this path only
+// for STATUS_NO_SUCH_DEVICE.
+#define INTERRUPT_PIPE_D0ENTRY_RESUME_MAX_ATTEMPTS        2
+#define INTERRUPT_PIPE_D0ENTRY_RESUME_RETRY_DELAY_MS_UNIT 50
 
 // Bounded retries for the IOCTL_HID_SET_FEATURE / REPORTID_REPORTMODE path
 // in AmtPtpSetFeatures (Hid.c), i.e. Windows' own multitouch input-mode

@@ -774,39 +774,37 @@ AmtPtpEvtDeviceReleaseHardware(
     return STATUS_SUCCESS;
 }
 
-// Attempt callback shape for AmtPtpD0EntryRetryAfterD3Final, named in the
+// Attempt callback shape for the shared D0Entry retry helper, named in the
 // same EVT_WDF_*-style convention WDF itself uses for callback typedefs
 // (see e.g. EVT_WDF_DEVICE_D0_ENTRY in wdfdevice.h) even though this one
 // is private to this file.
 typedef NTSTATUS
 (*PFN_AMT_D0ENTRY_ATTEMPT)(_In_ PDEVICE_CONTEXT DeviceContext);
 
-// AmtPtpD0EntryRetryAfterD3Final
+// AmtPtpD0EntryRetry
 //
 // Shared bounded-retry-with-linear-backoff policy for a PASSIVE_LEVEL
-// operation performed from EvtDeviceD0Entry that may transiently fail in
-// the narrow window right after a full power-off (PreviousState ==
-// WdfPowerDeviceD3Final), before the device has finished settling on the
-// parent hub (re-enumeration/link-training can still be in progress). A
-// D0Entry reached from a lighter (non-D3Final) transition never needs this
-// slack, so callers pass MaxAttempts == 1 for that case and Attempt runs
-// exactly once with no delay.
+// operation performed from EvtDeviceD0Entry.
 //
-// Factored out so this policy is defined in exactly one place: both
-// D0Entry operations that need it (SetWellspringMode's control transfer
-// and the interrupt pipe's WdfIoTargetStart) call through here instead of
-// each carrying its own copy of the loop, which is how the two previously
-// drifted out of sync - retry was added for SetWellspringMode alone, and
-// WdfIoTargetStart silently kept its single fire-and-forget attempt even
-// though it is subject to the identical race (see the comment on
-// INTERRUPT_PIPE_D0ENTRY_MAX_ATTEMPTS in Device.h for why that asymmetry
-// is a correctness bug, not just an inconsistency).
+// D3Final uses the existing full retry budget because a complete power-off
+// can leave the USB device unsettled while the parent hub finishes bringing
+// it back. A lighter D3 -> D0 resume gets a smaller, separate retry budget:
+// on the affected T2 hardware WDF can enter D0 before the USB child has
+// finished re-enumerating, so the first request can legitimately return
+// STATUS_NO_SUCH_DEVICE. In that resume path we retry only that transient
+// status; other failures remain immediate failures and preserve the normal
+// error path.
+//
+// Factored out so both D0Entry operations (SetWellspringMode and
+// WdfIoTargetStart) share exactly the same bounded policy instead of
+// carrying separate retry loops.
 _IRQL_requires_(PASSIVE_LEVEL)
 static NTSTATUS
-AmtPtpD0EntryRetryAfterD3Final(
+AmtPtpD0EntryRetry(
     _In_ PDEVICE_CONTEXT           DeviceContext,
     _In_ ULONG                     MaxAttempts,
     _In_ ULONG                     RetryDelayMsUnit,
+    _In_ BOOLEAN                   RetryOnlyNoSuchDevice,
     _In_ PCSTR                     OperationName,
     _In_ PFN_AMT_D0ENTRY_ATTEMPT   Attempt
     )
@@ -823,6 +821,10 @@ AmtPtpD0EntryRetryAfterD3Final(
             break;
         }
 
+        if (RetryOnlyNoSuchDevice && status != STATUS_NO_SUCH_DEVICE) {
+            break;
+        }
+
         if (attempt + 1 < MaxAttempts) {
             LARGE_INTEGER delay;
             // D0Entry runs at PASSIVE_LEVEL, so a short blocking pause
@@ -836,7 +838,7 @@ AmtPtpD0EntryRetryAfterD3Final(
     return status;
 }
 
-// Attempt shims for AmtPtpD0EntryRetryAfterD3Final - it calls through a
+//  - it calls through a
 // PDEVICE_CONTEXT -> NTSTATUS function pointer so both D0Entry operations
 // share one loop; these adapt each operation's real signature to that
 // shape.
@@ -962,41 +964,58 @@ AmtPtpEvtDeviceD0Entry(
     RtlZeroMemory(&pDeviceContext->RecentLifts, sizeof(pDeviceContext->RecentLifts));
 
     // Wellspring-mode setup is best-effort; only the interrupt-pipe start
-    // result below determines this function's return value. Retried a
-    // bounded few times after a real power-off - see
-    // AmtPtpD0EntryRetryAfterD3Final and the WELLSPRING_MODE_D0ENTRY_*
-    // constants (Device.h) for why.
+    // result below determines this function's return value.
+    //
+    // D3Final keeps the full recovery retry budget. A normal D3 -> D0 resume
+    // gets a small two-attempt budget because the USB child may still be
+    // re-enumerating on the parent hub when WDF calls D0Entry. In that case
+    // retry only STATUS_NO_SUCH_DEVICE so unrelated failures still take the
+    // normal error path.
     {
-        ULONG maxAttempts = (PreviousState == WdfPowerDeviceD3Final)
-            ? WELLSPRING_MODE_D0ENTRY_MAX_ATTEMPTS
-            : 1;
+        const BOOLEAN fromD3Final =
+            (PreviousState == WdfPowerDeviceD3Final);
 
-        (VOID)AmtPtpD0EntryRetryAfterD3Final(
+        const ULONG maxAttempts = fromD3Final
+            ? WELLSPRING_MODE_D0ENTRY_MAX_ATTEMPTS
+            : WELLSPRING_MODE_D0ENTRY_RESUME_MAX_ATTEMPTS;
+
+        const ULONG retryDelayMsUnit = fromD3Final
+            ? WELLSPRING_MODE_D0ENTRY_RETRY_DELAY_MS_UNIT
+            : WELLSPRING_MODE_D0ENTRY_RESUME_RETRY_DELAY_MS_UNIT;
+
+        (VOID)AmtPtpD0EntryRetry(
             pDeviceContext,
             maxAttempts,
-            WELLSPRING_MODE_D0ENTRY_RETRY_DELAY_MS_UNIT,
+            retryDelayMsUnit,
+            !fromD3Final,
             "SetWellspringMode",
             AmtPtpD0EntrySetWellspringModeAttempt);
     }
 
-    // Starting the interrupt pipe's I/O target is subject to the identical
-    // post-D3Final settling window as SetWellspringMode above, and its
-    // result IS this function's return value - see the
-    // INTERRUPT_PIPE_D0ENTRY_MAX_ATTEMPTS comment (Device.h) for why this
-    // one gets its own retry rather than the single fire-and-forget
-    // attempt an earlier version of this function left it with.
+    // Starting the interrupt pipe's I/O target is subject to the same
+    // post-resume USB settling window as SetWellspringMode above, and its
+    // result IS this function's return value.
     {
-        ULONG maxAttempts = (PreviousState == WdfPowerDeviceD3Final)
-            ? INTERRUPT_PIPE_D0ENTRY_MAX_ATTEMPTS
-            : 1;
+        const BOOLEAN fromD3Final =
+            (PreviousState == WdfPowerDeviceD3Final);
 
-        status = AmtPtpD0EntryRetryAfterD3Final(
+        const ULONG maxAttempts = fromD3Final
+            ? INTERRUPT_PIPE_D0ENTRY_MAX_ATTEMPTS
+            : INTERRUPT_PIPE_D0ENTRY_RESUME_MAX_ATTEMPTS;
+
+        const ULONG retryDelayMsUnit = fromD3Final
+            ? INTERRUPT_PIPE_D0ENTRY_RETRY_DELAY_MS_UNIT
+            : INTERRUPT_PIPE_D0ENTRY_RESUME_RETRY_DELAY_MS_UNIT;
+
+        status = AmtPtpD0EntryRetry(
             pDeviceContext,
             maxAttempts,
-            INTERRUPT_PIPE_D0ENTRY_RETRY_DELAY_MS_UNIT,
+            retryDelayMsUnit,
+            !fromD3Final,
             "WdfIoTargetStart",
             AmtPtpD0EntryStartInterruptPipeAttempt);
     }
+
     if (!NT_SUCCESS(status)) {
         goto end;
     }
