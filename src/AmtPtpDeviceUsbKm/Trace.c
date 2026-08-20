@@ -33,6 +33,13 @@
 // (the continuous-reader completion routine, EvtUsbTargetPipeReadersFailed)
 // run at DISPATCH_LEVEL, and DbgPrintEx/vDbgPrintExWithPrefix are
 // documented safe up to DISPATCH_LEVEL.
+//
+// BUG FIX: this definition was missing the _IRQL_requires_max_(DISPATCH_LEVEL)
+// annotation that the declaration in Trace.h already carries, which
+// PREfast flagged as an inconsistent annotation (C28252) between the two.
+// Must match exactly - PREfast checks the declaration/definition pair, not
+// just the declaration.
+_IRQL_requires_max_(DISPATCH_LEVEL)
 VOID
 AmtTracePrint(
     _In_ PCSTR Format,

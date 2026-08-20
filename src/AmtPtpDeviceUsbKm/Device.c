@@ -6,11 +6,22 @@
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (PAGE, AmtPtpDeviceUsbKmCreateDevice)
 #pragma alloc_text (PAGE, AmtPtpDeviceUsbKmEvtDevicePrepareHardware)
-#pragma alloc_text (PAGE, AmtPtpEvtDeviceReleaseHardware)
-// Both PASSIVE_LEVEL-only and both already call PAGED_CODE(); previously
-// missing here, which left them PAGED_CODE()-asserting from a non-paged
-// segment (PREfast C28172).
-#pragma alloc_text (PAGE, AmtPtpEvtDeviceD0Exit)
+// AmtPtpEvtDeviceReleaseHardware and AmtPtpEvtDeviceD0Exit are
+// deliberately NOT listed here (and no longer call PAGED_CODE() either -
+// see the comment at each definition). Both are PASSIVE_LEVEL-only, but
+// both also call WdfSpinLockAcquire (D0ExitLock) as part of the two-level
+// synchronization model in Device.h, which briefly raises IRQL to
+// DISPATCH_LEVEL. Code actually placed in the PAGE section must never run
+// above APC_LEVEL - if it faults in at raised IRQL the system bugchecks -
+// so alloc_text(PAGE, ...) on a spinlock-acquiring function is a genuine
+// correctness bug, not just a PREfast nag (PREfast still catches it as
+// C28150, "IRQL above the maximum acceptable for the function", which is
+// how this was originally found). A prior revision added alloc_text(PAGE,
+// ...) here specifically to silence PAGED_CODE()-without-alloc_text
+// (C28172); that traded one real diagnostic for a worse one. The
+// underlying fix is to keep this code resident instead: these callbacks
+// already never run on a hot path, so the extra nonpaged footprint is
+// immaterial next to the correctness requirement.
 #pragma alloc_text (PAGE, SelectInterruptInterface)
 #pragma alloc_text (PAGE, AmtPtpAcquireConfigControlDevice)
 // Detaches from the driver-lifetime control device via WDFWAITLOCK
@@ -482,6 +493,15 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
     PAGED_CODE();
 
     pDeviceContext = DeviceGetContext(Device);
+    // DeviceGetContext cannot actually return NULL for a valid WDFDEVICE
+    // (the context space is allocated at WdfDeviceCreate time via
+    // WDF_OBJECT_ATTRIBUTES on this same object), but PREfast has no way
+    // to know that from the macro alone and, once AmtTrace()'s own NULL
+    // check on its Ctx parameter is inlined below, propagates that
+    // possibility onto every later dereference of this pointer - hence
+    // the explicit assumption here instead of scattering NULL checks
+    // through otherwise-unconditional lifecycle code.
+    _Analysis_assume_(pDeviceContext != NULL);
 
     // DIAG: lifecycle tracing (Code 10 / STATUS_DEVICE_DATA_ERROR
     // investigation after sleep-wake). Enabled only when this device's
@@ -619,9 +639,21 @@ AmtPtpEvtDeviceReleaseHardware(
     PDEVICE_CONTEXT pDeviceContext;
 
     UNREFERENCED_PARAMETER(ResourceListTranslated);
-    PAGED_CODE();
+    // NOTE: deliberately no PAGED_CODE() here - this function is no longer
+    // in the PAGE section (see the alloc_text comment near the top of this
+    // file) precisely because it acquires D0ExitLock (a WDFSPINLOCK)
+    // below, which briefly raises IRQL to DISPATCH_LEVEL. Calling
+    // PAGED_CODE() while genuinely resident is harmless by itself, but
+    // pairing it with code that's NOT alloc_text(PAGE, ...) re-triggers
+    // the exact PREfast C28172 inconsistency the removed pragma used to
+    // paper over - so both are gone together. WdfWaitLockAcquire below
+    // still enforces the real PASSIVE_LEVEL-only runtime contract on its
+    // own (it is documented undefined behavior to call it above
+    // PASSIVE_LEVEL), which is what actually mattered here.
 
     pDeviceContext = DeviceGetContext(Device);
+    // See the identical PREfast note in AmtPtpDeviceUsbKmEvtDevicePrepareHardware.
+    _Analysis_assume_(pDeviceContext != NULL);
 
     // DIAG: if this fires around a sleep/wake cycle (instead of only
     // around real PnP rebalance/removal), it means the stack is treating
@@ -650,8 +682,10 @@ AmtPtpEvtDeviceReleaseHardware(
     WdfTimerStop(pDeviceContext->ReaderRestartTimer, FALSE);
 
     // Step 2: serialize with any in-flight recovery/D0Exit cleanup at
-    // PASSIVE_LEVEL. ReleaseHardware itself runs at PASSIVE_LEVEL
-    // (PAGED_CODE above), so a blocking wait here is sanctioned.
+    // PASSIVE_LEVEL. ReleaseHardware itself is documented by WDF as
+    // PASSIVE_LEVEL-only (EVT_WDF_DEVICE_RELEASE_HARDWARE), so a blocking
+    // wait here is sanctioned regardless of the PAGED_CODE()/alloc_text
+    // question addressed above.
     WdfWaitLockAcquire(pDeviceContext->RecoveryLock, NULL);
 
     // Best-effort: stop the interrupt pipe's I/O target if it is still
@@ -783,6 +817,8 @@ AmtPtpEvtDeviceD0Entry(
     BOOLEAN         isTargetStarted;
 
     pDeviceContext  = DeviceGetContext(Device);
+    // See the identical PREfast note in AmtPtpDeviceUsbKmEvtDevicePrepareHardware.
+    _Analysis_assume_(pDeviceContext != NULL);
     isTargetStarted = FALSE;
 
     // DIAG: sleep/wake normally lands here with PreviousState D3 or
@@ -941,9 +977,14 @@ AmtPtpEvtDeviceD0Exit(
     PDEVICE_CONTEXT pDeviceContext;
     NTSTATUS        wellspringOffStatus;
 
-    PAGED_CODE();
+    // NOTE: deliberately no PAGED_CODE() here - see the identical note in
+    // AmtPtpEvtDeviceReleaseHardware above (this function also acquires
+    // D0ExitLock, a WDFSPINLOCK, below). WdfWaitLockAcquire still enforces
+    // the real PASSIVE_LEVEL-only contract at runtime on its own.
 
     pDeviceContext = DeviceGetContext(Device);
+    // See the identical PREfast note in AmtPtpDeviceUsbKmEvtDevicePrepareHardware.
+    _Analysis_assume_(pDeviceContext != NULL);
 
     // DIAG: TargetState is now used below instead of discarded via
     // UNREFERENCED_PARAMETER, so sleep-wake cycles can be told apart from a
@@ -987,9 +1028,10 @@ AmtPtpEvtDeviceD0Exit(
     WdfTimerStop(pDeviceContext->ReaderRestartTimer, FALSE);
 
     // Step 2: serialize the actual cleanup with any in-flight recovery at
-    // PASSIVE_LEVEL. D0Exit itself runs at PASSIVE_LEVEL (PAGED_CODE
-    // above), so a blocking wait here is sanctioned by the WDF power-
-    // callback contract.
+    // PASSIVE_LEVEL. D0Exit itself is documented by WDF as PASSIVE_LEVEL-
+    // only (EVT_WDF_DEVICE_D0_EXIT), so a blocking wait here is sanctioned
+    // by the WDF power-callback contract regardless of the PAGED_CODE()/
+    // alloc_text question addressed at the top of this function.
     WdfWaitLockAcquire(pDeviceContext->RecoveryLock, NULL);
 
     // Step 3: re-snapshot InterruptPipe under D0ExitLock now that

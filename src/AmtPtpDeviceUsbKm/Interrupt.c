@@ -5,12 +5,23 @@
 #include "Input.h"
 
 #ifdef ALLOC_PRAGMA
-// These two are the only PASSIVE_LEVEL-only, non-hot-path functions in this
-// file (the reader-recovery escalation ladder - see READER_RECOVERY_STAGE
-// in Device.h); everything else here runs on the USB completion/DPC path
-// and must stay non-paged.
+// AmtPtpCyclePort is the only PASSIVE_LEVEL-only, non-hot-path function in
+// this file that stays genuinely pageable - everything else here runs on
+// the USB completion/DPC path and must stay non-paged.
+//
+// AmtPtpEvtReaderRestartTimer is deliberately NOT listed here (and no
+// longer calls PAGED_CODE() either - see the comment at its definition):
+// although it is PASSIVE_LEVEL-only (the timer was created with
+// ExecutionLevel = WdfExecutionLevelPassive specifically for this), it
+// also acquires D0ExitLock (a WDFSPINLOCK) as part of the two-level
+// synchronization model in Device.h, which briefly raises IRQL to
+// DISPATCH_LEVEL. Code in the PAGE section must never run above
+// APC_LEVEL - a fault while paged-out code is executing at raised IRQL
+// bugchecks - so alloc_text(PAGE, ...) on a spinlock-acquiring function is
+// a genuine correctness bug (caught here by PREfast as C28150), not just
+// style. Keeping this callback resident costs a small, fixed amount of
+// nonpaged memory in exchange for that guarantee.
 #pragma alloc_text (PAGE, AmtPtpCyclePort)
-#pragma alloc_text (PAGE, AmtPtpEvtReaderRestartTimer)
 #endif
 
 #if DBG
@@ -659,7 +670,15 @@ AmtPtpEvtReaderRestartTimer(
     ULONG            snapshotGeneration;
     READER_RECOVERY_STAGE stage;
 
-    PAGED_CODE();
+    // See the identical PREfast note in AmtPtpDeviceUsbKmEvtDevicePrepareHardware (Device.c).
+    _Analysis_assume_(pCtx != NULL);
+
+    // NOTE: deliberately no PAGED_CODE() here - see the alloc_text comment
+    // at the top of this file (this function acquires D0ExitLock, a
+    // WDFSPINLOCK, in Phase 1 immediately below, which briefly raises IRQL
+    // to DISPATCH_LEVEL). The timer's ExecutionLevel = WdfExecutionLevelPassive
+    // configuration (Device.c) is what actually enforces the real
+    // PASSIVE_LEVEL-only runtime contract here.
 
     // Phase 1 (DISPATCH-safe): quick check-and-snapshot under D0ExitLock
     // only. No blocking call is made while this lock is held.
@@ -877,6 +896,9 @@ AmtPtpEvtUsbInterruptReadersFailed(
     PDEVICE_CONTEXT  pCtx     = DeviceGetContext(device);
     BOOLEAN                d0ExitInProgress;
     READER_RECOVERY_STAGE  stage;
+
+    // See the identical PREfast note in AmtPtpDeviceUsbKmEvtDevicePrepareHardware (Device.c).
+    _Analysis_assume_(pCtx != NULL);
 
     // MS-RECOMMENDED SYNCHRONIZATION: this is the second, previously-
     // unguarded path into ReaderRestartTimer - see the D0ExitLock comment

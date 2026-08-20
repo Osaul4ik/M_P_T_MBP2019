@@ -438,6 +438,14 @@ AmtPtpSetFeatures(
 	pHidPacket = NULL;
 	pDeviceContext = DeviceGetContext(Device);
 	NT_ASSERT(pDeviceContext != NULL);
+	// NT_ASSERT alone isn't reliably picked up by /analyze once this
+	// pointer is later passed through AmtTrace() - whose Ctx parameter is
+	// explicitly allowed to be NULL (see Trace.h) - so PREfast propagates
+	// that possibility onto the unconditional pDeviceContext-> dereferences
+	// further down (e.g. bWellspringMode below). Make the assumption
+	// explicit instead of scattering redundant NULL checks through the
+	// IOCTL handling below.
+	_Analysis_assume_(pDeviceContext != NULL);
 
 	WDF_REQUEST_PARAMETERS_INIT(&RequestParameters);
 	WdfRequestGetParameters(Request, &RequestParameters);
