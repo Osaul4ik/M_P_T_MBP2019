@@ -481,12 +481,28 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 #define WELLSPRING_MODE_D0ENTRY_RETRY_DELAY_MS_UNIT 50
 
 // A normal D3 -> D0 resume can reach D0Entry before the USB child has
-// finished re-enumerating on the parent hub. Keep this retry budget small:
-// one short retry is enough to bridge the transient window without turning
-// a normal resume into a long blocking delay. In this path Device.c retries
-// only STATUS_NO_SUCH_DEVICE; all other failures remain immediate failures.
-#define WELLSPRING_MODE_D0ENTRY_RESUME_MAX_ATTEMPTS        2
-#define WELLSPRING_MODE_D0ENTRY_RESUME_RETRY_DELAY_MS_UNIT 50
+// finished re-enumerating on the parent hub. Per Microsoft's own guidance
+// for this exact fault class - "Low Resources Simulation"
+// (learn.microsoft.com/windows-hardware/drivers/devtest/low-resources-simulation):
+// "Driver Verifier fails random instances of the driver's memory
+// allocations [...] This tests the driver's ability to respond properly to
+// low memory and other low-resource conditions" - the canonical response to
+// an injected allocation failure is not just to fail the one call cleanly,
+// but to retry it, the same as any other transient condition. Confirmed
+// against SAKURAMBPRO.log (Driver Verifier "Pool Allocations Failed
+// Deliberately: 1"): at t=297s a resume's SetWellspringMode/WdfIoTargetStart
+// never got a chance to succeed within the old 2-attempt/50ms budget, and
+// the device stayed torn down for ~45s (through an entire extra sleep/wake
+// cycle) before recovering on its own. In this path Device.c now retries
+// both STATUS_NO_SUCH_DEVICE (the child not back on the bus yet) and
+// STATUS_INSUFFICIENT_RESOURCES (a Verifier-injected or genuine low-memory
+// failure of the WDFREQUEST/WDFMEMORY allocation inside
+// WdfUsbTargetDeviceSendControlTransferSynchronously) - both are transient
+// and equally recoverable by retry; all other failures remain immediate
+// failures. Budget widened from 2/50ms to 5/75ms-per-step (linear backoff,
+// worst case ~5*75=375ms extra) to give either condition real room to clear.
+#define WELLSPRING_MODE_D0ENTRY_RESUME_MAX_ATTEMPTS        5
+#define WELLSPRING_MODE_D0ENTRY_RESUME_RETRY_DELAY_MS_UNIT 75
 
 // Bounded retries for the D0Entry interrupt-pipe WdfIoTargetStart, after
 // the same D3Final -> D0 transition. This is subject to the identical
@@ -505,10 +521,23 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 #define INTERRUPT_PIPE_D0ENTRY_RETRY_DELAY_MS_UNIT 50
 
 // Small, separate retry budget for the same transient D3 -> D0 USB
-// re-enumeration window described above. Device.c retries this path only
-// for STATUS_NO_SUCH_DEVICE.
-#define INTERRUPT_PIPE_D0ENTRY_RESUME_MAX_ATTEMPTS        2
-#define INTERRUPT_PIPE_D0ENTRY_RESUME_RETRY_DELAY_MS_UNIT 50
+// re-enumeration window described above. Device.c retries this path for
+// both STATUS_NO_SUCH_DEVICE and STATUS_INSUFFICIENT_RESOURCES - see the
+// WELLSPRING_MODE_D0ENTRY_RESUME_* comment above for why the latter belongs
+// here too (Low Resources Simulation / SAKURAMBPRO.log). WdfIoTargetStart
+// itself does not allocate per Microsoft Learn's own documented return
+// codes (learn.microsoft.com/windows-hardware/drivers/ddi/wdfiotarget/nf-wdfiotarget-wdfiotargetstart),
+// but the continuous reader it starts pre-allocates its WDFREQUEST pool via
+// WdfUsbTargetPipeConfigContinuousReader back in EvtDevicePrepareHardware,
+// which Microsoft Learn documents as returning STATUS_INSUFFICIENT_RESOURCES
+// on exactly this kind of injected/genuine low-memory condition
+// (learn.microsoft.com/windows-hardware/drivers/ddi/wdfusb/nf-wdfusb-wdfusbtargetpipeconfigcontinuousreader) -
+// that path is already retried in EvtDevicePrepareHardware itself (see
+// AmtPtpPrepareHardwareRetryOnLowResources in Device.c); this budget only
+// covers the resume-time race on WdfIoTargetStart re-arming that
+// already-allocated reader.
+#define INTERRUPT_PIPE_D0ENTRY_RESUME_MAX_ATTEMPTS        5
+#define INTERRUPT_PIPE_D0ENTRY_RESUME_RETRY_DELAY_MS_UNIT 75
 
 // Bounded retries for the IOCTL_HID_SET_FEATURE / REPORTID_REPORTMODE path
 // in AmtPtpSetFeatures (Hid.c), i.e. Windows' own multitouch input-mode

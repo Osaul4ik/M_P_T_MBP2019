@@ -767,16 +767,46 @@ AmtPtpEvtReaderRestartTimer(
     // method." Confirmed via DbgPrint capture across a real sleep/wake
     // cycle: the failure driving this timer was STATUS_NO_SUCH_DEVICE (the
     // physical device gone, not a stalled endpoint), so every rung was
-    // guaranteed to fail and burn through the whole ladder for nothing
-    // while the *real* recovery (PnP's own ReleaseHardware -> fresh
-    // PrepareHardware once the device physically reappears) was already in
-    // flight independently. Checking first avoids sending pointless
-    // reset/cycle-port requests at a PDO that's already gone.
+    // guaranteed to fail and burn through the whole ladder for nothing.
+    // Checking first avoids sending pointless reset/cycle-port requests at
+    // a PDO that's already gone.
+    //
+    // BUG FIX (SAKURAMBPRO.log / Driver Verifier "Pool Allocations Failed
+    // Deliberately" investigation): this branch used to stop at
+    // AmtPtpRecoveryMarkExhaustedIfCurrent and just return, "waiting for
+    // PnP re-enumeration" that nothing in this driver ever actually asked
+    // for - re-enumeration here depends entirely on the parent USB hub's
+    // own port-change polling, which in the captured trace did not fire
+    // again until the *next* full S3 sleep/wake cycle, ~45s later, leaving
+    // the touchpad completely dead (Code 10) the whole time in between.
+    //
+    // Per Microsoft's own "Reporting Device Failures" documentation
+    // (learn.microsoft.com/windows-hardware/drivers/wdf/reporting-device-failures):
+    // "If a driver encounters an unrecoverable hardware or software error,
+    // it must call WdfDeviceSetFailed so that the system can unload the
+    // device's drivers", and WdfDeviceFailedAttemptRestart specifically
+    // "attempts to restart the device by requesting the bus driver to
+    // reenumerate its devices" (WDF_DEVICE_FAILED_ACTION reference,
+    // learn.microsoft.com/windows-hardware/drivers/ddi/wdfdevice/ne-wdfdevice-_wdf_device_failed_action).
+    // That is the canonical, framework-native way to turn "wait
+    // indefinitely for someone else to notice" into "actively ask PnP to
+    // retry now" - exactly this driver's situation, since by this point
+    // EvtDeviceD0Entry already returned success (the failure only showed up
+    // afterward, on the continuous reader's first completion) and so never
+    // got a chance to report it via its own return value. WdfDeviceSetFailed
+    // is called after releasing RecoveryLock, matching the same
+    // lock-before-framework-callback ordering already used everywhere else
+    // in this file, since the framework may synchronously drive
+    // EvtDeviceReleaseHardware/EvtDevicePrepareHardware back into this
+    // device from within the call. If the device is genuinely gone for
+    // good, WDF's own "several consecutive restart attempts fail" backoff
+    // (same reference) still applies, so this cannot loop forever either.
     if (!NT_SUCCESS(WdfUsbTargetDeviceIsConnectedSynchronous(pCtx->UsbDevice))) {
-        AmtTrace(pCtx, "ReaderRestartTimer: device not connected, "
-            "skipping reset ladder - waiting for PnP re-enumeration");
+        AmtTrace(pCtx, "ReaderRestartTimer: device not connected, skipping "
+            "reset ladder, requesting PnP restart via WdfDeviceSetFailed");
         (VOID)AmtPtpRecoveryMarkExhaustedIfCurrent(pCtx, snapshotGeneration);
         WdfWaitLockRelease(pCtx->RecoveryLock);
+        WdfDeviceSetFailed(device, WdfDeviceFailedAttemptRestart);
         return;
     }
 

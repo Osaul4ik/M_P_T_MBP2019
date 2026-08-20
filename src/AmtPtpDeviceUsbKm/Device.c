@@ -956,20 +956,42 @@ typedef NTSTATUS
 // it back. A lighter D3 -> D0 resume gets a smaller, separate retry budget:
 // on the affected T2 hardware WDF can enter D0 before the USB child has
 // finished re-enumerating, so the first request can legitimately return
-// STATUS_NO_SUCH_DEVICE. In that resume path we retry only that transient
-// status; other failures remain immediate failures and preserve the normal
+// STATUS_NO_SUCH_DEVICE.
+//
+// It can also legitimately return STATUS_INSUFFICIENT_RESOURCES: per
+// Microsoft's Driver Verifier "Low Resources Simulation" documentation
+// (learn.microsoft.com/windows-hardware/drivers/devtest/low-resources-simulation),
+// this deliberately fails "random instances of the driver's memory
+// allocations, as might occur if the driver was running on a computer with
+// insufficient memory [...] to test the driver's ability to respond
+// properly" - and the WDFREQUEST/WDFMEMORY allocations underlying both
+// AmtPtpSetWellspringMode's control transfer and the continuous reader's
+// resubmission are exactly the kind of allocation that option targets. A
+// resume-window allocation failure is transient in exactly the same sense
+// STATUS_NO_SUCH_DEVICE is (retrying a moment later is expected to
+// succeed), so both statuses share this same bounded retry, confirmed
+// against a real ~45s stall in SAKURAMBPRO.log driven by Verifier's "Pool
+// Allocations Failed Deliberately" fault injection landing in this window.
+// All other failures remain immediate failures and preserve the normal
 // error path.
 //
 // Factored out so both D0Entry operations (SetWellspringMode and
 // WdfIoTargetStart) share exactly the same bounded policy instead of
 // carrying separate retry loops.
+static BOOLEAN
+AmtPtpIsTransientD0EntryStatus(_In_ NTSTATUS Status)
+{
+    return (Status == STATUS_NO_SUCH_DEVICE) ||
+           (Status == STATUS_INSUFFICIENT_RESOURCES);
+}
+
 _IRQL_requires_(PASSIVE_LEVEL)
 static NTSTATUS
 AmtPtpD0EntryRetry(
     _In_ PDEVICE_CONTEXT           DeviceContext,
     _In_ ULONG                     MaxAttempts,
     _In_ ULONG                     RetryDelayMsUnit,
-    _In_ BOOLEAN                   RetryOnlyNoSuchDevice,
+    _In_ BOOLEAN                   RetryOnlyTransient,
     _In_ PCSTR                     OperationName,
     _In_ PFN_AMT_D0ENTRY_ATTEMPT   Attempt
     )
@@ -986,7 +1008,7 @@ AmtPtpD0EntryRetry(
             break;
         }
 
-        if (RetryOnlyNoSuchDevice && status != STATUS_NO_SUCH_DEVICE) {
+        if (RetryOnlyTransient && !AmtPtpIsTransientD0EntryStatus(status)) {
             break;
         }
 
@@ -1132,10 +1154,11 @@ AmtPtpEvtDeviceD0Entry(
     // result below determines this function's return value.
     //
     // D3Final keeps the full recovery retry budget. A normal D3 -> D0 resume
-    // gets a small two-attempt budget because the USB child may still be
+    // gets a smaller budget because the USB child may still be
     // re-enumerating on the parent hub when WDF calls D0Entry. In that case
-    // retry only STATUS_NO_SUCH_DEVICE so unrelated failures still take the
-    // normal error path.
+    // retry only the transient statuses (STATUS_NO_SUCH_DEVICE and
+    // STATUS_INSUFFICIENT_RESOURCES - see AmtPtpIsTransientD0EntryStatus)
+    // so unrelated failures still take the normal error path.
     {
         const BOOLEAN fromD3Final =
             (PreviousState == WdfPowerDeviceD3Final);
