@@ -18,7 +18,7 @@ jobs:
           $ErrorActionPreference = "SilentlyContinue"
           if (Test-Path "C:\Windows\MEMORY.DMP") {
             $dmp = Get-Item "C:\Windows\MEMORY.DMP"
-            Write-Warning "MEMORY.DMP exists (LastWriteTime: $($dmp.LastWriteTime)). If this is newer than the reboot you just triggered, Verifier likely caught a real violation analyze before disarming the watchdog."
+            Write-Warning "MEMORY.DMP exists (LastWriteTime: $($dmp.LastWriteTime)). If this is newer than the reboot you just triggered, Verifier likely caught a real violation - analyze before disarming the watchdog."
           } else {
             Write-Host "No crash dump present. Clean boot."
           }
