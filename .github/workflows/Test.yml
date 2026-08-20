@@ -9,7 +9,7 @@ jobs:
 
     steps:
       - name: Identify machine
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
 
