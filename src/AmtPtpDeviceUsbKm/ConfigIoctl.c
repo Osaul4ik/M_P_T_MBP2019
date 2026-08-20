@@ -881,6 +881,22 @@ AmtPtpConfigControlEvtIoDeviceControl(
     // NULL/stale WDFDEVICE it then dereferences via DeviceGetContext.
     // AmtPtpConfigControlSnapshotTargetDevice takes the one lock every
     // writer already uses.
+    //
+    // BUG FIX (use-after-free): this is THE actual GET_CONFIG/SET_CONFIG
+    // race - the field-read TOCTOU above was closed, but nothing kept the
+    // target FDO's object memory alive for the rest of this function. Every
+    // GET_*_CONFIG/SET_*_CONFIG/GET_PAD_GEOMETRY/GET_DEVICE_INFO/
+    // GET_DEBUG_MODE/SET_DEBUG_MODE handler below is called with this same
+    // targetDevice and reaches it via DeviceGetContext(); SET_*_CONFIG in
+    // particular does blocking PASSIVE_LEVEL registry I/O
+    // (AmtPalmConfigSaveToRegistry / AmtPointerConfigSaveToRegistry /
+    // AmtScrollConfigSaveToRegistry), which is a wide window for a
+    // concurrent surprise removal to finish tearing the FDO down and free
+    // its DEVICE_CONTEXT out from under a handler still using it.
+    // AmtPtpConfigControlSnapshotTargetDevice now takes a reference that
+    // keeps the FDO allocated regardless of how far PnP removal has
+    // otherwise progressed; it is released once, below, after every
+    // handler in the switch has finished with targetDevice.
     targetDevice = AmtPtpConfigControlSnapshotTargetDevice(controlDevice);
 
     if (targetDevice == NULL) {
@@ -955,6 +971,10 @@ AmtPtpConfigControlEvtIoDeviceControl(
         break;
     }
 
+    // Release the reference taken above - every handler in the switch has
+    // returned by this point, so targetDevice is done being used.
+    AmtPtpConfigControlReleaseTargetDevice(targetDevice);
+
     WdfRequestComplete(Request, status);
 }
 
@@ -978,6 +998,7 @@ AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     WDFFILEOBJECT fileObject;
     PULONG enabled;
     size_t inputLength = 0;
+    NTSTATUS status;
 
     fileObject = WdfRequestGetFileObject(Request);
     fileContext = fileObject != NULL
@@ -989,18 +1010,24 @@ AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     // via DeviceGetContext below) - a classic check-then-use TOCTOU on a
     // field a concurrent sleep/wake re-enumeration can null out between
     // the two. One locked snapshot closes that window.
+    //
+    // BUG FIX (use-after-free): the snapshot now also holds a reference on
+    // targetDevice (see AmtPtpConfigControlSnapshotTargetDevice) that MUST
+    // be released on every exit path below - hence the single goto-exit
+    // instead of the scattered early returns this function used to have.
     targetDevice = AmtPtpConfigControlSnapshotTargetDevice(Device);
 
     if (targetDevice == NULL || fileContext == NULL) {
-        return STATUS_INVALID_DEVICE_STATE;
+        status = STATUS_INVALID_DEVICE_STATE;
+        goto exit;
     }
 
     targetContext = DeviceGetContext(targetDevice);
 
-    NTSTATUS status = WdfRequestRetrieveInputBuffer(
+    status = WdfRequestRetrieveInputBuffer(
         Request, sizeof(ULONG), (PVOID*)&enabled, &inputLength);
     if (!NT_SUCCESS(status)) {
-        return status;
+        goto exit;
     }
 
     WdfSpinLockAcquire(targetContext->LiveLock);
@@ -1009,7 +1036,8 @@ AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
         if (targetContext->LiveOwnerFileObject != NULL &&
             targetContext->LiveOwnerFileObject != fileObject) {
             WdfSpinLockRelease(targetContext->LiveLock);
-            return STATUS_SHARING_VIOLATION;
+            status = STATUS_SHARING_VIOLATION;
+            goto exit;
         }
 
         targetContext->LiveOwnerFileObject = fileObject;
@@ -1022,7 +1050,8 @@ AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     } else {
         if (targetContext->LiveOwnerFileObject != fileObject) {
             WdfSpinLockRelease(targetContext->LiveLock);
-            return STATUS_ACCESS_DENIED;
+            status = STATUS_ACCESS_DENIED;
+            goto exit;
         }
 
         InterlockedExchange(&targetContext->LiveEnabled, 0);
@@ -1033,7 +1062,11 @@ AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     WdfSpinLockRelease(targetContext->LiveLock);
 
     WdfRequestSetInformation(Request, 0);
-    return STATUS_SUCCESS;
+    status = STATUS_SUCCESS;
+
+exit:
+    AmtPtpConfigControlReleaseTargetDevice(targetDevice);
+    return status;
 }
 
 NTSTATUS
@@ -1044,6 +1077,8 @@ AmtPtpGetLiveFrame(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     WDFDEVICE targetDevice;
     PAMT_LIVE_FRAME output;
     size_t outputLength = 0;
+    NTSTATUS status;
+    ULONG index;
 
     WDFFILEOBJECT fileObject = WdfRequestGetFileObject(Request);
     fileContext = fileObject != NULL
@@ -1060,18 +1095,25 @@ AmtPtpGetLiveFrame(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     // surprise-removal/re-enumeration window this driver already goes to
     // such lengths to synchronize against elsewhere (D0ExitLock/
     // RecoveryLock). One locked snapshot, used once.
+    //
+    // BUG FIX (use-after-free): being the highest-frequency caller of
+    // AmtPtpConfigControlSnapshotTargetDevice also makes this the call site
+    // most likely to actually hit the reference-less UAF window against a
+    // torn-down FDO in practice - so it gets the same goto-exit/paired
+    // release treatment as AmtPtpSetLiveEnabled.
     targetDevice = AmtPtpConfigControlSnapshotTargetDevice(Device);
 
     if (targetDevice == NULL || fileContext == NULL) {
-        return STATUS_INVALID_DEVICE_STATE;
+        status = STATUS_INVALID_DEVICE_STATE;
+        goto exit;
     }
 
     targetContext = DeviceGetContext(targetDevice);
 
-    NTSTATUS status = WdfRequestRetrieveOutputBuffer(
+    status = WdfRequestRetrieveOutputBuffer(
         Request, sizeof(AMT_LIVE_FRAME), (PVOID*)&output, &outputLength);
     if (!NT_SUCCESS(status)) {
-        return status;
+        goto exit;
     }
 
     WdfSpinLockAcquire(targetContext->LiveLock);
@@ -1079,22 +1121,28 @@ AmtPtpGetLiveFrame(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     if (!fileContext->LiveOwner ||
         targetContext->LiveOwnerFileObject != fileObject) {
         WdfSpinLockRelease(targetContext->LiveLock);
-        return STATUS_ACCESS_DENIED;
+        status = STATUS_ACCESS_DENIED;
+        goto exit;
     }
 
     if (InterlockedCompareExchange(&targetContext->LiveEnabled, 0, 0) == 0) {
         WdfSpinLockRelease(targetContext->LiveLock);
-        return STATUS_DEVICE_NOT_READY;
+        status = STATUS_DEVICE_NOT_READY;
+        goto exit;
     }
 
-    ULONG index = (ULONG)InterlockedCompareExchange(
+    index = (ULONG)InterlockedCompareExchange(
         &targetContext->LiveFrameIndex, 0, 0);
     *output = targetContext->LiveFrame[index & 1u];
 
     WdfSpinLockRelease(targetContext->LiveLock);
 
     WdfRequestSetInformation(Request, sizeof(AMT_LIVE_FRAME));
-    return STATUS_SUCCESS;
+    status = STATUS_SUCCESS;
+
+exit:
+    AmtPtpConfigControlReleaseTargetDevice(targetDevice);
+    return status;
 }
 
 // ----------------------------------------------------------------------------
@@ -1127,10 +1175,15 @@ AmtPtpConfigControlEvtFileClose(_In_ WDFFILEOBJECT FileObject)
     // handlers in this file - a handle can close (crash, taskkill, unplug)
     // at the same moment a sleep-triggered re-enumeration is nulling this
     // field out, and the old code read it twice, unlocked, to get there.
+    //
+    // BUG FIX (use-after-free): paired with
+    // AmtPtpConfigControlReleaseTargetDevice below - see
+    // AmtPtpConfigControlSnapshotTargetDevice's comment in Device.c.
     targetDevice = AmtPtpConfigControlSnapshotTargetDevice(controlDevice);
 
     if (fileContext == NULL || !fileContext->LiveOwner ||
         targetDevice == NULL) {
+        AmtPtpConfigControlReleaseTargetDevice(targetDevice);
         return;
     }
 
@@ -1143,6 +1196,8 @@ AmtPtpConfigControlEvtFileClose(_In_ WDFFILEOBJECT FileObject)
     }
     fileContext->LiveOwner = FALSE;
     WdfSpinLockRelease(targetContext->LiveLock);
+
+    AmtPtpConfigControlReleaseTargetDevice(targetDevice);
 }
 
 VOID

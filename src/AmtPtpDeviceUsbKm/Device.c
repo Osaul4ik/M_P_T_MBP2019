@@ -297,13 +297,18 @@ unlock_and_return:
     return status;
 }
 
-// AmtPtpConfigControlSnapshotTargetDevice
+// AmtPtpConfigControlSnapshotTargetDevice / AmtPtpConfigControlReleaseTargetDevice
 //
-// See the prototype comment in Device.h. Single locked read of
-// AMT_CONFIG_CONTROL_CONTEXT::TargetDevice, under the same
-// ConfigControlDeviceLock every writer already uses - callers get one
-// consistent snapshot instead of re-reading the field (possibly more than
-// once, possibly torn against a concurrent AddDevice/Cleanup) on their own.
+// See the prototype comment in Device.h for the full use-after-free
+// rationale. Locked read of AMT_CONFIG_CONTROL_CONTEXT::TargetDevice under
+// the same ConfigControlDeviceLock every writer already uses, PLUS a
+// WdfObjectReference taken on the handle before the lock is released - so
+// the reference-take is atomic with the read and can never land on a
+// handle that AmtPtpEvtDeviceContextCleanup has already started tearing
+// down. The reference keeps the FDO's WDF object (and therefore its
+// DEVICE_CONTEXT) allocated until the matching
+// AmtPtpConfigControlReleaseTargetDevice call, regardless of how far PnP
+// remove processing for that FDO has otherwise progressed in the meantime.
 _IRQL_requires_(PASSIVE_LEVEL)
 WDFDEVICE
 AmtPtpConfigControlSnapshotTargetDevice(_In_ WDFDEVICE ControlDevice)
@@ -319,9 +324,21 @@ AmtPtpConfigControlSnapshotTargetDevice(_In_ WDFDEVICE ControlDevice)
 
     WdfWaitLockAcquire(driverContext->ConfigControlDeviceLock, NULL);
     targetDevice = controlContext->TargetDevice;
+    if (targetDevice != NULL) {
+        WdfObjectReference(targetDevice);
+    }
     WdfWaitLockRelease(driverContext->ConfigControlDeviceLock);
 
     return targetDevice;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+AmtPtpConfigControlReleaseTargetDevice(_In_opt_ WDFDEVICE TargetDevice)
+{
+    if (TargetDevice != NULL) {
+        WdfObjectDereference(TargetDevice);
+    }
 }
 
 // AmtPtpDeviceUsbKmCreateDevice

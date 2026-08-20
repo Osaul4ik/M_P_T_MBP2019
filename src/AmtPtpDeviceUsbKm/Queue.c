@@ -1,4 +1,59 @@
 // Queue entry points and callbacks. Kernel-mode Driver Framework
+//
+// ---------------------------------------------------------------------
+// InputQueue LIFECYCLE POLICY (non-power-managed by design - see below)
+// ---------------------------------------------------------------------
+// InputQueue (DEVICE_CONTEXT::InputQueue) is a manual WdfIoQueueDispatchManual
+// queue with PowerManaged = FALSE. This is intentional, not an oversight:
+// a HID minidriver's read queue must be able to hold a pending
+// IOCTL_HID_READ_REPORT request ACROSS a D0Exit/D0Entry (sleep/resume)
+// cycle so the request is still there, ready to be completed with fresh
+// data, the moment the device comes back - a power-managed queue would
+// instead stop delivering to/from this queue around every power
+// transition, which is not what a continuously-open HID read pipe wants.
+//
+// Because it is non-power-managed, WDF does NOT call AmtPtpDeviceUsbKmEvtIoStop
+// on it for ordinary D0Exit/D0Entry power transitions - only for the
+// framework-driven stop/purge that happens around device
+// PnP stop (surprise removal) and remove. Concretely, per code path:
+//
+//   - D0Exit (sleep, or any power-down): InputQueue is left untouched.
+//     Pending HID read requests simply stay queued. No owner change, no
+//     cancellation, no completion. This is deliberate: the queue's
+//     contents are not tied to a USB session, only to the FDO's own
+//     lifetime.
+//   - D0Entry (resume): same - InputQueue is not touched here either.
+//     Any request that was pending across the sleep is still pending and
+//     will be satisfied by the next successful interrupt-pipe read
+//     completion once the reader restarts.
+//   - Surprise removal / PnP stop-for-remove: WDF calls
+//     AmtPtpDeviceUsbKmEvtIoStop with WdfRequestStopActionPurge for every
+//     request still on InputQueue. Each is completed here with
+//     STATUS_CANCELLED - this driver owns cancellation of its own queue's
+//     contents; WDF does not do this automatically. No stale request can
+//     survive past this point to be completed with data belonging to the
+//     old (now-torn-down) hardware session.
+//   - PnP suspend (queue-level, distinct from device D0Exit): WDF calls
+//     EvtIoStop with WdfRequestStopActionSuspend. The request is
+//     acknowledged (WdfRequestStopAcknowledge(Request, FALSE)) and left on
+//     the queue for the framework to redeliver later - no ownership
+//     change.
+//   - Normal completion: whichever HID-read-request consumer actually
+//     satisfies the request - AmtPtpEvtUsbInterruptPipeReadComplete
+//     (Interrupt.c), on both the digitizer and the opportunistic
+//     force-touch mouse delivery path - retrieves it via
+//     WdfIoQueueRetrieveNextRequest and completes it directly. That
+//     completion is the ONLY path that ever hands report data back for a
+//     request pulled from this queue; Queue.c itself never completes a
+//     forwarded read with data, only with STATUS_CANCELLED (purge) or not
+//     at all (suspend/normal forward).
+//
+// Ownership summary per request lifetime: forwarded to InputQueue by
+// AmtPtpDispatchReadReportRequests (below); requeue/redelivery owned by
+// WDF itself (suspend path); cancel-on-remove owned by
+// AmtPtpDeviceUsbKmEvtIoStop (this file); data-completion owned by
+// AmtPtpEvtUsbInterruptPipeReadComplete (Interrupt.c). No other function
+// in this driver retrieves from or completes requests on InputQueue.
 
 #include "driver.h"
 

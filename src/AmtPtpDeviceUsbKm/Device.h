@@ -82,8 +82,17 @@ typedef enum _READER_RECOVERY_STAGE
 typedef struct _AMT_CONFIG_CONTROL_CONTEXT
 {
     // The PnP filter device that owns the actual palm/geometry state.
-    // This is a WDF handle, not a raw WDM pointer. The control device holds
-    // an explicit WDF reference to keep TargetDevice alive until cleanup.
+    // This is a WDF handle, not a raw WDM pointer.
+    //
+    // IMPORTANT: this field itself holds NO reference on the FDO - it is
+    // just a pointer-sized value guarded by ConfigControlDeviceLock against
+    // torn/concurrent read-write (see AmtPtpConfigControlSnapshotTargetDevice).
+    // A lock-protected READ of this field is not the same thing as keeping
+    // the FDO alive for however long the caller goes on to use the handle
+    // afterward - the lock is released before any handler runs. Every
+    // caller that snapshots this field MUST pair it with
+    // AmtPtpConfigControlReleaseTargetDevice() once it is done using the
+    // returned handle; see that function pair's comment for why.
     WDFDEVICE TargetDevice;
 } AMT_CONFIG_CONTROL_CONTEXT, *PAMT_CONFIG_CONTROL_CONTEXT;
 
@@ -315,6 +324,40 @@ typedef struct _DEVICE_CONTEXT
     // state transition or a pointer snapshot.
     WDFWAITLOCK               RecoveryLock;
 
+    // ---------------------------------------------------------------
+    // GLOBAL LOCK ACQUISITION ORDER (audited across ConfigIoctl.c,
+    // Device.c, Hid.c, Interrupt.c)
+    // ---------------------------------------------------------------
+    // This driver uses five locks total: RecoveryLock, D0ExitLock,
+    // StateLock, LiveLock (all above/below in this struct), and
+    // DRIVER_CONTEXT::ConfigControlDeviceLock (Driver.h, driver-lifetime,
+    // not per-FDO).
+    //
+    //   1. RecoveryLock          (WDFWAITLOCK, PASSIVE_LEVEL only)
+    //   2. D0ExitLock            (WDFSPINLOCK, DISPATCH_LEVEL-safe)
+    //
+    // RecoveryLock, when taken together with D0ExitLock, is ALWAYS
+    // acquired first, with D0ExitLock nested inside it for a short
+    // snapshot/validate (see AmtPtpEvtReaderRestartTimer for the canonical
+    // shape) - never the reverse. D0ExitLock is never held while waiting
+    // on RecoveryLock and never held across a blocking call.
+    //
+    // StateLock, LiveLock, and ConfigControlDeviceLock are independent
+    // leaf locks: no call site acquires any of them while already holding
+    // RecoveryLock, D0ExitLock, or each other. Each guards its own
+    // self-contained critical section (frame-processing state,
+    // live-monitor snapshot publication, and the control device's
+    // TargetDevice field, respectively) and is released before any other
+    // lock in this list is taken.
+    //
+    // Net rule: the only real ordering constraint is RecoveryLock before
+    // D0ExitLock. StateLock/LiveLock/ConfigControlDeviceLock can be taken
+    // at any point as long as they are not held across a call into another
+    // lock's critical section. Keep it that way - do not acquire two of
+    // these five locks in a new nested combination without updating this
+    // comment to reflect the resulting order.
+    // ---------------------------------------------------------------
+
     // Set under D0ExitLock at the very start of AmtPtpEvtDeviceD0Exit and
     // AmtPtpEvtDeviceReleaseHardware, cleared under the same lock at the
     // start of AmtPtpEvtDeviceD0Entry. AmtPtpEvtReaderRestartTimer and
@@ -488,9 +531,11 @@ _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS
 AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice);
 
-// AmtPtpConfigControlSnapshotTargetDevice
+// AmtPtpConfigControlSnapshotTargetDevice / AmtPtpConfigControlReleaseTargetDevice
 //
-// The only safe way to read AMT_CONFIG_CONTROL_CONTEXT::TargetDevice.
+// The only safe way to read AMT_CONFIG_CONTROL_CONTEXT::TargetDevice and
+// use the FDO it names.
+//
 // Every WRITE to that field (AmtPtpAcquireConfigControlDevice's re-attach
 // branch, AmtPtpEvtDeviceContextCleanup's NULL-out) already runs under
 // DRIVER_CONTEXT::ConfigControlDeviceLock - a WDFWAITLOCK, so PASSIVE_LEVEL
@@ -504,11 +549,43 @@ AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice);
 // AmtPtpGetLiveFrame's separate check-then-dereference (called at up to
 // 30 Hz whenever the GUI's Live preview is on) the worst offender - the
 // two reads are not even the same snapshot, let alone a locked one.
-// Every call site in ConfigIoctl.c now takes exactly one snapshot through
-// this helper and uses that local for the rest of the call.
+//
+// BUG FIX (use-after-free): reading the field under lock closes the TOCTOU
+// on the *pointer value*, but a lock-protected read is not a reference. A
+// bare WDFDEVICE sitting in a local variable does not keep that FDO's
+// framework object alive. If the FDO is torn down (surprise removal ->
+// ReleaseHardware -> AmtPtpEvtDeviceContextCleanup -> WDF frees the object)
+// while a handler is still mid-flight against a previously-snapshotted
+// handle - trivially reachable, since several handlers (AmtPtpSetPalmConfig
+// et al.) do blocking PASSIVE_LEVEL registry I/O in between - that handler's
+// subsequent DeviceGetContext(targetDevice) dereferences freed pool. The
+// missing piece is exactly what the AMT_CONFIG_CONTROL_CONTEXT field
+// comment used to (incorrectly) claim already existed: an explicit
+// reference pinning the FDO alive for the duration of use.
+//
+// AmtPtpConfigControlSnapshotTargetDevice now takes a WdfObjectReference on
+// the returned handle before releasing ConfigControlDeviceLock (so the
+// reference-take itself cannot race the field going NULL/repointed) and
+// returns NULL if there is no current target. Every caller MUST release
+// that reference - exactly once, on every exit path, including early
+// returns - via AmtPtpConfigControlReleaseTargetDevice() once it is done
+// touching the target FDO's context. This does not prevent the FDO from
+// being logically removed (D0ExitInProgress/RecoveryLock still govern
+// that) - it only guarantees the WDFDEVICE handle and its DEVICE_CONTEXT
+// memory remain valid to dereference for as long as the caller holds the
+// reference.
 _IRQL_requires_(PASSIVE_LEVEL)
 WDFDEVICE
 AmtPtpConfigControlSnapshotTargetDevice(_In_ WDFDEVICE ControlDevice);
+
+// Releases the reference taken by AmtPtpConfigControlSnapshotTargetDevice.
+// No-op if TargetDevice is NULL (mirrors callers' existing NULL-check
+// pattern, so call sites don't need a separate guard). Safe at
+// PASSIVE_LEVEL <= IRQL <= DISPATCH_LEVEL, matching WdfObjectDereference's
+// own contract, though every current caller is PASSIVE_LEVEL.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+AmtPtpConfigControlReleaseTargetDevice(_In_opt_ WDFDEVICE TargetDevice);
 
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL AmtPtpConfigControlEvtIoDeviceControl;
 
