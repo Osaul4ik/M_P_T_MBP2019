@@ -818,23 +818,74 @@
         </Style>
 
         <Style x:Key="SettingsTabControl" TargetType="TabControl">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource CardBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="14"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabControl">
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                            </Grid.RowDefinitions>
-                            <Border Grid.Row="0" Background="{DynamicResource ControlFillBrush}"
-                                    BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
-                                    CornerRadius="9" Padding="3" Margin="0,0,0,14">
-                                <UniformGrid Rows="1" IsItemsHost="True"/>
-                            </Border>
-                            <ContentPresenter Grid.Row="1" ContentSource="SelectedContent"/>
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10"
+                                Padding="{TemplateBinding Padding}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <Border Grid.Row="0"
+                                        Background="{DynamicResource ControlFillBrush}"
+                                        BorderBrush="{DynamicResource ControlStrokeBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="9"
+                                        Padding="3"
+                                        Margin="0,0,0,14">
+                                    <UniformGrid Rows="1" IsItemsHost="True"/>
+                                </Border>
+                                <ContentPresenter Grid.Row="1" ContentSource="SelectedContent"/>
+                            </Grid>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
+        </Style>
+
+        <Style x:Key="SettingsScrollBar" TargetType="ScrollBar">
+            <Setter Property="Width" Value="8"/>
+            <Setter Property="MinWidth" Value="8"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid Background="Transparent">
+                            <Track x:Name="PART_Track" Focusable="False" IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.LineUpCommand"
+                                                  Background="Transparent" BorderThickness="0"
+                                                  Opacity="0" Focusable="False" IsTabStop="False"/>
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Background="{DynamicResource TextSecondaryBrush}"
+                                           Opacity="0.55" Margin="2,0" Focusable="False">
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Border Background="{TemplateBinding Background}"
+                                                        CornerRadius="4"/>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.LineDownCommand"
+                                                  Background="Transparent" BorderThickness="0"
+                                                  Opacity="0" Focusable="False" IsTabStop="False"/>
+                                </Track.IncreaseRepeatButton>
+                            </Track>
                         </Grid>
                     </ControlTemplate>
                 </Setter.Value>
@@ -1046,6 +1097,9 @@
             <TabControl Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Style="{StaticResource SettingsTabControl}">
                 <TabItem Header="Palm" Style="{StaticResource SettingsTabItem}">
             <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ScrollViewer.Resources>
+                        <Style TargetType="ScrollBar" BasedOn="{StaticResource SettingsScrollBar}"/>
+                    </ScrollViewer.Resources>
                 <StackPanel>
                     <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                         <Grid>
@@ -1148,6 +1202,9 @@
 
                 <TabItem Header="Scroll" Style="{StaticResource SettingsTabItem}">
                     <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ScrollViewer.Resources>
+                        <Style TargetType="ScrollBar" BasedOn="{StaticResource SettingsScrollBar}"/>
+                    </ScrollViewer.Resources>
                         <StackPanel>
                             <GroupBox>
                                 <GroupBox.Header>
@@ -1222,6 +1279,9 @@
 
                 <TabItem Header="Pointer" Style="{StaticResource SettingsTabItem}">
                     <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ScrollViewer.Resources>
+                        <Style TargetType="ScrollBar" BasedOn="{StaticResource SettingsScrollBar}"/>
+                    </ScrollViewer.Resources>
                         <StackPanel>
                             <GroupBox>
                                 <GroupBox.Header>
@@ -1345,21 +1405,7 @@
                     </Grid.RowDefinitions>
 
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,14">
-                        <TextBlock Text="Touchpad preview" Style="{StaticResource SectionTitle}" FontSize="16" VerticalAlignment="Center"/>
-                        <Border Background="Transparent" Padding="4,3" Margin="12,0,0,0">
-                            <StackPanel Orientation="Horizontal">
-                                <Ellipse Width="9" Height="9" Fill="{DynamicResource SuccessBrush}" VerticalAlignment="Center"/>
-                                <TextBlock Text="Normal touch" FontSize="12.5" FontWeight="SemiBold" Margin="7,0,0,0"
-                                           Foreground="{DynamicResource SuccessBrush}" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Border>
-                        <Border Background="Transparent" Padding="4,3" Margin="6,0,0,0">
-                            <StackPanel Orientation="Horizontal">
-                                <Ellipse Width="9" Height="9" Fill="{DynamicResource DangerBrush}" VerticalAlignment="Center"/>
-                                <TextBlock Text="Palm" FontSize="12.5" FontWeight="SemiBold" Margin="7,0,0,0"
-                                           Foreground="{DynamicResource DangerBrush}" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Border>
+                        <TextBlock Text="Touchpad" Style="{StaticResource SectionTitle}" FontSize="16" VerticalAlignment="Center"/>
                     </StackPanel>
 
                     <!-- "Device" bezel around the trackpad glass: a silver

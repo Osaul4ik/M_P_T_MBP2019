@@ -106,6 +106,8 @@ namespace AmtPtpConfigGui
         private static readonly SolidColorBrush LiveFillUp = Frozen(90, Colors.Orange.R, Colors.Orange.G, Colors.Orange.B);
         private static readonly SolidColorBrush LiveFillMove = Frozen(90, Colors.DeepSkyBlue.R, Colors.DeepSkyBlue.G, Colors.DeepSkyBlue.B);
         private static readonly SolidColorBrush LiveFillPalm = Frozen(150, 0xE8, 0x11, 0x23);
+        private static readonly SolidColorBrush PreviewPalmAlertBrush = Frozen(72, 0xD9, 0x25, 0x35);
+        private static readonly SolidColorBrush PreviewEdgeAlertBrush = Frozen(92, 0xE2, 0x4A, 0x4A);
         private static readonly SolidColorBrush LiveTagBgBrush = Frozen(230, 0x14, 0x16, 0x1B);
 
         private readonly DeviceIo _device = new DeviceIo();
@@ -1795,8 +1797,10 @@ namespace AmtPtpConfigGui
             _lastLiveSequence = frame.Sequence;
             AccumulateCornerExtrema(frame);
             DrawLiveOverlay(frame);
+            UpdatePreviewAlerts(frame);
 
             int count = frame.ContactCount;
+            UpdateLiveClassification(frame);
 
             // The live contact count is part of the same snapshot as the
             // overlay. It must therefore update for every new frame;
@@ -1819,6 +1823,59 @@ namespace AmtPtpConfigGui
                 LiveCornerText.Text =
                     $"Corners: TL {_topLeft.Samples} | TR {_topRight.Samples} | " +
                     $"BL {_bottomLeft.Samples} | BR {_bottomRight.Samples}";
+            }
+        }
+
+        private void UpdateLiveClassification(in LiveFrame frame)
+        {
+            if (ClassificationText == null)
+                return;
+
+            if (frame.Contacts == null || frame.ContactCount == 0)
+            {
+                ClassificationText.Text = "—";
+                ClassificationText.Foreground = Brushes.Gray;
+                return;
+            }
+
+            var cfg = ReadConfigFromSliders();
+            int count = Math.Min(frame.ContactCount, frame.Contacts.Length);
+            bool anyPalm = false;
+            bool anyEdgeZone = false;
+
+            double xRange = _geometry.XMax - _geometry.XMin;
+            double yRange = _geometry.YMax - _geometry.YMin;
+
+            if (xRange > 0 && yRange > 0)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    var contact = frame.Contacts[i];
+                    if (contact.PalmSuspect != 0)
+                    {
+                        anyPalm = true;
+                        continue;
+                    }
+
+                    if (PalmPreviewEngine.InEdgeZone(_geometry, cfg, contact.X, contact.Y))
+                        anyEdgeZone = true;
+                }
+            }
+
+            if (anyPalm)
+            {
+                ClassificationText.Text = "Palm";
+                ClassificationText.Foreground = PalmLargeBrush;
+            }
+            else if (anyEdgeZone)
+            {
+                ClassificationText.Text = "Edge zone";
+                ClassificationText.Foreground = PalmLocalBrush;
+            }
+            else
+            {
+                ClassificationText.Text = "Normal contact";
+                ClassificationText.Foreground = PalmNoneBrush;
             }
         }
 
@@ -2006,6 +2063,7 @@ namespace AmtPtpConfigGui
         {
             if (LiveOverlayCanvas != null)
                 LiveOverlayCanvas.Clear();
+            ClearPreviewAlerts();
         }
 
         private void DrawLiveOverlay(LiveFrame frame)
@@ -2293,6 +2351,8 @@ namespace AmtPtpConfigGui
         private Line? _previewCenterVertical;
         private Line? _previewCenterHorizontal;
         private TextBlock? _previewEdgeLabel;
+        private Rectangle? _previewPalmAlert;
+        private readonly Rectangle[] _previewEdgeAlerts = new Rectangle[4];
 
         private void EnsurePreviewVisuals()
         {
@@ -2318,6 +2378,27 @@ namespace AmtPtpConfigGui
             {
                 _previewEdgeZones[i] = new Rectangle { Fill = EdgeZoneBrush };
                 PreviewCanvas.Children.Add(_previewEdgeZones[i]);
+            }
+
+            _previewPalmAlert = new Rectangle
+            {
+                Fill = PreviewPalmAlertBrush,
+                RadiusX = 12,
+                RadiusY = 12,
+                Visibility = Visibility.Collapsed,
+                IsHitTestVisible = false
+            };
+            PreviewCanvas.Children.Add(_previewPalmAlert);
+
+            for (int i = 0; i < _previewEdgeAlerts.Length; i++)
+            {
+                _previewEdgeAlerts[i] = new Rectangle
+                {
+                    Fill = PreviewEdgeAlertBrush,
+                    Visibility = Visibility.Collapsed,
+                    IsHitTestVisible = false
+                };
+                PreviewCanvas.Children.Add(_previewEdgeAlerts[i]);
             }
 
             _previewEdgeLabel = new TextBlock
@@ -2367,42 +2448,88 @@ namespace AmtPtpConfigGui
             UpdatePreviewZone(_previewEdgeZones[1], 0, h - edgeBottomPx, w, edgeBottomPx);
             UpdatePreviewZone(_previewEdgeZones[2], 0, 0, edgeLeftPx, h);
             UpdatePreviewZone(_previewEdgeZones[3], w - edgeRightPx, 0, edgeRightPx, h);
+
+            if (_previewPalmAlert != null)
+            {
+                _previewPalmAlert.Width = w;
+                _previewPalmAlert.Height = h;
+                Canvas.SetLeft(_previewPalmAlert, 0);
+                Canvas.SetTop(_previewPalmAlert, 0);
+            }
+            UpdatePreviewZone(_previewEdgeAlerts[0], 0, 0, w, edgeTopPx);
+            UpdatePreviewZone(_previewEdgeAlerts[1], 0, h - edgeBottomPx, w, edgeBottomPx);
+            UpdatePreviewZone(_previewEdgeAlerts[2], 0, 0, edgeLeftPx, h);
+            UpdatePreviewZone(_previewEdgeAlerts[3], w - edgeRightPx, 0, edgeRightPx, h);
+            ClearPreviewAlerts();
+
             Canvas.SetLeft(_previewEdgeLabel, 8);
             Canvas.SetTop(_previewEdgeLabel, 6);
 
-            // Classification remains visible and uses the same representative
-            // contact as the former Test contact defaults, but the editable
-            // Test contact controls/marker are no longer shown in the GUI.
-            const double sampleXPct = 0.50;
-            const double sampleYPct = 0.50;
-            const int sampleMajor = 380;
-            const int sampleMinor = 180;
-            double sensorX = sampleXPct * xRange;
-            double sensorY = sampleYPct * yRange;
-            // Test Contact was removed; keep classification preview in the
-            // non-birth state so it no longer depends on a deleted control.
-            const bool isBirth = false;
-            var cls = PalmPreviewEngine.Classify(_geometry, cfg, sampleMajor, sampleMinor, sensorX, sensorY, isBirth);
+            // Classification is driven by the live frame. Keep it neutral while
+            // no live contacts are available rather than fabricating a sample contact.
+            ClassificationText.Text = "—";
+            ClassificationText.Foreground = Brushes.Gray;
+        }
 
-            Brush fingerBrush = cls switch
-            {
-                PalmClass.None => PalmNoneBrush,
-                PalmClass.Local => PalmLocalBrush,
-                PalmClass.Large => PalmLargeBrush,
-                _ => Brushes.Gray,
-            };
+        private void ClearPreviewAlerts()
+        {
+            if (_previewPalmAlert != null)
+                _previewPalmAlert.Visibility = Visibility.Collapsed;
+            for (int i = 0; i < _previewEdgeAlerts.Length; i++)
+                if (_previewEdgeAlerts[i] != null)
+                    _previewEdgeAlerts[i].Visibility = Visibility.Collapsed;
+        }
 
-            string classLabel = cls switch
+        private void UpdatePreviewAlerts(in LiveFrame frame)
+        {
+            if (_previewPalmAlert == null)
+                return;
+
+            ClearPreviewAlerts();
+            if (frame.Contacts == null || frame.ContactCount <= 0)
+                return;
+
+            var cfg = ReadConfigFromSliders();
+            int count = Math.Min(frame.ContactCount, frame.Contacts.Length);
+            bool anyPalm = false;
+            bool[] edge = new bool[4];
+            double xRange = _geometry.XMax - _geometry.XMin;
+            double yRange = _geometry.YMax - _geometry.YMin;
+            if (xRange <= 0 || yRange <= 0)
+                return;
+
+            for (int i = 0; i < count; i++)
             {
-                PalmClass.None => "FINGER (PALM_NONE)",
-                PalmClass.Local => isBirth && PalmPreviewEngine.InEdgeZone(_geometry, cfg, sensorX, sensorY)
-                    ? "PALM (PALM_LOCAL — at edge zone)"
-                    : "PALM (PALM_LOCAL — by shape/score)",
-                PalmClass.Large => "PALM (PALM_LARGE — entire touchpad rejected)",
-                _ => "—",
-            };
-            ClassificationText.Text = classLabel;
-            ClassificationText.Foreground = fingerBrush;
+                var contact = frame.Contacts[i];
+                if (contact.PalmSuspect != 0)
+                {
+                    anyPalm = true;
+                    continue;
+                }
+
+                double nx = (contact.X - _geometry.XMin) / xRange;
+                double ny = (contact.Y - _geometry.YMin) / yRange;
+                bool top = cfg.EdgePermilleTop > 0 && nx >= 0 && nx <= 1 && ny >= 0 && ny <= cfg.EdgePermilleTop / 1000.0;
+                bool bottom = cfg.EdgePermilleBottom > 0 && nx >= 0 && nx <= 1 && ny >= 1.0 - cfg.EdgePermilleBottom / 1000.0 && ny <= 1;
+                bool left = cfg.EdgePermilleLeft > 0 && nx >= 0 && nx <= cfg.EdgePermilleLeft / 1000.0 && ny >= 0 && ny <= 1;
+                bool right = cfg.EdgePermilleRight > 0 && nx >= 1.0 - cfg.EdgePermilleRight / 1000.0 && nx <= 1 && ny >= 0 && ny <= 1;
+                edge[0] |= top;
+                edge[1] |= bottom;
+                edge[2] |= left;
+                edge[3] |= right;
+            }
+
+            if (anyPalm)
+            {
+                _previewPalmAlert.Visibility = Visibility.Visible;
+                return;
+            }
+
+            for (int i = 0; i < _previewEdgeAlerts.Length; i++)
+            {
+                if (edge[i] && _previewEdgeAlerts[i].Width > 0 && _previewEdgeAlerts[i].Height > 0)
+                    _previewEdgeAlerts[i].Visibility = Visibility.Visible;
+            }
         }
 
         private static void UpdatePreviewZone(Rectangle zone, double x, double y, double width, double height)
