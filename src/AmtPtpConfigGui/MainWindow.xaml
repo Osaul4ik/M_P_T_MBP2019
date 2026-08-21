@@ -971,7 +971,7 @@
         </Border>
 
         <!-- ===================== Profiles + advanced mode ===================== -->
-        <Grid DockPanel.Dock="Top" Margin="0,0,0,14">
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="1.65*"/>
                 <ColumnDefinition Width="10"/>
@@ -992,11 +992,11 @@
                     <ComboBox x:Name="ProfileCombo" Grid.Column="1"
                               SelectionChanged="ProfileCombo_SelectionChanged"/>
                     <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <Button Content="＋" Padding="8,0" Width="36" MinWidth="0" Height="36" Margin="0,0,6,0"
+                        <Button Content="＋" Padding="8,0" Width="34" MinWidth="0" Height="36" Margin="0,0,6,0"
                                 Click="NewProfile_Click" ToolTip="New profile"/>
-                        <Button Content="Rename" Padding="8,0" Width="74" MinWidth="0" Height="36" Margin="0,0,6,0"
+                        <Button Content="Rename" Padding="6,0" Width="68" MinWidth="0" Height="36" Margin="0,0,6,0"
                                 Click="RenameProfile_Click"/>
-                        <Button Content="Delete" Padding="8,0" Width="66" MinWidth="0" Height="36"
+                        <Button Content="Delete" Padding="6,0" Width="60" MinWidth="0" Height="36" Margin="0"
                                 Click="DeleteProfile_Click"/>
                     </StackPanel>
                 </Grid>
@@ -1100,7 +1100,7 @@
                     <ScrollViewer.Resources>
                         <Style TargetType="ScrollBar" BasedOn="{StaticResource SettingsScrollBar}"/>
                     </ScrollViewer.Resources>
-                <StackPanel>
+                <StackPanel Width="460">
                     <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -1205,7 +1205,7 @@
                     <ScrollViewer.Resources>
                         <Style TargetType="ScrollBar" BasedOn="{StaticResource SettingsScrollBar}"/>
                     </ScrollViewer.Resources>
-                        <StackPanel>
+                        <StackPanel Width="460">
                             <GroupBox>
                                 <GroupBox.Header>
                                     <StackPanel>
@@ -1282,7 +1282,7 @@
                     <ScrollViewer.Resources>
                         <Style TargetType="ScrollBar" BasedOn="{StaticResource SettingsScrollBar}"/>
                     </ScrollViewer.Resources>
-                        <StackPanel>
+                        <StackPanel Width="460">
                             <GroupBox>
                                 <GroupBox.Header>
                                     <StackPanel>
@@ -1401,7 +1401,6 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,14">
@@ -1437,15 +1436,6 @@
                         </Grid>
                     </Border>
 
-                    <Border Grid.Row="2" Margin="0,14,0,0" Padding="14,11" CornerRadius="8"
-                            Background="{DynamicResource ControlFillBrush}"
-                            BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Classification: " FontWeight="SemiBold"/>
-                            <TextBlock x:Name="ClassificationText" Text="—" FontWeight="Bold"/>
-                            <TextBlock x:Name="GeometrySourceText" Margin="20,0,0,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
-                        </StackPanel>
-                    </Border>
                 </Grid>
             </Border>
 
