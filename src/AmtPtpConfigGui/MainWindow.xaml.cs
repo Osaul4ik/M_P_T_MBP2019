@@ -113,7 +113,6 @@ namespace AmtPtpConfigGui
         private PadGeometry _geometry = PadGeometry.Fallback;
         private bool _geometryFromDevice;
         private bool _suppressEvents;
-        private bool _draggingTestPoint;
         private bool _uiReady;
         private bool _profilesReady;
         private readonly List<GuiProfile> _profiles = new();
@@ -868,18 +867,6 @@ namespace AmtPtpConfigGui
                     };
                     requirePressure.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureGateFromTray));
 
-                    if (forceTouchOn && pointerCfg.RequirePressureToActivate != 0)
-                    {
-                        var requirePressureContinuous = new Forms.ToolStripMenuItem("Require pressure continuously")
-                        {
-                            Checked = pointerCfg.RequirePressureContinuously != 0,
-                            Padding = new System.Windows.Forms.Padding(28, 7, 10, 7),
-                            ToolTipText = "Ignore a Force-Touch contact on any frame where pressure is zero."
-                        };
-                        requirePressureContinuous.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureContinuousFromTray));
-                        menu.Items.Add(requirePressureContinuous);
-                    }
-
                     // Dedicated item that expands into the list of Force Tap button types.
                     var actionMenu = new RoundedMenuItem("Force Tap action")
                     {
@@ -893,6 +880,19 @@ namespace AmtPtpConfigGui
 
                     menu.Items.Add(forceTouch);
                     menu.Items.Add(requirePressure);
+
+                    if (forceTouchOn && pointerCfg.RequirePressureToActivate != 0)
+                    {
+                        var requirePressureContinuous = new Forms.ToolStripMenuItem("Require pressure continuously")
+                        {
+                            Checked = pointerCfg.RequirePressureContinuously != 0,
+                            Padding = new System.Windows.Forms.Padding(28, 7, 10, 7),
+                            ToolTipText = "Ignore a Force-Touch contact on any frame where pressure is zero."
+                        };
+                        requirePressureContinuous.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureContinuousFromTray));
+                        menu.Items.Add(requirePressureContinuous);
+                    }
+
                     menu.Items.Add(actionMenu);
                 }
 
@@ -2077,10 +2077,6 @@ namespace AmtPtpConfigGui
             LblMinMajor.Text = $"{SlMinMajor.Value:0}";
             LblMinMinor.Text = $"{SlMinMinor.Value:0}";
 
-            LblTestMajor.Text = $"{SlTestMajor.Value:0}";
-            LblTestMinor.Text = $"{SlTestMinor.Value:0}";
-            LblTestX.Text = $"{SlTestX.Value:0}%";
-            LblTestY.Text = $"{SlTestY.Value:0}%";
         }
 
         private static string FormatPermille(double permille) => $"{permille / 10.0:0.0}%";
@@ -2297,9 +2293,6 @@ namespace AmtPtpConfigGui
         private Line? _previewCenterVertical;
         private Line? _previewCenterHorizontal;
         private TextBlock? _previewEdgeLabel;
-        private Ellipse? _previewFinger;
-        private Line? _previewCrossHorizontal;
-        private Line? _previewCrossVertical;
 
         private void EnsurePreviewVisuals()
         {
@@ -2337,27 +2330,15 @@ namespace AmtPtpConfigGui
             };
             PreviewCanvas.Children.Add(_previewEdgeLabel);
 
-            _previewFinger = new Ellipse
-            {
-                Stroke = Brushes.White,
-                StrokeThickness = 1.5
-            };
-            PreviewCanvas.Children.Add(_previewFinger);
-
-            _previewCrossHorizontal = new Line { Stroke = Brushes.Black, StrokeThickness = 1.5, Opacity = 0.55 };
-            _previewCrossVertical = new Line { Stroke = Brushes.Black, StrokeThickness = 1.5, Opacity = 0.55 };
-            PreviewCanvas.Children.Add(_previewCrossHorizontal);
-            PreviewCanvas.Children.Add(_previewCrossVertical);
         }
 
         private void DrawPreview()
         {
             if (PreviewCanvas == null) return;
             EnsurePreviewVisuals();
-            if (_previewPadRect == null || _previewFinger == null ||
+            if (_previewPadRect == null ||
                 _previewCenterVertical == null || _previewCenterHorizontal == null ||
-                _previewEdgeLabel == null || _previewCrossHorizontal == null ||
-                _previewCrossVertical == null) return;
+                _previewEdgeLabel == null) return;
 
             double w = PreviewCanvas.Width;
             double h = PreviewCanvas.Height;
@@ -2389,21 +2370,17 @@ namespace AmtPtpConfigGui
             Canvas.SetLeft(_previewEdgeLabel, 8);
             Canvas.SetTop(_previewEdgeLabel, 6);
 
-            double testXPct = SlTestX.Value / 100.0;
-            double testYPct = SlTestY.Value / 100.0;
-            double px = testXPct * w;
-            double py = testYPct * h;
-            double sensorX = testXPct * xRange;
-            double sensorY = testYPct * yRange;
-
-            int testMajor = (int)SlTestMajor.Value;
-            int testMinor = (int)SlTestMinor.Value;
+            // Classification remains visible and uses the same representative
+            // contact as the former Test contact defaults, but the editable
+            // Test contact controls/marker are no longer shown in the GUI.
+            const double sampleXPct = 0.50;
+            const double sampleYPct = 0.50;
+            const int sampleMajor = 380;
+            const int sampleMinor = 180;
+            double sensorX = sampleXPct * xRange;
+            double sensorY = sampleYPct * yRange;
             bool isBirth = ChkIsBirth.IsChecked == true;
-            var cls = PalmPreviewEngine.Classify(_geometry, cfg, testMajor, testMinor, sensorX, sensorY, isBirth);
-
-            double physicalScale = Math.Min(w / xRange, h / yRange);
-            double majorPx = Math.Max(12, testMajor * physicalScale);
-            double minorPx = Math.Max(12, testMinor * physicalScale);
+            var cls = PalmPreviewEngine.Classify(_geometry, cfg, sampleMajor, sampleMinor, sensorX, sensorY, isBirth);
 
             Brush fingerBrush = cls switch
             {
@@ -2412,20 +2389,6 @@ namespace AmtPtpConfigGui
                 PalmClass.Large => PalmLargeBrush,
                 _ => Brushes.Gray,
             };
-
-            _previewFinger.Width = majorPx;
-            _previewFinger.Height = minorPx;
-            _previewFinger.Fill = fingerBrush;
-            Canvas.SetLeft(_previewFinger, px - majorPx / 2);
-            Canvas.SetTop(_previewFinger, py - minorPx / 2);
-
-            const double s = 8;
-            _previewCrossHorizontal.X1 = px - s;
-            _previewCrossHorizontal.X2 = px + s;
-            _previewCrossHorizontal.Y1 = _previewCrossHorizontal.Y2 = py;
-            _previewCrossVertical.X1 = _previewCrossVertical.X2 = px;
-            _previewCrossVertical.Y1 = py - s;
-            _previewCrossVertical.Y2 = py + s;
 
             string classLabel = cls switch
             {
@@ -2503,45 +2466,6 @@ namespace AmtPtpConfigGui
             var l2 = new Line { X1 = x, Y1 = y - s, X2 = x, Y2 = y + s, Stroke = Brushes.Black, StrokeThickness = 1.5, Opacity = 0.55 };
             PreviewCanvas.Children.Add(l1);
             PreviewCanvas.Children.Add(l2);
-        }
-
-        // Drag the test point directly on the canvas.
-        private void PreviewCanvas_MouseDown(object sender, MouseButtonEventArgs e)
-        {
-            _draggingTestPoint = true;
-            PreviewCanvas.CaptureMouse();
-            UpdateTestPointFromMouse(e);
-        }
-
-        private void PreviewCanvas_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
-        {
-            if (_draggingTestPoint) UpdateTestPointFromMouse(e);
-        }
-
-        private void PreviewCanvas_MouseUp(object sender, MouseButtonEventArgs e)
-        {
-            _draggingTestPoint = false;
-            PreviewCanvas.ReleaseMouseCapture();
-        }
-
-        private void UpdateTestPointFromMouse(System.Windows.Input.MouseEventArgs e)
-        {
-            var pos = e.GetPosition(PreviewCanvas);
-            double xPct = Clamp(pos.X / PreviewCanvas.Width * 100.0, 0, 100);
-            double yPct = Clamp(pos.Y / PreviewCanvas.Height * 100.0, 0, 100);
-
-            _suppressEvents = true;
-            try
-            {
-                SlTestX.Value = xPct;
-                SlTestY.Value = yPct;
-            }
-            finally
-            {
-                _suppressEvents = false;
-            }
-            UpdateAllLabels();
-            DrawPreview();
         }
 
         private static double Clamp(double v, double min, double max) => v < min ? min : (v > max ? max : v);

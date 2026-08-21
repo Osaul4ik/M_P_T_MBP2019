@@ -846,7 +846,7 @@
     <DockPanel LastChildFill="True" Margin="18">
 
         <!-- ===================== Header: brand + connection status ===================== -->
-        <Border x:Name="ProfileBarCard" DockPanel.Dock="Top" Style="{StaticResource Card}" Padding="18,14" Margin="0,0,0,10">
+        <Border x:Name="ProfileBarCard" DockPanel.Dock="Top" Style="{StaticResource Card}" Padding="18,14" Margin="0,0,0,14">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -920,7 +920,7 @@
         </Border>
 
         <!-- ===================== Profiles + advanced mode ===================== -->
-        <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,14">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="1.65*"/>
                 <ColumnDefinition Width="10"/>
@@ -1140,45 +1140,7 @@
                         </StackPanel>
                     </GroupBox>
 
-                    <GroupBox Margin="0,0,0,0">
-                        <GroupBox.Header>
-                            <StackPanel>
-                                <TextBlock Text="Test contact" Style="{StaticResource SectionTitle}"/>
-                                <TextBlock Text="PREVIEW · does not affect the driver" Style="{StaticResource SectionCaption}"/>
-                            </StackPanel>
-                        </GroupBox.Header>
-                        <StackPanel>
-                            <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Major (finger size)" ToolTip="Test contact major axis used only by the Palm preview tool. It does not change the driver. Increase it to simulate a larger contact."/>
-                                <TextBlock x:Name="LblTestMajor" Grid.Column="1" Style="{StaticResource SliderValue}"/>
-                            </Grid>
-                            <Slider x:Name="SlTestMajor" Minimum="20" Maximum="1200" Value="380" ValueChanged="Slider_Changed"/>
 
-                            <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Minor (finger width)" ToolTip="Test contact minor axis used only by the Palm preview tool. It does not change the driver. Increase it to simulate a wider contact."/>
-                                <TextBlock x:Name="LblTestMinor" Grid.Column="1" Style="{StaticResource SliderValue}"/>
-                            </Grid>
-                            <Slider x:Name="SlTestMinor" Minimum="10" Maximum="800" Value="180" ValueChanged="Slider_Changed"/>
-
-                            <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="X position (0=left, 100=right)" ToolTip="Horizontal position of the simulated contact in the Palm preview. 0 is the left edge and 100 is the right edge."/>
-                                <TextBlock x:Name="LblTestX" Grid.Column="1" Style="{StaticResource SliderValue}"/>
-                            </Grid>
-                            <Slider x:Name="SlTestX" Minimum="0" Maximum="100" Value="50" ValueChanged="Slider_Changed"/>
-
-                            <Grid Style="{StaticResource SettingRow}"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource SliderLabel}" Text="Y position (0=top, 100=bottom)" ToolTip="Vertical position of the simulated contact in the Palm preview. 0 is the top edge and 100 is the bottom edge."/>
-                                <TextBlock x:Name="LblTestY" Grid.Column="1" Style="{StaticResource SliderValue}"/>
-                            </Grid>
-                            <Slider x:Name="SlTestY" Minimum="0" Maximum="100" Value="50" ValueChanged="Slider_Changed"/>
-
-                            <CheckBox x:Name="ChkIsBirth" Style="{StaticResource OptionCheckBox}"
-                                      Content="New contact (birth) — not a continuation of an existing contact" IsChecked="True"
-                                      Margin="0,8,0,0" Checked="Slider_Changed" Unchecked="Slider_Changed"/>
-                            <TextBlock Style="{StaticResource HintText}"
-                                       Text="Drag the point directly on the map to verify the contact position."/>
-                        </StackPanel>
-                    </GroupBox>
 
                 </StackPanel>
             </ScrollViewer>
@@ -1414,15 +1376,12 @@
                             <Border CornerRadius="10" ClipToBounds="True">
                                 <Viewbox Stretch="Uniform">
                                     <Grid Width="700" Height="460">
-                                        <Canvas x:Name="PreviewCanvas" Width="700" Height="460" Background="Transparent"
-                                                MouseLeftButtonDown="PreviewCanvas_MouseDown"
-                                                MouseMove="PreviewCanvas_MouseMove"
-                                                MouseLeftButtonUp="PreviewCanvas_MouseUp"/>
+                                        <Canvas x:Name="PreviewCanvas" Width="700" Height="460" Background="Transparent"/>
                                         <!-- Separate layer for the live-touch overlay (footprints/labels).
                                              Kept apart from PreviewCanvas so a live tick only has to move a
                                              handful of pooled shapes here instead of clearing+rebuilding the
-                                             whole static background (pad, edge zones, test-touch point) 20-30
-                                             times a second - see DrawLiveOverlay in the code-behind. -->
+                                             whole static background (pad and edge zones) 20-30 times a second -
+                                             see DrawLiveOverlay in the code-behind. -->
                                         <local:LiveOverlayControl x:Name="LiveOverlayCanvas" Width="700" Height="460"
                                                   IsHitTestVisible="False"/>
                                     </Grid>
