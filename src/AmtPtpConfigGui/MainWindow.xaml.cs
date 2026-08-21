@@ -327,6 +327,8 @@ namespace AmtPtpConfigGui
             {
                 Content = "Minimize to tray when closing",
                 IsChecked = _appSettings.CloseToTray,
+                Width = 300,
+                Height = 28,
                 Margin = new Thickness(0, 0, 0, 8),
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
                 VerticalAlignment = System.Windows.VerticalAlignment.Center
@@ -337,6 +339,8 @@ namespace AmtPtpConfigGui
             {
                 Content = "Start the GUI with Windows",
                 IsChecked = _appSettings.StartWithWindows,
+                Width = 300,
+                Height = 28,
                 Margin = new Thickness(0, 0, 0, 8),
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
                 VerticalAlignment = System.Windows.VerticalAlignment.Center
@@ -371,30 +375,28 @@ namespace AmtPtpConfigGui
 
                     var button = new Button
                     {
-                        Width = 190,
-                        Height = 76,
-                        Margin = new Thickness(0, 0, theme.Id == "light" ? 10 : 0, 0),
+                        Width = 210,
+                        Height = 88,
+                        Margin = new Thickness(0, 0, theme.Id == "light" ? 12 : 0, 0),
                         Padding = new Thickness(0),
                         ToolTip = theme.Name,
+                        Style = (Style)FindResource("ThemePreviewButton"),
                         HorizontalContentAlignment = System.Windows.HorizontalAlignment.Stretch,
                         VerticalContentAlignment = System.Windows.VerticalAlignment.Stretch
                     };
 
-                    var preview = new Grid
-                    {
-                        ClipToBounds = true
-                    };
-                    preview.RowDefinitions.Add(new RowDefinition { Height = new GridLength(14) });
-                    preview.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-                    var previewBg = new Border
+                    var preview = new Border
                     {
                         Background = new SolidColorBrush(bg),
                         BorderBrush = new SolidColorBrush(borderColor),
-                        BorderThickness = new Thickness(1),
-                        CornerRadius = new CornerRadius(8)
+                        BorderThickness = string.Equals(theme.Id, selectedTheme, StringComparison.OrdinalIgnoreCase) ? new Thickness(2) : new Thickness(1),
+                        CornerRadius = new CornerRadius(10),
+                        Padding = new Thickness(10),
+                        ClipToBounds = true
                     };
-                    preview.Children.Add(previewBg);
+                    var previewGrid = new Grid();
+                    previewGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(12) });
+                    previewGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
                     var topBar = new Border
                     {
@@ -403,12 +405,12 @@ namespace AmtPtpConfigGui
                         Margin = new Thickness(1)
                     };
                     Grid.SetRow(topBar, 0);
-                    preview.Children.Add(topBar);
+                    previewGrid.Children.Add(topBar);
 
                     var miniCard = new Border
                     {
-                        Width = 138,
-                        Height = 42,
+                        Width = 164,
+                        Height = 52,
                         HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
                         VerticalAlignment = System.Windows.VerticalAlignment.Center,
                         Background = new SolidColorBrush(surfaceHigh),
@@ -418,32 +420,52 @@ namespace AmtPtpConfigGui
                         Margin = new Thickness(0, 10, 0, 0)
                     };
                     Grid.SetRow(miniCard, 1);
-                    preview.Children.Add(miniCard);
+                    previewGrid.Children.Add(miniCard);
 
                     var accent = new Border
                     {
-                        Width = 48,
-                        Height = 4,
+                        Width = 44,
+                        Height = 7,
                         HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
                         VerticalAlignment = System.Windows.VerticalAlignment.Top,
-                        Margin = new Thickness(12, 9, 0, 0),
+                        Margin = new Thickness(14, 12, 0, 0),
                         Background = new SolidColorBrush(primary),
-                        CornerRadius = new CornerRadius(2)
+                        CornerRadius = new CornerRadius(3)
                     };
                     Grid.SetRow(accent, 1);
-                    preview.Children.Add(accent);
+                    previewGrid.Children.Add(accent);
 
+                    var accent2 = new Border
+                    {
+                        Width = 28,
+                        Height = 7,
+                        HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+                        VerticalAlignment = System.Windows.VerticalAlignment.Top,
+                        Margin = new Thickness(68, 12, 0, 0),
+                        Background = new SolidColorBrush(primary),
+                        CornerRadius = new CornerRadius(3)
+                    };
+                    Grid.SetRow(accent2, 1);
+                    previewGrid.Children.Add(accent2);
+
+                    var accent3 = new Border
+                    {
+                        Width = 38,
+                        Height = 7,
+                        HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+                        VerticalAlignment = System.Windows.VerticalAlignment.Top,
+                        Margin = new Thickness(14, 30, 0, 0),
+                        Background = new SolidColorBrush(primary),
+                        CornerRadius = new CornerRadius(3)
+                    };
+                    Grid.SetRow(accent3, 1);
+                    previewGrid.Children.Add(accent3);
+                    preview.Child = previewGrid;
                     button.Content = preview;
-                    button.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "CardBrush");
-                    button.SetResourceReference(System.Windows.Controls.Control.BorderBrushProperty, "CardBorderBrush");
-                    button.BorderThickness = string.Equals(theme.Id, selectedTheme, StringComparison.OrdinalIgnoreCase)
-                        ? new Thickness(2) : new Thickness(1);
 
                     button.Click += (_, _) =>
                     {
                         selectedTheme = theme.Id;
-                        ThemeManager.Apply(selectedTheme, Resources);
-                        RefreshTrayMenu();
                         UpdateThemePreview();
                     };
                     themeButtons.Children.Add(button);

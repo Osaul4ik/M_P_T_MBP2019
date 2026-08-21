@@ -554,6 +554,21 @@
 
         <Style TargetType="CheckBox" BasedOn="{StaticResource AndroidSwitch}"/>
 
+        <Style x:Key="ThemePreviewButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- ===================== Sentence-length option checkboxes =====================
              AndroidSwitch (above) is the default CheckBox look, and it's the
              right one for a short on/off label like "Live" or "Pro Mode".
@@ -953,8 +968,8 @@
                             <TextBlock Text="Reconnect" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                    <Border Background="{DynamicResource ControlFillBrush}"
-                            BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
+                    <Border Background="{DynamicResource CardBrush}"
+                            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
                             CornerRadius="7" Padding="10,7" Width="132" Height="36">
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                             <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="{DynamicResource StatusOfflineBrush}" VerticalAlignment="Center"/>
@@ -1056,7 +1071,7 @@
 
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <CheckBox x:Name="ChkLive" Style="{StaticResource AndroidSwitch}" Content="Live"
-                                  VerticalAlignment="Center"
+                                  Width="108" Height="28" HorizontalAlignment="Left" VerticalAlignment="Center"
                                   Checked="Live_Changed" Unchecked="Live_Changed"/>
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
                             <Ellipse x:Name="LiveDot" Width="7" Height="7" Fill="{DynamicResource StatusIdleBrush}" VerticalAlignment="Center"/>
