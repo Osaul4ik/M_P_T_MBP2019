@@ -252,6 +252,7 @@ namespace AmtPtpConfigGui
 
             string originalTheme = ThemeManager.CurrentThemeId;
             string selectedTheme = _appSettings.Theme;
+            bool settingsCommitted = false;
 
             var dialog = new Window
             {
@@ -271,29 +272,8 @@ namespace AmtPtpConfigGui
             dialog.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "PageBrush");
 
             var root = new Grid { Margin = new Thickness(22) };
-            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-            var heading = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
-            var headingTitle = new TextBlock
-            {
-                Text = "Application settings",
-                FontSize = 20,
-                FontWeight = FontWeights.SemiBold
-            };
-            headingTitle.SetResourceReference(TextBlock.ForegroundProperty, "TextPrimaryBrush");
-            heading.Children.Add(headingTitle);
-            var headingSub = new TextBlock
-            {
-                Text = "Configure Wellspring Control Center behavior and appearance.",
-                FontSize = 12,
-                Margin = new Thickness(0, 3, 0, 0)
-            };
-            headingSub.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondaryBrush");
-            heading.Children.Add(headingSub);
-            Grid.SetRow(heading, 0);
-            root.Children.Add(heading);
 
             var scroll = new ScrollViewer
             {
@@ -302,7 +282,7 @@ namespace AmtPtpConfigGui
             };
             var content = new StackPanel();
             scroll.Content = content;
-            Grid.SetRow(scroll, 1);
+            Grid.SetRow(scroll, 0);
             root.Children.Add(scroll);
 
             Border MakeCard(string title, string caption)
@@ -347,7 +327,7 @@ namespace AmtPtpConfigGui
             {
                 Content = "Minimize to tray when closing",
                 IsChecked = _appSettings.CloseToTray,
-                Margin = new Thickness(0, 0, 0, 10),
+                Margin = new Thickness(0, 0, 0, 8),
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
                 VerticalAlignment = System.Windows.VerticalAlignment.Center
             };
@@ -357,7 +337,7 @@ namespace AmtPtpConfigGui
             {
                 Content = "Start the GUI with Windows",
                 IsChecked = _appSettings.StartWithWindows,
-                Margin = new Thickness(0, 0, 0, 10),
+                Margin = new Thickness(0, 0, 0, 8),
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
                 VerticalAlignment = System.Windows.VerticalAlignment.Center
             };
@@ -369,81 +349,109 @@ namespace AmtPtpConfigGui
 
             var themeCard = MakeCard(
                 "Appearance",
-                "Choose a palette. The preview updates immediately while this dialog is open.");
+                "Choose the palette preview. The selected theme is applied after Save.");
             var themePanel = (StackPanel)themeCard.Tag!;
-            var themeRow = new Grid();
-            themeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            themeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var themeInfo = new StackPanel();
-            var themeName = new TextBlock
-            {
-                FontWeight = FontWeights.SemiBold,
-                FontSize = 13
-            };
-            themeName.SetResourceReference(TextBlock.ForegroundProperty, "TextPrimaryBrush");
-            var themeSub = new TextBlock
-            {
-                FontSize = 11,
-                Margin = new Thickness(0, 2, 0, 0)
-            };
-            themeSub.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondaryBrush");
-            themeInfo.Children.Add(themeName);
-            themeInfo.Children.Add(themeSub);
-            Grid.SetColumn(themeInfo, 0);
-            themeRow.Children.Add(themeInfo);
-
-            var changeTheme = new Button
-            {
-                Content = "Change theme",
-                Width = 126,
-                Height = 34,
-                Style = (Style)FindResource("AccentButton")
-            };
-            Grid.SetColumn(changeTheme, 1);
-            themeRow.Children.Add(changeTheme);
-            themePanel.Children.Add(themeRow);
-
-            var swatches = new StackPanel
+            var themeButtons = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                Margin = new Thickness(0, 14, 0, 0)
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                Margin = new Thickness(0, 4, 0, 0)
             };
-            themePanel.Children.Add(swatches);
 
             void UpdateThemePreview()
             {
-                var t = ThemeManager.Get(selectedTheme);
-                themeName.Text = t.Name;
-                themeSub.Text = $"{t.Name} palette · click Change theme to cycle";
-                swatches.Children.Clear();
+                themeButtons.Children.Clear();
                 foreach (var theme in ThemeManager.Themes)
                 {
-                    var swatch = new Border
+                    var borderColor = (Color)ColorConverter.ConvertFromString(theme.Outline)!;
+                    var bg = (Color)ColorConverter.ConvertFromString(theme.Bg)!;
+                    var surface = (Color)ColorConverter.ConvertFromString(theme.Surface)!;
+                    var surfaceHigh = (Color)ColorConverter.ConvertFromString(theme.SurfaceHigh)!;
+                    var primary = (Color)ColorConverter.ConvertFromString(theme.Primary)!;
+
+                    var button = new Button
                     {
-                        Width = 26,
-                        Height = 18,
-                        CornerRadius = new CornerRadius(5),
-                        Margin = new Thickness(0, 0, 6, 0),
-                        Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(theme.Primary)!),
-                        BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(theme.Outline)!),
-                        BorderThickness = new Thickness(1),
-                        ToolTip = theme.Name
+                        Width = 190,
+                        Height = 76,
+                        Margin = new Thickness(0, 0, theme.Id == "light" ? 10 : 0, 0),
+                        Padding = new Thickness(0),
+                        ToolTip = theme.Name,
+                        HorizontalContentAlignment = System.Windows.HorizontalAlignment.Stretch,
+                        VerticalContentAlignment = System.Windows.VerticalAlignment.Stretch
                     };
-                    if (string.Equals(theme.Id, selectedTheme, StringComparison.OrdinalIgnoreCase))
-                        swatch.BorderThickness = new Thickness(2);
-                    swatches.Children.Add(swatch);
+
+                    var preview = new Grid
+                    {
+                        ClipToBounds = true
+                    };
+                    preview.RowDefinitions.Add(new RowDefinition { Height = new GridLength(14) });
+                    preview.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+                    var previewBg = new Border
+                    {
+                        Background = new SolidColorBrush(bg),
+                        BorderBrush = new SolidColorBrush(borderColor),
+                        BorderThickness = new Thickness(1),
+                        CornerRadius = new CornerRadius(8)
+                    };
+                    preview.Children.Add(previewBg);
+
+                    var topBar = new Border
+                    {
+                        Background = new SolidColorBrush(surface),
+                        CornerRadius = new CornerRadius(7, 7, 0, 0),
+                        Margin = new Thickness(1)
+                    };
+                    Grid.SetRow(topBar, 0);
+                    preview.Children.Add(topBar);
+
+                    var miniCard = new Border
+                    {
+                        Width = 138,
+                        Height = 42,
+                        HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                        VerticalAlignment = System.Windows.VerticalAlignment.Center,
+                        Background = new SolidColorBrush(surfaceHigh),
+                        BorderBrush = new SolidColorBrush(borderColor),
+                        BorderThickness = new Thickness(1),
+                        CornerRadius = new CornerRadius(6),
+                        Margin = new Thickness(0, 10, 0, 0)
+                    };
+                    Grid.SetRow(miniCard, 1);
+                    preview.Children.Add(miniCard);
+
+                    var accent = new Border
+                    {
+                        Width = 48,
+                        Height = 4,
+                        HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+                        VerticalAlignment = System.Windows.VerticalAlignment.Top,
+                        Margin = new Thickness(12, 9, 0, 0),
+                        Background = new SolidColorBrush(primary),
+                        CornerRadius = new CornerRadius(2)
+                    };
+                    Grid.SetRow(accent, 1);
+                    preview.Children.Add(accent);
+
+                    button.Content = preview;
+                    button.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "CardBrush");
+                    button.SetResourceReference(System.Windows.Controls.Control.BorderBrushProperty, "CardBorderBrush");
+                    button.BorderThickness = string.Equals(theme.Id, selectedTheme, StringComparison.OrdinalIgnoreCase)
+                        ? new Thickness(2) : new Thickness(1);
+
+                    button.Click += (_, _) =>
+                    {
+                        selectedTheme = theme.Id;
+                        ThemeManager.Apply(selectedTheme, Resources);
+                        RefreshTrayMenu();
+                        UpdateThemePreview();
+                    };
+                    themeButtons.Children.Add(button);
                 }
             }
 
-            changeTheme.Click += (_, _) =>
-            {
-                selectedTheme = ThemeManager.NextThemeId(selectedTheme);
-                ThemeManager.Apply(selectedTheme, Resources);
-                RefreshTrayMenu();
-                UpdateThemePreview();
-            };
-
             UpdateThemePreview();
+            themePanel.Children.Add(themeButtons);
             content.Children.Add(themeCard);
 
             var backupCard = MakeCard(
@@ -454,17 +462,17 @@ namespace AmtPtpConfigGui
             var exportBackup = new Button
             {
                 Content = "Export backup...",
-                Style = (Style)FindResource("GhostButton"),
-                Width = 130,
-                Height = 34,
+                Style = (Style)FindResource("SecondaryButton"),
+                Width = 132,
+                Height = 36,
                 Margin = new Thickness(0, 0, 8, 0)
             };
             var restoreBackup = new Button
             {
                 Content = "Restore backup...",
-                Style = (Style)FindResource("GhostButton"),
-                Width = 140,
-                Height = 34
+                Style = (Style)FindResource("SecondaryButton"),
+                Width = 132,
+                Height = 36
             };
             exportBackup.Click += (_, _) => ExportBackup();
             restoreBackup.Click += (_, _) => RestoreBackup();
@@ -503,11 +511,12 @@ namespace AmtPtpConfigGui
             footerButtons.Children.Add(save);
             DockPanel.SetDock(footerButtons, Dock.Right);
             footer.Children.Add(footerButtons);
-            Grid.SetRow(footer, 2);
+            Grid.SetRow(footer, 1);
             root.Children.Add(footer);
 
             cancel.Click += (_, _) =>
             {
+                settingsCommitted = true;
                 ThemeManager.Apply(originalTheme, Resources);
                 RefreshTrayMenu();
                 dialog.Close();
@@ -515,6 +524,7 @@ namespace AmtPtpConfigGui
 
             save.Click += (_, _) =>
             {
+                settingsCommitted = true;
                 _appSettings.CloseToTray = closeToTray.IsChecked == true;
                 _appSettings.StartWithWindows = startup.IsChecked == true;
                 _appSettings.Theme = ThemeManager.Get(selectedTheme).Id;
@@ -529,10 +539,10 @@ namespace AmtPtpConfigGui
             dialog.Content = root;
             dialog.Closed += (_, _) =>
             {
-                if (!_appSettings.Theme.Equals(ThemeManager.CurrentThemeId, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(originalTheme, ThemeManager.CurrentThemeId, StringComparison.OrdinalIgnoreCase))
+                if (!settingsCommitted)
                 {
-                    ThemeManager.Apply(_appSettings.Theme, Resources);
+                    ThemeManager.Apply(originalTheme, Resources);
+                    RefreshTrayMenu();
                 }
                 _settingsDialogOpen = false;
             };
@@ -1475,6 +1485,7 @@ namespace AmtPtpConfigGui
 
             if (connected)
             {
+                BtnReconnect.Visibility = Visibility.Collapsed;
                 StatusDot.Fill = ConnectedBrush;
                 StatusText.Text = "Connected";
                 DeviceModelText.Text = _device.GetDeviceModelDisplay(out var supportsForceTouch);
@@ -1520,6 +1531,7 @@ namespace AmtPtpConfigGui
             }
             else
             {
+                BtnReconnect.Visibility = Visibility.Visible;
                 StatusDot.Fill = DisconnectedBrush;
                 StatusText.Text = "Disconnected";
                 DeviceModelText.Text = "No device detected";
