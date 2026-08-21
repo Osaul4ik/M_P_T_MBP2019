@@ -522,7 +522,7 @@
                                 <ColumnDefinition Width="34"/>
                                 <ColumnDefinition Width="42"/>
                             </Grid.ColumnDefinitions>
-                            <ContentPresenter Grid.Column="0" VerticalAlignment="Center"/>
+                            <ContentPresenter Grid.Column="0" VerticalAlignment="Center" Margin="0,-1,0,0"/>
                             <TextBlock x:Name="State" Grid.Column="1" Text="OFF"
                                        FontSize="11" FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextSecondaryBrush}"
@@ -874,7 +874,7 @@
                                        HorizontalAlignment="Right"
                                        VerticalAlignment="Stretch"
                                        Width="8"
-                                       Margin="0"
+                                       Margin="0,0,-10,0"
                                        Style="{DynamicResource SettingsScrollBar}"
                                        Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"
                                        Maximum="{TemplateBinding ScrollableHeight}"

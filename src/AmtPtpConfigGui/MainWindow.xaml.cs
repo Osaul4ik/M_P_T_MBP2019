@@ -347,15 +347,21 @@ namespace AmtPtpConfigGui
             {
                 Content = "Minimize to tray when closing",
                 IsChecked = _appSettings.CloseToTray,
-                Margin = new Thickness(0, 0, 0, 10)
+                Margin = new Thickness(0, 0, 0, 10),
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
+                VerticalAlignment = System.Windows.VerticalAlignment.Center
             };
+            closeToTray.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidSwitch");
             closeToTray.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TextPrimaryBrush");
             var startup = new CheckBox
             {
                 Content = "Start the GUI with Windows",
                 IsChecked = _appSettings.StartWithWindows,
-                Margin = new Thickness(0, 0, 0, 10)
+                Margin = new Thickness(0, 0, 0, 10),
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
+                VerticalAlignment = System.Windows.VerticalAlignment.Center
             };
+            startup.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidSwitch");
             startup.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TextPrimaryBrush");
             behaviorPanel.Children.Add(closeToTray);
             behaviorPanel.Children.Add(startup);
