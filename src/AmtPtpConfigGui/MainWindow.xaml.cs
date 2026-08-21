@@ -868,14 +868,17 @@ namespace AmtPtpConfigGui
                     };
                     requirePressure.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureGateFromTray));
 
-                    var requirePressureContinuous = new Forms.ToolStripMenuItem("Require pressure continuously")
+                    if (forceTouchOn && pointerCfg.RequirePressureToActivate != 0)
                     {
-                        Checked = pointerCfg.RequirePressureContinuously != 0,
-                        Enabled = forceTouchOn,
-                        Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
-                        ToolTipText = "Ignore a Force-Touch contact on any frame where pressure is zero."
-                    };
-                    requirePressureContinuous.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureContinuousFromTray));
+                        var requirePressureContinuous = new Forms.ToolStripMenuItem("Require pressure continuously")
+                        {
+                            Checked = pointerCfg.RequirePressureContinuously != 0,
+                            Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
+                            ToolTipText = "Ignore a Force-Touch contact on any frame where pressure is zero."
+                        };
+                        requirePressureContinuous.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureContinuousFromTray));
+                        menu.Items.Add(requirePressureContinuous);
+                    }
 
                     // Dedicated item that expands into the list of Force Tap button types.
                     var actionMenu = new RoundedMenuItem("Force Tap action")
