@@ -41,6 +41,32 @@ namespace AmtPtpConfigGui
                 return;
             }
 
+            // app.manifest declares dpiAwareness=PerMonitorV2 for the whole
+            // process, but that only controls the Win32/OS-level DPI
+            // virtualization context - it does NOT flip WinForms' own
+            // internal HighDpiMode flag, which is a separate opt-in that
+            // WinForms normally gets from the SDK-generated Program.cs
+            // (ApplicationConfiguration.Initialize()) in a pure WinForms
+            // project. This project is UseWPF+UseWindowsForms together, so
+            // WPF's own generated entry point is used instead and that call
+            // never happens. Net effect without it: the OS correctly tells
+            // Windows not to bitmap-stretch our windows (manifest works),
+            // but WinForms' internal DeviceDpi/Font/Padding auto-scale
+            // machinery (what RoundedContextMenuStrip.CurrentRadius below
+            // relies on, and what ResolveTrayFont/BuildTrayHeaderItem's
+            // hand-measured pixel offsets implicitly assume) still computes
+            // everything against the system/primary-monitor DPI. On a
+            // 96 DPI internal panel (MacBook Air 2015 via Boot Camp/OpenCore)
+            // that happens to match reality, so it looked "normal" there by
+            // coincidence - on a scaled Retina external display it doesn't,
+            // which is what read as the tray menu being squished. Must be
+            // set before any WinForms control (NotifyIcon, ContextMenuStrip)
+            // gets its window handle - first thing after the mutex/pipe
+            // gate, before MainWindow (which creates _trayIcon) exists.
+            System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+            System.Windows.Forms.Application.EnableVisualStyles();
+            System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
+
             StartActivationPipeServer();
 
             var mainWindow = new MainWindow();
