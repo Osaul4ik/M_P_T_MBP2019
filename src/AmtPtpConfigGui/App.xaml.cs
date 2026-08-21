@@ -53,7 +53,7 @@ namespace AmtPtpConfigGui
             // Windows not to bitmap-stretch our windows (manifest works),
             // but WinForms' internal DeviceDpi/Font/Padding auto-scale
             // machinery (what RoundedContextMenuStrip.CurrentRadius below
-            // relies on, and what ResolveTrayFont/BuildTrayHeaderItem's
+            // relies on, and what ResolveTrayFont's
             // hand-measured pixel offsets implicitly assume) still computes
             // everything against the system/primary-monitor DPI. On a
             // 96 DPI internal panel (MacBook Air 2015 via Boot Camp/OpenCore)

@@ -743,70 +743,6 @@ namespace AmtPtpConfigGui
             return new System.Drawing.Font(preferredInstalled ? preferred : fallback, size, style);
         }
 
-        // Hosts a plain Label instead of a ToolStripMenuItem so the title
-        // row can be truly centered across the full menu width. A
-        // ToolStripMenuItem always reserves a left-hand check-margin
-        // gutter and lays its text out relative to that gutter (even with
-        // TextAlign = MiddleCenter), which is what made the title
-        // read as off-center rather than a centered title.
-        private Forms.ToolStripItem BuildTrayHeaderItem(string text, (System.Drawing.Color Back, System.Drawing.Color Fore, System.Drawing.Color Selected, System.Drawing.Color Border, System.Drawing.Color Accent) trayColors)
-        {
-            var font = ResolveTrayFont(9F, System.Drawing.FontStyle.Bold);
-            var label = new Forms.Label
-            {
-                Text = text,
-                // Let the label size itself from its own Font/Padding via
-                // GetPreferredSize instead of us pre-computing pixel
-                // dimensions with a one-off TextRenderer.MeasureText call.
-                // That call measured against whatever DPI happened to be
-                // current at construction time, which didn't necessarily
-                // match the DPI the strip actually renders at - on a
-                // high-DPI panel (e.g. a 16" MacBook Pro screen) that
-                // mismatch is what made the header (and the row height
-                // derived from it) come out too small/cramped. AutoSize
-                // routes sizing through the normal WinForms/DPI-aware
-                // layout pass instead, so it comes out correct on any
-                // display without us guessing.
-                AutoSize = true,
-                Dock = Forms.DockStyle.Fill,
-                TextAlign = System.Drawing.ContentAlignment.MiddleLeft,
-                Font = font,
-                ForeColor = trayColors.Fore,
-                // A "transparent" Label hosted inside a ToolStripControlHost
-                // doesn't reliably paint the strip's real (theme-colored)
-                // background - in practice it falls back to an opaque
-                // system-default control face. On the light theme that
-                // fallback is pale enough to be unnoticed; on the dark
-                // theme it renders as a near-white box, and the equally
-                // near-white theme text color painted on top of it is what
-                // made the title unreadable ("nothing visible"). Painting
-                // the label with the strip's actual background color
-                // avoids depending on that transparency support at all.
-                BackColor = trayColors.Back,
-                AutoEllipsis = true,
-                // The vertical padding here (8/8) is what used to be the
-                // "+16" fudge factor added to a manually computed host
-                // height; keeping it as Padding lets AutoSize fold it into
-                // the preferred size Windows computes, rather than us
-                // adding it back on top of a hand-measured number.
-                Padding = new System.Windows.Forms.Padding(34, 8, 10, 8)
-            };
-
-            var host = new Forms.ToolStripControlHost(label)
-            {
-                // AutoSize here (the default for ToolStripControlHost, made
-                // explicit for clarity) asks the label for its preferred
-                // size instead of us assigning one. ToolStripDropDownMenu
-                // still stretches every item - including this one - to the
-                // strip's final width once that's known, same as before;
-                // we're only removing our own manual width/height guess.
-                AutoSize = true,
-                Margin = System.Windows.Forms.Padding.Empty,
-                Padding = System.Windows.Forms.Padding.Empty
-            };
-            return host;
-        }
-
         private Forms.ContextMenuStrip BuildTrayMenu()
         {
             var menu = new RoundedContextMenuStrip
@@ -845,16 +781,6 @@ namespace AmtPtpConfigGui
                 menu.Font = ResolveTrayFont(9F);
                 menu.Items.Clear();
 
-                // Title row: a real menu item can never be centered, because
-                // ToolStripDropDownMenu always reserves a left-hand gutter
-                // for the checkmark column and lays every ToolStripMenuItem's
-                // text out relative to that gutter, not the row's full
-                // width. A ToolStripControlHost hosting a plain Label isn't
-                // subject to that MenuItem-specific text layout, so it can
-                // genuinely center across the whole row instead of just
-                // looking centered-ish inside the leftover space.
-                var header = BuildTrayHeaderItem("WellspringPTP", trayColors);
-
                 // Bold labels previously hardcoded "Segoe UI" while every
                 // other row went through ResolveTrayFont (which prefers
                 // "Segoe UI Variable Text" when installed). Two different
@@ -862,7 +788,7 @@ namespace AmtPtpConfigGui
                 // so these rows quietly got their own row height/baseline -
                 // the inconsistency that made the whole menu read as
                 // slightly crooked. Route them through the same resolver.
-                var profilesItem = new RoundedMenuItem("Profile") { ToolTipText = "Select active profile", Padding = new System.Windows.Forms.Padding(10, 7, 10, 7), Font = ResolveTrayFont(9F, System.Drawing.FontStyle.Bold) };
+                var profilesItem = new RoundedMenuItem("Profile") { ToolTipText = "Select active profile", Padding = new System.Windows.Forms.Padding(10, 7, 10, 7), Font = ResolveTrayFont(9F) };
                 for (int i = 0; i < _profiles.Count; i++)
                 {
                     int index = i;
@@ -889,8 +815,6 @@ namespace AmtPtpConfigGui
                 bool forceTouchOn = pointerCfg.ForceTouchEnabled != 0;
                 bool smallContactRejectionOn = pointerCfg.SmallContactRejectionEnabled != 0;
 
-                menu.Items.Add(header);
-                menu.Items.Add(new Forms.ToolStripSeparator());
                 menu.Items.Add(profilesItem);
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 menu.Items.Add(palmEdges);
@@ -3077,14 +3001,18 @@ namespace AmtPtpConfigGui
             // ImageRectangle is the reserved check/image column, so keep the
             // checkmark at its right edge (closest to the label) and center it
             // against the actual menu row height.
-            int size = Math.Min(14, Math.Max(8, e.Item.Height - 8));
+            // Keep the checkmark comfortably larger than the old 14px cap.
+            // WinForms scales the menu row itself with DPI, while this glyph is
+            // rendered directly by GDI+, so use the row height as the primary
+            // constraint and allow a larger 18px target on normal menu rows.
+            int size = Math.Min(18, Math.Max(12, e.Item.Height - 6));
             const int rightGap = 2;
             int x = Math.Max(checkBounds.X, checkBounds.Right - rightGap - size);
             int y = Math.Max(0, (e.Item.Height - size) / 2);
             var box = new System.Drawing.Rectangle(x, y, size, size);
 
             using var accentBrush = new System.Drawing.SolidBrush(_accent);
-            using var pen = new System.Drawing.Pen(System.Drawing.Color.White, 1.6f)
+            using var pen = new System.Drawing.Pen(System.Drawing.Color.White, 2.0f)
             {
                 StartCap = System.Drawing.Drawing2D.LineCap.Round,
                 EndCap = System.Drawing.Drawing2D.LineCap.Round,
