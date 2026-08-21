@@ -316,6 +316,15 @@ typedef struct _DEVICE_CONTEXT
     ULONG                   WellspringInitGeneration;
     BOOLEAN                 WellspringInitFromD3Final;
 
+    // TRUE while the post-D0 Wellspring mode-switch work item owns the
+    // current lifecycle generation. Reader failures seen during this
+    // bounded post-wake window must not immediately escalate into PnP
+    // restart: the USB child has already proved that it can start, and the
+    // control endpoint may simply need a little more settle time. This flag
+    // is always accessed under D0ExitLock and is valid only when its
+    // WellspringInitGeneration matches RecoveryGeneration.
+    BOOLEAN                 WellspringInitPending;
+
     // Lifecycle-protected - every read/write goes through D0ExitLock (see
     // below). Never left as a plain concurrent-access variable: it is
     // read/written from both the PASSIVE_LEVEL D0Entry/D0Exit/
@@ -564,6 +573,13 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 // still worth having even though the common case should now need it less.
 #define WELLSPRING_MODE_D0ENTRY_RESUME_MAX_ATTEMPTS        5
 #define WELLSPRING_MODE_D0ENTRY_RESUME_RETRY_DELAY_MS_UNIT 75
+
+// If the interrupt reader fails while the Wellspring post-wake work item is
+// still inside its bounded retry window, give that work item time to finish
+// before the reader-recovery timer is allowed to escalate to PnP. The timer
+// callback re-checks WellspringInitPending on every fire, so this is a
+// grace/backoff delay rather than an unbounded wait.
+#define WELLSPRING_INIT_READER_GRACE_DELAY_MS 250
 
 // Bounded retries for the D0Entry interrupt-pipe WdfIoTargetStart, after
 // the same D3Final -> D0 transition. This is subject to the identical

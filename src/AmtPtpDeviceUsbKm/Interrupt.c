@@ -669,6 +669,7 @@ AmtPtpEvtReaderRestartTimer(
     WDFUSBPIPE       localInterruptPipe;
     ULONG            snapshotGeneration;
     READER_RECOVERY_STAGE stage;
+    BOOLEAN          wellspringInitPending;
 
     // See the identical PREfast note in AmtPtpDeviceUsbKmEvtDevicePrepareHardware (Device.c).
     _Analysis_assume_(pCtx != NULL);
@@ -691,6 +692,9 @@ AmtPtpEvtReaderRestartTimer(
     snapshotGeneration  = pCtx->RecoveryGeneration;
     stage               = pCtx->ReaderRecoveryStage;
     localInterruptPipe  = pCtx->InterruptPipe;
+    wellspringInitPending =
+        pCtx->WellspringInitPending &&
+        (pCtx->WellspringInitGeneration == snapshotGeneration);
     WdfSpinLockRelease(pCtx->D0ExitLock);
 
     if (stage >= READER_RECOVERY_EXHAUSTED) {
@@ -707,6 +711,24 @@ AmtPtpEvtReaderRestartTimer(
         return;
     }
 
+    // A normal D3->D0 resume deliberately completes in two phases:
+    // WdfIoTargetStart first, then the Wellspring mode switch in a PASSIVE
+    // work item. The reader can report a transient STATUS_NO_SUCH_DEVICE in
+    // the small interval between those phases. Do not turn that first wake
+    // hiccup into an immediate PnP restart while the bounded Wellspring
+    // retry window is still active. Re-arm the same recovery timer so the
+    // decision is revisited after the work item has had time to finish.
+    if (wellspringInitPending) {
+        AmtTrace(pCtx,
+            "ReaderRestartTimer: Wellspring init pending for generation=%lu, "
+            "deferring reader recovery/escalation",
+            snapshotGeneration);
+        WdfTimerStart(
+            pCtx->ReaderRestartTimer,
+            WDF_REL_TIMEOUT_IN_MS(WELLSPRING_INIT_READER_GRACE_DELAY_MS));
+        return;
+    }
+
     AmtTrace(pCtx, "ReaderRestartTimer: ENTER, stage=%d", (int)stage);
 
     // Phase 2 (PASSIVE_LEVEL): acquire RecoveryLock to serialize with any
@@ -714,15 +736,41 @@ AmtPtpEvtReaderRestartTimer(
     // re-validate the snapshot from Phase 1 - lifecycle may have moved on
     // (D0Exit, ReleaseHardware, or a full D0Exit->D0Entry cycle) while this
     // callback was waiting for the lock.
-    WdfWaitLockAcquire(pCtx->RecoveryLock, NULL);
+    //
+    // BUG FIX: bounded acquire. The USB reset/cycle operations below are
+    // themselves allowed to block without a short caller-supplied timeout;
+    // a timer callback must not be able to wait forever merely to acquire
+    // RecoveryLock while another recovery operation is stuck.
+    if (!AmtPtpRecoveryLockAcquireBounded(pCtx, "ReaderRestartTimer")) {
+        AmtTrace(pCtx,
+            "ReaderRestartTimer: RecoveryLock acquire timed out, deferring this recovery fire");
+        WdfTimerStart(
+            pCtx->ReaderRestartTimer,
+            WDF_REL_TIMEOUT_IN_MS(READER_RECOVERY_STEP_DELAY_MS));
+        return;
+    }
 
     {
         BOOLEAN lifecycleStale;
+        BOOLEAN pendingForCurrentGeneration;
 
         WdfSpinLockAcquire(pCtx->D0ExitLock);
         lifecycleStale =
             pCtx->D0ExitInProgress ||
             (pCtx->RecoveryGeneration != snapshotGeneration);
+        pendingForCurrentGeneration =
+            pCtx->WellspringInitPending &&
+            (pCtx->WellspringInitGeneration == pCtx->RecoveryGeneration);
+
+        // BUG FIX: the Wellspring-pending state must be re-checked AFTER
+        // RecoveryLock is acquired. A new D0Entry can queue a fresh
+        // WellspringInitWorkItem after Phase 1's snapshot but before this
+        // callback gets RecoveryLock. Without this second check the timer
+        // could start RESET_PIPE/RESET_PORT/CYCLE_PORT concurrently with
+        // the new post-wake Wellspring initialization.
+        if (!lifecycleStale && pendingForCurrentGeneration) {
+            lifecycleStale = TRUE;
+        }
 
         // BUG FIX: re-read ReaderRecoveryStage here too, not just
         // D0ExitInProgress/RecoveryGeneration. AmtPtpEvtUsbInterruptPipeReadComplete
@@ -744,6 +792,17 @@ AmtPtpEvtReaderRestartTimer(
         WdfSpinLockRelease(pCtx->D0ExitLock);
 
         if (lifecycleStale) {
+            if (pendingForCurrentGeneration) {
+                AmtTrace(pCtx,
+                    "ReaderRestartTimer: Wellspring init became pending after snapshot, "
+                    "deferring recovery");
+                WdfWaitLockRelease(pCtx->RecoveryLock);
+                WdfTimerStart(
+                    pCtx->ReaderRestartTimer,
+                    WDF_REL_TIMEOUT_IN_MS(WELLSPRING_INIT_READER_GRACE_DELAY_MS));
+                return;
+            }
+
             AmtTrace(pCtx, "ReaderRestartTimer: lifecycle changed since snapshot, aborting");
             WdfWaitLockRelease(pCtx->RecoveryLock);
             return;
@@ -925,6 +984,7 @@ AmtPtpEvtUsbInterruptReadersFailed(
     WDFDEVICE        device   = WdfIoTargetGetDevice(ioTarget);
     PDEVICE_CONTEXT  pCtx     = DeviceGetContext(device);
     BOOLEAN                d0ExitInProgress;
+    BOOLEAN                wellspringInitPending;
     READER_RECOVERY_STAGE  stage;
 
     // See the identical PREfast note in AmtPtpDeviceUsbKmEvtDevicePrepareHardware (Device.c).
@@ -958,6 +1018,9 @@ AmtPtpEvtUsbInterruptReadersFailed(
     // WDFSPINLOCK and not a WDFWAITLOCK.
     WdfSpinLockAcquire(pCtx->D0ExitLock);
     d0ExitInProgress = pCtx->D0ExitInProgress;
+    wellspringInitPending =
+        pCtx->WellspringInitPending &&
+        (pCtx->WellspringInitGeneration == pCtx->RecoveryGeneration);
     stage            = pCtx->ReaderRecoveryStage;
     WdfSpinLockRelease(pCtx->D0ExitLock);
 
@@ -971,6 +1034,16 @@ AmtPtpEvtUsbInterruptReadersFailed(
 
     if (d0ExitInProgress) {
         AmtTrace(pCtx, "ReadersFailed: D0Exit in progress, not arming restart timer");
+        return FALSE;
+    }
+
+    if (wellspringInitPending) {
+        AmtTrace(pCtx,
+            "ReadersFailed: Wellspring init pending, deferring reader recovery "
+            "for post-wake grace window");
+        WdfTimerStart(
+            pCtx->ReaderRestartTimer,
+            WDF_REL_TIMEOUT_IN_MS(WELLSPRING_INIT_READER_GRACE_DELAY_MS));
         return FALSE;
     }
 

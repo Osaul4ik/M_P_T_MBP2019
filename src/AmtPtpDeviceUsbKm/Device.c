@@ -1121,6 +1121,7 @@ AmtPtpRecoveryBeginTermination(
     WdfSpinLockAcquire(DeviceContext->D0ExitLock);
     DeviceContext->D0ExitInProgress = TRUE;
     DeviceContext->RecoveryGeneration++;
+    DeviceContext->WellspringInitPending = FALSE;
     WdfSpinLockRelease(DeviceContext->D0ExitLock);
 }
 
@@ -1465,6 +1466,7 @@ AmtPtpEvtWellspringInitWorkItem(
     PDEVICE_CONTEXT  pCtx   = DeviceGetContext(device);
     ULONG            snapshotGeneration;
     BOOLEAN          fromD3Final;
+    BOOLEAN          wellspringInitPending;
 
     // See the identical PREfast note in AmtPtpDeviceUsbKmEvtDevicePrepareHardware.
     _Analysis_assume_(pCtx != NULL);
@@ -1481,9 +1483,12 @@ AmtPtpEvtWellspringInitWorkItem(
         currentGeneration  = pCtx->RecoveryGeneration;
         snapshotGeneration = pCtx->WellspringInitGeneration;
         fromD3Final        = pCtx->WellspringInitFromD3Final;
+        wellspringInitPending = pCtx->WellspringInitPending;
         WdfSpinLockRelease(pCtx->D0ExitLock);
 
-        if (d0ExitInProgress || (currentGeneration != snapshotGeneration)) {
+        if (d0ExitInProgress ||
+            (currentGeneration != snapshotGeneration) ||
+            !wellspringInitPending) {
             AmtTrace(pCtx,
                 "WellspringInitWorkItem: lifecycle changed since queued, aborting");
             return;
@@ -1497,8 +1502,21 @@ AmtPtpEvtWellspringInitWorkItem(
     // re-validate the Phase 1 snapshot - lifecycle may have moved on while
     // this callback was waiting for the lock.
     if (!AmtPtpRecoveryLockAcquireBounded(pCtx, "WellspringInitWorkItem")) {
+        // Do not leave the generation stuck in the post-wake grace state if
+        // another recovery operation owns RecoveryLock for longer than the
+        // bounded acquisition budget. The reader-recovery timer must regain
+        // ownership of the failure decision instead of deferring forever.
+        WdfSpinLockAcquire(pCtx->D0ExitLock);
+        if (!pCtx->D0ExitInProgress &&
+            pCtx->RecoveryGeneration == snapshotGeneration &&
+            pCtx->WellspringInitGeneration == snapshotGeneration) {
+            pCtx->WellspringInitPending = FALSE;
+        }
+        WdfSpinLockRelease(pCtx->D0ExitLock);
+
         AmtTrace(pCtx,
-            "WellspringInitWorkItem: EXIT EARLY, RecoveryLock acquire failed");
+            "WellspringInitWorkItem: EXIT EARLY, RecoveryLock acquire failed; "
+            "pending cleared");
         return;
     }
 
@@ -1508,7 +1526,8 @@ AmtPtpEvtWellspringInitWorkItem(
         WdfSpinLockAcquire(pCtx->D0ExitLock);
         lifecycleStale =
             pCtx->D0ExitInProgress ||
-            (pCtx->RecoveryGeneration != snapshotGeneration);
+            (pCtx->RecoveryGeneration != snapshotGeneration) ||
+            !pCtx->WellspringInitPending;
         WdfSpinLockRelease(pCtx->D0ExitLock);
 
         if (lifecycleStale) {
@@ -1525,7 +1544,16 @@ AmtPtpEvtWellspringInitWorkItem(
     // passed, ReleaseHardware cannot be concurrently nulling this field -
     // RecoveryLock is exactly what makes those two mutually exclusive.
     if (pCtx->UsbDevice == NULL) {
-        AmtTrace(pCtx, "WellspringInitWorkItem: UsbDevice is NULL, bailing out");
+        WdfSpinLockAcquire(pCtx->D0ExitLock);
+        if (!pCtx->D0ExitInProgress &&
+            pCtx->RecoveryGeneration == snapshotGeneration &&
+            pCtx->WellspringInitGeneration == snapshotGeneration) {
+            pCtx->WellspringInitPending = FALSE;
+        }
+        WdfSpinLockRelease(pCtx->D0ExitLock);
+
+        AmtTrace(pCtx,
+            "WellspringInitWorkItem: UsbDevice is NULL, pending cleared, bailing out");
         WdfWaitLockRelease(pCtx->RecoveryLock);
         return;
     }
@@ -1547,7 +1575,21 @@ AmtPtpEvtWellspringInitWorkItem(
             "SetWellspringMode",
             AmtPtpD0EntrySetWellspringModeAttempt);
 
-        AmtTrace(pCtx, "WellspringInitWorkItem: EXIT, SetWellspringMode -> status=0x%08X",
+        // The bounded post-wake window is over regardless of the final
+        // control-transfer result. Clear the generation-scoped pending bit
+        // only if this callback still owns the same lifecycle generation; a
+        // concurrent D0Exit would already have invalidated it.
+        WdfSpinLockAcquire(pCtx->D0ExitLock);
+        if (!pCtx->D0ExitInProgress &&
+            pCtx->RecoveryGeneration == snapshotGeneration &&
+            pCtx->WellspringInitGeneration == snapshotGeneration) {
+            pCtx->WellspringInitPending = FALSE;
+        }
+        WdfSpinLockRelease(pCtx->D0ExitLock);
+
+        AmtTrace(pCtx,
+            "WellspringInitWorkItem: EXIT, SetWellspringMode -> status=0x%08X, "
+            "pending cleared",
             status);
     }
 
@@ -1735,8 +1777,13 @@ AmtPtpEvtDeviceD0Entry(
     WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
     pDeviceContext->WellspringInitGeneration  = pDeviceContext->RecoveryGeneration;
     pDeviceContext->WellspringInitFromD3Final = (PreviousState == WdfPowerDeviceD3Final);
+    pDeviceContext->WellspringInitPending     = TRUE;
     WdfSpinLockRelease(pDeviceContext->D0ExitLock);
 
+    AmtTrace(pDeviceContext,
+        "D0Entry: WdfIoTargetStart SUCCESS, queueing deferred Wellspring init "
+        "for generation=%lu",
+        pDeviceContext->WellspringInitGeneration);
     WdfWorkItemEnqueue(pDeviceContext->WellspringInitWorkItem);
 
 end:
