@@ -854,6 +854,38 @@
             <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
         </Style>
 
+        <Style x:Key="SettingsScrollViewer" TargetType="ScrollViewer">
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollViewer">
+                        <Grid ClipToBounds="False">
+                            <ScrollContentPresenter x:Name="PART_ScrollContentPresenter"
+                                                    ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                    Content="{TemplateBinding Content}"
+                                                    ContentStringFormat="{TemplateBinding ContentStringFormat}"
+                                                    Margin="{TemplateBinding Padding}"
+                                                    CanContentScroll="{TemplateBinding CanContentScroll}"
+                                                    HorizontalAlignment="Stretch"
+                                                    VerticalAlignment="Stretch"/>
+                            <ScrollBar x:Name="PART_VerticalScrollBar"
+                                       Orientation="Vertical"
+                                       HorizontalAlignment="Right"
+                                       VerticalAlignment="Stretch"
+                                       Width="8"
+                                       Margin="0"
+                                       Style="{DynamicResource SettingsScrollBar}"
+                                       Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"
+                                       Maximum="{TemplateBinding ScrollableHeight}"
+                                       ViewportSize="{TemplateBinding ViewportHeight}"
+                                       Value="{TemplateBinding VerticalOffset}"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="SettingsScrollBar" TargetType="ScrollBar">
             <Setter Property="Width" Value="8"/>
             <Setter Property="MinWidth" Value="8"/>
@@ -1096,11 +1128,8 @@
                  into the height that bar used to reserve underneath it. -->
             <TabControl Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Style="{StaticResource SettingsTabControl}">
                 <TabItem Header="Palm" Style="{StaticResource SettingsTabItem}">
-            <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <ScrollViewer.Resources>
-                        <Style TargetType="ScrollBar" BasedOn="{StaticResource SettingsScrollBar}"/>
-                    </ScrollViewer.Resources>
-                <StackPanel Width="460">
+            <ScrollViewer Style="{StaticResource SettingsScrollViewer}" PreviewMouseWheel="SlowScrollViewer_MouseWheel">
+                <StackPanel Width="Auto">
                     <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -1201,11 +1230,8 @@
                 </TabItem>
 
                 <TabItem Header="Scroll" Style="{StaticResource SettingsTabItem}">
-                    <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <ScrollViewer.Resources>
-                        <Style TargetType="ScrollBar" BasedOn="{StaticResource SettingsScrollBar}"/>
-                    </ScrollViewer.Resources>
-                        <StackPanel Width="460">
+                    <ScrollViewer Style="{StaticResource SettingsScrollViewer}" PreviewMouseWheel="SlowScrollViewer_MouseWheel">
+                        <StackPanel Width="Auto">
                             <GroupBox>
                                 <GroupBox.Header>
                                     <StackPanel>
@@ -1278,11 +1304,8 @@
                 </TabItem>
 
                 <TabItem Header="Pointer" Style="{StaticResource SettingsTabItem}">
-                    <ScrollViewer PreviewMouseWheel="SlowScrollViewer_MouseWheel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <ScrollViewer.Resources>
-                        <Style TargetType="ScrollBar" BasedOn="{StaticResource SettingsScrollBar}"/>
-                    </ScrollViewer.Resources>
-                        <StackPanel Width="460">
+                    <ScrollViewer Style="{StaticResource SettingsScrollViewer}" PreviewMouseWheel="SlowScrollViewer_MouseWheel">
+                        <StackPanel Width="Auto">
                             <GroupBox>
                                 <GroupBox.Header>
                                     <StackPanel>
