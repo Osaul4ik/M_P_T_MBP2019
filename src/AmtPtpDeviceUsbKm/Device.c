@@ -561,21 +561,19 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
 // resource-exhaustion condition - that case still exhausts the retry
 // budget and fails exactly as before.
 //
-// If the retry budget above is exhausted anyway (a genuinely persistent
-// condition, or simply bad luck with the retry timing), the three
-// allocation-sensitive failure paths below also call WdfDeviceSetFailed(
-// Device, WdfDeviceFailedAttemptRestart). Per its documented contract,
-// this asks the PnP manager to reenumerate the device and give
-// EvtDevicePrepareHardware a fresh Start attempt automatically - the
-// documented alternative to a driver silently returning failure and
-// leaving the device parked at Code 10 until the user intervenes or a
-// physical re-enumeration happens to occur on its own. WDF caps
-// consecutive restart attempts internally, so a truly persistent failure
-// still gives up and fails normally rather than looping forever. This is
-// deliberately NOT applied to the STATUS_NOT_SUPPORTED /
-// STATUS_INVALID_PARAMETER paths further down (unrecognized hardware, bad
-// DeviceInfo table entry) - those are structural, not transient, and no
-// number of restarts will ever change their outcome.
+// Deliberately NOT paired with WdfDeviceSetFailed(WdfDeviceFailedAttemptRestart):
+// per "Reporting Device Failures", KMDF already asks the PnP manager to
+// reenumerate the device by default whenever a PnP callback like this one
+// returns a failing status - a driver "does not have to call
+// WdfDeviceSetFailed" to get that. The explicit call would add nothing
+// here and, per WDF_DEVICE_FAILED_ACTION, WdfDeviceFailedAttemptRestart
+// additionally "reloads the drivers" - i.e. can unload/reload the whole
+// .sys image, not just this device instance. That is disproportionate for
+// a one-shot transient allocation failure and risks disrupting the other
+// HID collections this filter also attaches to (col01/col02/col03 in the
+// same USB composite device). The bounded retry above is the correct,
+// narrowly-scoped fix; the framework's own default restart-on-failure
+// behavior is left alone to handle anything the retry still can't clear.
 #define PREPARE_HARDWARE_ALLOC_MAX_ATTEMPTS   3
 #define PREPARE_HARDWARE_ALLOC_RETRY_DELAY_MS 20
 
@@ -693,29 +691,9 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
         if (!NT_SUCCESS(status)) {
             AmtTrace(pDeviceContext, "PrepareHardware: WdfUsbTargetDeviceCreate FAILED, status=0x%08X",
                 status);
-            // See the WdfDeviceSetFailed rationale comment above
-            // AmtPtpPrepareHardwareRetryOnLowResources: ask PnP for a real
-            // Start retry, but only for the transient resource-exhaustion
-            // case the retry loop above was for - a non-resource failure
-            // here (e.g. a genuinely broken USB stack handle) would just
-            // waste PnP's limited consecutive-restart budget on an outcome
-            // that cannot change.
-            if (status == STATUS_INSUFFICIENT_RESOURCES) {
-                WdfDeviceSetFailed(Device, WdfDeviceFailedAttemptRestart);
-            }
             return status;
         }
     }
-
-    // As above with pDeviceContext itself: by this point UsbDevice is
-    // non-NULL either because it already was (the if above was skipped)
-    // or because AmtPtpPrepareHardwareRetryOnLowResources returned success,
-    // which - via the AmtPtpPrepareHwCreateUsbDeviceAttempt function
-    // pointer - means WdfUsbTargetDeviceCreate populated it. PREfast
-    // cannot follow that through the indirect call, so it still treats
-    // UsbDevice as possibly NULL on every use below; assume it away here
-    // rather than adding a redundant runtime check.
-    _Analysis_assume_(pDeviceContext->UsbDevice != NULL);
 
     WdfUsbTargetDeviceGetDeviceDescriptor(
         pDeviceContext->UsbDevice, &pDeviceContext->DeviceDescriptor);
@@ -762,14 +740,6 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
     if (!NT_SUCCESS(status)) {
         AmtTrace(pDeviceContext, "PrepareHardware: SelectInterruptInterface FAILED, status=0x%08X",
             status);
-        // SelectInterruptInterface can also fail with STATUS_INVALID_DEVICE_STATE
-        // (no interrupt pipe among the configured ones) - a structural
-        // mismatch, not the transient low-resources condition the retry
-        // loop above targets, so only request a restart for that specific
-        // status, exactly as done for WdfUsbTargetDeviceCreate above.
-        if (status == STATUS_INSUFFICIENT_RESOURCES) {
-            WdfDeviceSetFailed(Device, WdfDeviceFailedAttemptRestart);
-        }
         return status;
     }
 
@@ -779,13 +749,6 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
     if (!NT_SUCCESS(status)) {
         AmtTrace(pDeviceContext, "PrepareHardware: ConfigContReaderForInterruptEndPoint FAILED, status=0x%08X",
             status);
-        // Same reasoning: AmtPtpConfigContReaderForInterruptEndPoint can
-        // also fail with STATUS_UNKNOWN_REVISION for an unsupported
-        // tp_type - structural, not transient, so restart is requested
-        // only for the resource-exhaustion case.
-        if (status == STATUS_INSUFFICIENT_RESOURCES) {
-            WdfDeviceSetFailed(Device, WdfDeviceFailedAttemptRestart);
-        }
         return status;
     }
 
@@ -956,42 +919,20 @@ typedef NTSTATUS
 // it back. A lighter D3 -> D0 resume gets a smaller, separate retry budget:
 // on the affected T2 hardware WDF can enter D0 before the USB child has
 // finished re-enumerating, so the first request can legitimately return
-// STATUS_NO_SUCH_DEVICE.
-//
-// It can also legitimately return STATUS_INSUFFICIENT_RESOURCES: per
-// Microsoft's Driver Verifier "Low Resources Simulation" documentation
-// (learn.microsoft.com/windows-hardware/drivers/devtest/low-resources-simulation),
-// this deliberately fails "random instances of the driver's memory
-// allocations, as might occur if the driver was running on a computer with
-// insufficient memory [...] to test the driver's ability to respond
-// properly" - and the WDFREQUEST/WDFMEMORY allocations underlying both
-// AmtPtpSetWellspringMode's control transfer and the continuous reader's
-// resubmission are exactly the kind of allocation that option targets. A
-// resume-window allocation failure is transient in exactly the same sense
-// STATUS_NO_SUCH_DEVICE is (retrying a moment later is expected to
-// succeed), so both statuses share this same bounded retry, confirmed
-// against a real ~45s stall in SAKURAMBPRO.log driven by Verifier's "Pool
-// Allocations Failed Deliberately" fault injection landing in this window.
-// All other failures remain immediate failures and preserve the normal
+// STATUS_NO_SUCH_DEVICE. In that resume path we retry only that transient
+// status; other failures remain immediate failures and preserve the normal
 // error path.
 //
 // Factored out so both D0Entry operations (SetWellspringMode and
 // WdfIoTargetStart) share exactly the same bounded policy instead of
 // carrying separate retry loops.
-static BOOLEAN
-AmtPtpIsTransientD0EntryStatus(_In_ NTSTATUS Status)
-{
-    return (Status == STATUS_NO_SUCH_DEVICE) ||
-           (Status == STATUS_INSUFFICIENT_RESOURCES);
-}
-
 _IRQL_requires_(PASSIVE_LEVEL)
 static NTSTATUS
 AmtPtpD0EntryRetry(
     _In_ PDEVICE_CONTEXT           DeviceContext,
     _In_ ULONG                     MaxAttempts,
     _In_ ULONG                     RetryDelayMsUnit,
-    _In_ BOOLEAN                   RetryOnlyTransient,
+    _In_ BOOLEAN                   RetryOnlyNoSuchDevice,
     _In_ PCSTR                     OperationName,
     _In_ PFN_AMT_D0ENTRY_ATTEMPT   Attempt
     )
@@ -1008,7 +949,7 @@ AmtPtpD0EntryRetry(
             break;
         }
 
-        if (RetryOnlyTransient && !AmtPtpIsTransientD0EntryStatus(status)) {
+        if (RetryOnlyNoSuchDevice && status != STATUS_NO_SUCH_DEVICE) {
             break;
         }
 
@@ -1154,11 +1095,10 @@ AmtPtpEvtDeviceD0Entry(
     // result below determines this function's return value.
     //
     // D3Final keeps the full recovery retry budget. A normal D3 -> D0 resume
-    // gets a smaller budget because the USB child may still be
+    // gets a small two-attempt budget because the USB child may still be
     // re-enumerating on the parent hub when WDF calls D0Entry. In that case
-    // retry only the transient statuses (STATUS_NO_SUCH_DEVICE and
-    // STATUS_INSUFFICIENT_RESOURCES - see AmtPtpIsTransientD0EntryStatus)
-    // so unrelated failures still take the normal error path.
+    // retry only STATUS_NO_SUCH_DEVICE so unrelated failures still take the
+    // normal error path.
     {
         const BOOLEAN fromD3Final =
             (PreviousState == WdfPowerDeviceD3Final);
