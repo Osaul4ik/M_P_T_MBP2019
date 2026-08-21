@@ -566,6 +566,41 @@ AmtPtpDeviceUsbKmCreateDevice(
     _Inout_ PWDFDEVICE_INIT DeviceInit
     );
 
+// AmtPtpRetryOnLowResourcesCtx - shared bounded-retry engine (see the
+// definition in Device.c, next to AmtPtpRetryOnLowResources, for the full
+// rationale): 3 attempts, STATUS_INSUFFICIENT_RESOURCES only, increasing
+// backoff. Context-pointer-based so a single engine covers attempts that
+// need more than a bare WDFDEVICE - currently AmtPtpAcquireConfigControlDevice's
+// control-device WdfDeviceCreate/WdfDeviceCreateSymbolicLink/WdfIoQueueCreate
+// (Device.c) and both WdfIoQueueCreate calls in AmtPtpDeviceUsbKmQueueInitialize
+// (Queue.c). TraceContext may be NULL (AmtTrace() tolerates that).
+typedef NTSTATUS
+(*PFN_AMT_LOW_RESOURCES_ATTEMPT_CTX)(_Inout_ PVOID Context);
+
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS
+AmtPtpRetryOnLowResourcesCtx(
+    _In_opt_ PDEVICE_CONTEXT                  TraceContext,
+    _In_     PCSTR                             OperationName,
+    _In_     PFN_AMT_LOW_RESOURCES_ATTEMPT_CTX Attempt,
+    _Inout_  PVOID                             Context
+    );
+
+// AMT_QUEUE_CREATE_CTX / AmtPtpQueueCreateAttempt - the one
+// AmtPtpRetryOnLowResourcesCtx attempt/context pair every WdfIoQueueCreate
+// call site in this driver shares: AmtPtpAcquireConfigControlDevice's
+// control-device queue (Device.c) and both queues in
+// AmtPtpDeviceUsbKmQueueInitialize (Queue.c). OutQueue may be
+// WDF_NO_HANDLE, same as a direct WdfIoQueueCreate call.
+typedef struct _AMT_QUEUE_CREATE_CTX {
+    WDFDEVICE             Device;
+    PWDF_IO_QUEUE_CONFIG  QueueConfig;
+    WDFQUEUE*             OutQueue;
+} AMT_QUEUE_CREATE_CTX, *PAMT_QUEUE_CREATE_CTX;
+
+NTSTATUS
+AmtPtpQueueCreateAttempt(_Inout_ PVOID Context);
+
 EVT_WDF_DEVICE_PREPARE_HARDWARE AmtPtpDeviceUsbKmEvtDevicePrepareHardware;
 EVT_WDF_DEVICE_RELEASE_HARDWARE AmtPtpEvtDeviceReleaseHardware;
 EVT_WDF_DEVICE_D0_ENTRY         AmtPtpEvtDeviceD0Entry;

@@ -66,11 +66,22 @@ AmtPtpDeviceUsbKmQueueInitialize(
     _In_ WDFDEVICE Device
     )
 // Creates default parallel queue and manual queue for touch reads.
+//
+// Both WdfIoQueueCreate calls below are routed through
+// AmtPtpRetryOnLowResourcesCtx (Device.h/Device.c) - the same bounded,
+// STATUS_INSUFFICIENT_RESOURCES-only retry every other allocation point
+// on the AddDevice-time install path already gets. This function is
+// called from AmtPtpDeviceUsbKmCreateDevice, still inside EvtDriverDeviceAdd's
+// call chain, so the same "no PnP Start to retry, AddDevice just fails
+// outright" gap applies here as much as it does to CreateDevice's own
+// timer/pool/lock allocations or AmtPtpAcquireConfigControlDevice's
+// control-device create.
 {
-    WDFQUEUE queue;
-    NTSTATUS status;
-    WDF_IO_QUEUE_CONFIG    queueConfig;
-    PDEVICE_CONTEXT        pDeviceContext;
+    WDFQUEUE                queue;
+    NTSTATUS                status;
+    WDF_IO_QUEUE_CONFIG     queueConfig;
+    PDEVICE_CONTEXT         pDeviceContext;
+    AMT_QUEUE_CREATE_CTX    queueCtx;
 
     PAGED_CODE();
 
@@ -90,12 +101,15 @@ AmtPtpDeviceUsbKmQueueInitialize(
     queueConfig.EvtIoInternalDeviceControl = AmtPtpDeviceUsbKmEvtIoDeviceControl;
     queueConfig.EvtIoStop = AmtPtpDeviceUsbKmEvtIoStop;
 
-    status = WdfIoQueueCreate(
-                 Device,
-                 &queueConfig,
-                 WDF_NO_OBJECT_ATTRIBUTES,
-                 &queue
-                 );
+    queueCtx.Device      = Device;
+    queueCtx.QueueConfig = &queueConfig;
+    queueCtx.OutQueue    = &queue;
+
+    status = AmtPtpRetryOnLowResourcesCtx(
+        pDeviceContext,
+        "QueueInitialize: WdfIoQueueCreate(default)",
+        AmtPtpQueueCreateAttempt,
+        &queueCtx);
 
     if( !NT_SUCCESS(status) ) {
         return status;
@@ -106,12 +120,15 @@ AmtPtpDeviceUsbKmQueueInitialize(
     queueConfig.PowerManaged = WdfFalse;
     queueConfig.EvtIoStop = AmtPtpDeviceUsbKmEvtIoStop;
 
-    status = WdfIoQueueCreate(
-        Device,
-        &queueConfig,
-        WDF_NO_OBJECT_ATTRIBUTES,
-        &pDeviceContext->InputQueue
-    );
+    queueCtx.Device      = Device;
+    queueCtx.QueueConfig = &queueConfig;
+    queueCtx.OutQueue    = &pDeviceContext->InputQueue;
+
+    status = AmtPtpRetryOnLowResourcesCtx(
+        pDeviceContext,
+        "QueueInitialize: WdfIoQueueCreate(InputQueue)",
+        AmtPtpQueueCreateAttempt,
+        &queueCtx);
     if (!NT_SUCCESS(status)) {
         return status;
     }

@@ -101,6 +101,91 @@ AmtPtpGetDeviceConfig(_In_ const PUSB_DEVICE_DESCRIPTOR DeviceDescriptor)
     return NULL;
 }
 
+// AmtPtpQueueCreateAttempt - shared WdfIoQueueCreate attempt for
+// AmtPtpRetryOnLowResourcesCtx (see AMT_QUEUE_CREATE_CTX in Device.h).
+// Non-static: used from both AmtPtpAcquireConfigControlDevice below and
+// AmtPtpDeviceUsbKmQueueInitialize (Queue.c).
+NTSTATUS
+AmtPtpQueueCreateAttempt(_Inout_ PVOID Context)
+{
+    PAMT_QUEUE_CREATE_CTX ctx = (PAMT_QUEUE_CREATE_CTX)Context;
+
+    return WdfIoQueueCreate(
+        ctx->Device, ctx->QueueConfig, WDF_NO_OBJECT_ATTRIBUTES, ctx->OutQueue);
+}
+
+// AmtPtpControlDeviceCreateAttempt / AMT_CONTROL_DEVICE_CREATE_CTX
+//
+// Attempt for AmtPtpAcquireConfigControlDevice's WdfDeviceCreate below.
+// Unlike the shims above, this rebuilds the entire WDFDEVICE_INIT from
+// scratch on every call: a failed WdfDeviceCreate consumes/invalidates
+// its DeviceInit (the caller must WdfDeviceInitFree it and cannot
+// resubmit the same pointer, per the WDF documentation), so a retry has
+// nothing reusable to retry with - it has to start over from
+// WdfControlDeviceInitAllocate.
+typedef struct _AMT_CONTROL_DEVICE_CREATE_CTX {
+    WDFDRIVER              Driver;
+    PCUNICODE_STRING       Sddl;
+    PCUNICODE_STRING       NtName;
+    PWDF_FILEOBJECT_CONFIG FileConfig;
+    PWDF_OBJECT_ATTRIBUTES FileContextAttributes;
+    PWDF_OBJECT_ATTRIBUTES ControlAttributes;
+    WDFDEVICE              ControlDevice; // [out] valid only on success
+} AMT_CONTROL_DEVICE_CREATE_CTX, *PAMT_CONTROL_DEVICE_CREATE_CTX;
+
+static NTSTATUS
+AmtPtpControlDeviceCreateAttempt(_Inout_ PVOID Context)
+{
+    PAMT_CONTROL_DEVICE_CREATE_CTX ctx = (PAMT_CONTROL_DEVICE_CREATE_CTX)Context;
+    PWDFDEVICE_INIT                controlInit;
+    WDFDEVICE                      controlDevice;
+    NTSTATUS                       status;
+
+    controlInit = WdfControlDeviceInitAllocate(ctx->Driver, ctx->Sddl);
+    if (controlInit == NULL) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    status = WdfDeviceInitAssignName(controlInit, ctx->NtName);
+    if (!NT_SUCCESS(status)) {
+        WdfDeviceInitFree(controlInit);
+        return status;
+    }
+
+    WdfDeviceInitSetExclusive(controlInit, FALSE);
+    WdfDeviceInitSetFileObjectConfig(
+        controlInit, ctx->FileConfig, ctx->FileContextAttributes);
+
+    status = WdfDeviceCreate(&controlInit, ctx->ControlAttributes, &controlDevice);
+    if (!NT_SUCCESS(status)) {
+        // Same reasoning as the original single-attempt code: controlInit
+        // came from WdfControlDeviceInitAllocate (not EvtDriverDeviceAdd),
+        // so on a failed WdfDeviceCreate the driver, not the framework,
+        // owns freeing it.
+        WdfDeviceInitFree(controlInit);
+        return status;
+    }
+
+    ctx->ControlDevice = controlDevice;
+    return STATUS_SUCCESS;
+}
+
+// AmtPtpControlDeviceSymlinkAttempt - the symbolic-link create reuses the
+// same already-created controlDevice across retries, unlike WdfDeviceCreate
+// above; no rebuild-from-scratch needed here.
+typedef struct _AMT_CONTROL_DEVICE_SYMLINK_CTX {
+    WDFDEVICE        ControlDevice;
+    PCUNICODE_STRING DosName;
+} AMT_CONTROL_DEVICE_SYMLINK_CTX, *PAMT_CONTROL_DEVICE_SYMLINK_CTX;
+
+static NTSTATUS
+AmtPtpControlDeviceSymlinkAttempt(_Inout_ PVOID Context)
+{
+    PAMT_CONTROL_DEVICE_SYMLINK_CTX ctx = (PAMT_CONTROL_DEVICE_SYMLINK_CTX)Context;
+
+    return WdfDeviceCreateSymbolicLink(ctx->ControlDevice, ctx->DosName);
+}
+
 // AmtPtpAcquireConfigControlDevice
 //
 // Gives the calling FDO ownership of the GUI-facing KMDF control device -
@@ -178,13 +263,32 @@ AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice)
     }
 
     // First FDO instance this driver load has seen - create the control
-    // device now. Everything below is unchanged from the original
-    // per-FDO implementation except where noted.
+    // device now. Traced through the calling FDO's own DEVICE_CONTEXT
+    // (available here - AmtPtpAcquireConfigControlDevice is always called
+    // from AmtPtpDeviceUsbKmCreateDevice after `device`/`deviceContext`
+    // already exist) even though the object being built is driver-, not
+    // FDO-, lifetime; TraceContext is just where the debug line goes, not
+    // an ownership claim. AmtTrace() tolerates a NULL context too, so this
+    // stays safe even if that calling assumption ever changes.
+    //
+    // WdfDeviceCreate, WdfDeviceCreateSymbolicLink, and WdfIoQueueCreate
+    // below are each routed through AmtPtpRetryOnLowResourcesCtx - the
+    // same bounded, STATUS_INSUFFICIENT_RESOURCES-only retry every other
+    // allocation point on this install path already gets, and for the
+    // same reason: this branch runs once per driver load, from
+    // EvtDriverDeviceAdd's call chain, with no PnP Start to retry at if a
+    // one-shot verifier Low Resources Simulation (or genuine transient
+    // low memory) lands here - AddDevice just fails outright.
     {
-        PWDFDEVICE_INIT       controlInit = NULL;
-        WDF_OBJECT_ATTRIBUTES controlAttributes;
-        WDF_IO_QUEUE_CONFIG   queueConfig;
-        WDFDEVICE             controlDevice = NULL;
+        PDEVICE_CONTEXT                traceContext = DeviceGetContext(TargetDevice);
+        WDF_OBJECT_ATTRIBUTES          controlAttributes;
+        WDF_FILEOBJECT_CONFIG          fileConfig;
+        WDF_OBJECT_ATTRIBUTES          fileContextAttributes;
+        WDF_IO_QUEUE_CONFIG            queueConfig;
+        WDFDEVICE                      controlDevice = NULL;
+        AMT_CONTROL_DEVICE_CREATE_CTX  createCtx;
+        AMT_CONTROL_DEVICE_SYMLINK_CTX symlinkCtx;
+        AMT_QUEUE_CREATE_CTX           queueCtx;
 
         DECLARE_CONST_UNICODE_STRING(sddl,
             L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)");
@@ -193,45 +297,22 @@ AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice)
         DECLARE_CONST_UNICODE_STRING(dosName,
             L"\\DosDevices\\AmtPtpDeviceUsbKm");
 
-        controlInit = WdfControlDeviceInitAllocate(
-            WdfDeviceGetDriver(TargetDevice),
-            &sddl);
-
-        if (controlInit == NULL) {
-            status = STATUS_INSUFFICIENT_RESOURCES;
-            goto unlock_and_return;
-        }
-
-        status = WdfDeviceInitAssignName(controlInit, &ntName);
-        if (!NT_SUCCESS(status)) {
-            WdfDeviceInitFree(controlInit);
-            goto unlock_and_return;
-        }
-
-        WdfDeviceInitSetExclusive(controlInit, FALSE);
-
         // Wire up EvtFileClose so a handle closing for ANY reason -
         // including the GUI process dying without running its own
         // cleanup - is caught by the driver itself and used to force
-        // LiveEnabled back off.
-        {
-            WDF_FILEOBJECT_CONFIG fileConfig;
-            WDF_OBJECT_ATTRIBUTES fileContextAttributes;
-            WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
-                &fileContextAttributes,
-                AMT_CONFIG_CONTROL_FILE_CONTEXT);
+        // LiveEnabled back off. Built once, outside the retry loop: it
+        // does not depend on controlInit and is safe for
+        // AmtPtpControlDeviceCreateAttempt to hand to
+        // WdfDeviceInitSetFileObjectConfig on every attempt.
+        WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
+            &fileContextAttributes,
+            AMT_CONFIG_CONTROL_FILE_CONTEXT);
 
-            WDF_FILEOBJECT_CONFIG_INIT(
-                &fileConfig,
-                WDF_NO_EVENT_CALLBACK,             // EvtDeviceFileCreate
-                AmtPtpConfigControlEvtFileClose,   // EvtFileClose
-                WDF_NO_EVENT_CALLBACK);            // EvtFileCleanup
-
-            WdfDeviceInitSetFileObjectConfig(
-                controlInit,
-                &fileConfig,
-                &fileContextAttributes);
-        }
+        WDF_FILEOBJECT_CONFIG_INIT(
+            &fileConfig,
+            WDF_NO_EVENT_CALLBACK,             // EvtDeviceFileCreate
+            AmtPtpConfigControlEvtFileClose,   // EvtFileClose
+            WDF_NO_EVENT_CALLBACK);            // EvtFileCleanup
 
         WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
             &controlAttributes,
@@ -239,26 +320,35 @@ AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice)
         controlAttributes.EvtCleanupCallback = AmtPtpConfigControlEvtConfigControlCleanup;
         controlAttributes.ExecutionLevel = WdfExecutionLevelPassive;
 
-        status = WdfDeviceCreate(
-            &controlInit,
-            &controlAttributes,
-            &controlDevice);
+        createCtx.Driver                = WdfDeviceGetDriver(TargetDevice);
+        createCtx.Sddl                  = &sddl;
+        createCtx.NtName                = &ntName;
+        createCtx.FileConfig            = &fileConfig;
+        createCtx.FileContextAttributes = &fileContextAttributes;
+        createCtx.ControlAttributes     = &controlAttributes;
+        createCtx.ControlDevice         = NULL;
 
+        status = AmtPtpRetryOnLowResourcesCtx(
+            traceContext,
+            "AcquireConfigControlDevice: WdfDeviceCreate(control)",
+            AmtPtpControlDeviceCreateAttempt,
+            &createCtx);
         if (!NT_SUCCESS(status)) {
-            // controlInit came from WdfControlDeviceInitAllocate (not from
-            // EvtDriverDeviceAdd), so on a failed WdfDeviceCreate the
-            // driver - not the framework - owns freeing it.
-            WdfDeviceInitFree(controlInit);
             goto unlock_and_return;
         }
+        controlDevice = createCtx.ControlDevice;
 
         controlContext = AmtConfigControlGetContext(controlDevice);
         controlContext->TargetDevice = TargetDevice;
 
-        status = WdfDeviceCreateSymbolicLink(
-            controlDevice,
-            &dosName);
+        symlinkCtx.ControlDevice = controlDevice;
+        symlinkCtx.DosName       = &dosName;
 
+        status = AmtPtpRetryOnLowResourcesCtx(
+            traceContext,
+            "AcquireConfigControlDevice: WdfDeviceCreateSymbolicLink",
+            AmtPtpControlDeviceSymlinkAttempt,
+            &symlinkCtx);
         if (!NT_SUCCESS(status)) {
             WdfObjectDelete(controlDevice);
             goto unlock_and_return;
@@ -270,12 +360,15 @@ AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice)
 
         queueConfig.EvtIoDeviceControl = AmtPtpConfigControlEvtIoDeviceControl;
 
-        status = WdfIoQueueCreate(
-            controlDevice,
-            &queueConfig,
-            WDF_NO_OBJECT_ATTRIBUTES,
-            WDF_NO_HANDLE);
+        queueCtx.Device      = controlDevice;
+        queueCtx.QueueConfig = &queueConfig;
+        queueCtx.OutQueue    = WDF_NO_HANDLE;
 
+        status = AmtPtpRetryOnLowResourcesCtx(
+            traceContext,
+            "AcquireConfigControlDevice: WdfIoQueueCreate(control)",
+            AmtPtpQueueCreateAttempt,
+            &queueCtx);
         if (!NT_SUCCESS(status)) {
             WdfObjectDelete(controlDevice);
             goto unlock_and_return;
@@ -398,6 +491,66 @@ AmtPtpRetryOnLowResources(
             // EvtDevicePrepareHardware) are documented/asserted
             // PASSIVE_LEVEL, so a short blocking pause here is sanctioned
             // in either context.
+            delay.QuadPart = WDF_REL_TIMEOUT_IN_MS(
+                AMT_LOW_RESOURCES_RETRY_DELAY_MS * (attempt + 1));
+            KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+    }
+
+    return status;
+}
+
+// AmtPtpRetryOnLowResourcesCtx - same engine/policy as
+// AmtPtpRetryOnLowResources above (bounded retry, STATUS_INSUFFICIENT_
+// RESOURCES only, identical attempt count/backoff), generalized for the
+// remaining install-path allocation groups this driver still has open:
+// AmtPtpAcquireConfigControlDevice's control-device WdfDeviceCreate/
+// WdfDeviceCreateSymbolicLink/WdfIoQueueCreate, and both WdfIoQueueCreate
+// calls in AmtPtpDeviceUsbKmQueueInitialize (Queue.c). None of those
+// attempts fit PFN_AMT_PREPARE_HW_ATTEMPT's bare-WDFDEVICE shape - the
+// control-device create needs to rebuild a whole WDFDEVICE_INIT from
+// scratch on each retry (a failed WdfDeviceCreate consumes/invalidates
+// its DeviceInit, per WDF's documented contract, so the same init can
+// never be re-submitted), and the queue creates need their own
+// WDF_IO_QUEUE_CONFIG plus an output WDFQUEUE* - so this version takes an
+// opaque context pointer instead.
+//
+// Non-static and declared in Device.h (PFN_AMT_LOW_RESOURCES_ATTEMPT_CTX
+// typedef included) so Queue.c can call it too. The tracing/backoff
+// constants stay file-local to Device.c (as before); callers only see
+// this function, not the policy numbers.
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS
+AmtPtpRetryOnLowResourcesCtx(
+    _In_opt_ PDEVICE_CONTEXT                  TraceContext,
+    _In_     PCSTR                             OperationName,
+    _In_     PFN_AMT_LOW_RESOURCES_ATTEMPT_CTX Attempt,
+    _Inout_  PVOID                             Context
+    )
+{
+    ULONG    attempt;
+    NTSTATUS status = STATUS_UNSUCCESSFUL;
+
+    for (attempt = 0; attempt < AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS; attempt++) {
+        status = Attempt(Context);
+        // TraceContext may legitimately be NULL here (see the control-
+        // device call sites below, which trace through the calling FDO's
+        // DEVICE_CONTEXT when one is available and NULL otherwise) -
+        // AmtTrace() treats a NULL context as "tracing disabled" and never
+        // dereferences it.
+        AmtTrace(TraceContext, "%s attempt %lu/%lu -> status=0x%08X",
+            OperationName, attempt + 1, AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS, status);
+
+        if (NT_SUCCESS(status) || status != STATUS_INSUFFICIENT_RESOURCES) {
+            break;
+        }
+
+        if (attempt + 1 < AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS) {
+            LARGE_INTEGER delay;
+            // All current callers (AddDevice-time AmtPtpAcquireConfigControlDevice/
+            // AmtPtpDeviceUsbKmQueueInitialize) run at PASSIVE_LEVEL, same as
+            // AmtPtpRetryOnLowResources' callers above, so a short blocking
+            // pause here is sanctioned the same way.
             delay.QuadPart = WDF_REL_TIMEOUT_IN_MS(
                 AMT_LOW_RESOURCES_RETRY_DELAY_MS * (attempt + 1));
             KeDelayExecutionThread(KernelMode, FALSE, &delay);
