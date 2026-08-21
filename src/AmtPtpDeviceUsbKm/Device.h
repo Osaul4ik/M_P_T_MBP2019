@@ -374,6 +374,15 @@ typedef struct _DEVICE_CONTEXT
     // goes through the lock.
     BOOLEAN                  D0ExitInProgress;
 
+    // T2 resume lifecycle gates. T2ResumeActive is set before WdfIoTargetStart
+    // for a normal D3 -> D0 transition so an early ReadersFailed callback
+    // can identify the resume session even if the callback fires from inside
+    // WdfIoTargetStart. T2RestartPending is latched when that failure schedules
+    // the required PnP re-enumeration and is cleared by the next D0Entry/D0Exit
+    // lifecycle transition. Both are protected by D0ExitLock.
+    BOOLEAN                  T2ResumeActive;
+    BOOLEAN                  T2RestartPending;
+
     // Lifecycle generation token. Incremented under D0ExitLock at the start
     // of every new D0Entry/D0Exit/ReleaseHardware transition. A recovery
     // path (timer callback) that snapshots this value before dropping

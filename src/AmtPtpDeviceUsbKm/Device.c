@@ -1086,6 +1086,8 @@ AmtPtpRecoveryBeginTermination(
 {
     WdfSpinLockAcquire(DeviceContext->D0ExitLock);
     DeviceContext->D0ExitInProgress = TRUE;
+    DeviceContext->T2ResumeActive = FALSE;
+    DeviceContext->T2RestartPending = FALSE;
     DeviceContext->RecoveryGeneration++;
     WdfSpinLockRelease(DeviceContext->D0ExitLock);
 }
@@ -1439,7 +1441,16 @@ AmtPtpEvtDeviceD0Entry(
     pDeviceContext->RecoveryGeneration++;
     pDeviceContext->D0ExitInProgress    = FALSE;
     pDeviceContext->ReaderRecoveryStage = READER_RECOVERY_RESET_PIPE;
+    pDeviceContext->T2RestartPending    = FALSE;
+    pDeviceContext->T2ResumeActive     =
+        (PreviousState == WdfPowerDeviceD3) && AmtPtpIsT2Device(pDeviceContext);
     WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+
+    if (pDeviceContext->T2ResumeActive) {
+        AmtTrace(pDeviceContext,
+            "D0Entry: T2 resume lifecycle armed before WdfIoTargetStart, generation=%lu",
+            pDeviceContext->RecoveryGeneration);
+    }
 
     pDeviceContext->LastReportTime =
         KeQueryPerformanceCounter(&pDeviceContext->PerfFrequency);
@@ -1575,6 +1586,18 @@ end:
             WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe),
             WdfIoTargetCancelSentIo);
     }
+
+    // A T2 reader failure can fire synchronously from WdfIoTargetStart and
+    // latch T2RestartPending before D0Entry reaches this point. Only clear
+    // T2ResumeActive when the D0Entry itself completed successfully and no
+    // restart was requested by that early callback. This keeps the lifecycle
+    // gate valid for the entire D3->D0 startup window without racing the
+    // reader-failure callback.
+    WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
+    if (NT_SUCCESS(status) && !pDeviceContext->T2RestartPending) {
+        pDeviceContext->T2ResumeActive = FALSE;
+    }
+    WdfSpinLockRelease(pDeviceContext->D0ExitLock);
 
     WdfWaitLockRelease(pDeviceContext->RecoveryLock);
 

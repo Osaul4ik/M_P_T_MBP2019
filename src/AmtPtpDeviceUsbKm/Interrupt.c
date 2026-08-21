@@ -739,9 +739,14 @@ AmtPtpEvtReaderRestartTimer(
     // in-place.  The known-good path is a full PnP re-enumeration so that
     // ReleaseHardware/PrepareHardware creates a fresh USB topology.
     if (AmtPtpIsT2Device(pCtx)) {
+        WdfSpinLockAcquire(pCtx->D0ExitLock);
+        pCtx->T2RestartPending = TRUE;
+        pCtx->T2ResumeActive = FALSE;
+        WdfSpinLockRelease(pCtx->D0ExitLock);
+
         AmtTrace(pCtx,
             "ReaderRestartTimer: T2 failure after D3->D0, requesting PnP "
-            "re-enumeration via WdfDeviceSetFailed");
+            "re-enumeration via WdfDeviceSetFailed; new IOCTLs are now gated");
         WdfWaitLockRelease(pCtx->RecoveryLock);
         WdfDeviceSetFailed(device, WdfDeviceFailedAttemptRestart);
         return;
@@ -844,6 +849,7 @@ AmtPtpEvtUsbInterruptReadersFailed(
     WDFDEVICE        device   = WdfIoTargetGetDevice(ioTarget);
     PDEVICE_CONTEXT  pCtx     = DeviceGetContext(device);
     BOOLEAN                d0ExitInProgress;
+    BOOLEAN                t2ResumeActive;
     READER_RECOVERY_STAGE  stage;
 
     // See the identical PREfast note in AmtPtpDeviceUsbKmEvtDevicePrepareHardware (Device.c).
@@ -877,6 +883,7 @@ AmtPtpEvtUsbInterruptReadersFailed(
     // WDFSPINLOCK and not a WDFWAITLOCK.
     WdfSpinLockAcquire(pCtx->D0ExitLock);
     d0ExitInProgress = pCtx->D0ExitInProgress;
+    t2ResumeActive   = pCtx->T2ResumeActive;
     stage            = pCtx->ReaderRecoveryStage;
     WdfSpinLockRelease(pCtx->D0ExitLock);
 
@@ -901,7 +908,12 @@ AmtPtpEvtUsbInterruptReadersFailed(
         // WdfDeviceSetFailed; the reader-failed callback can run at DISPATCH_LEVEL.
         AmtTrace(pCtx,
             "ReadersFailed: T2 post-resume reader failure, scheduling PnP "
-            "re-enumeration");
+            "re-enumeration (resumeActive=%u)",
+            t2ResumeActive ? 1u : 0u);
+        WdfSpinLockAcquire(pCtx->D0ExitLock);
+        pCtx->T2RestartPending = TRUE;
+        pCtx->T2ResumeActive = FALSE;
+        WdfSpinLockRelease(pCtx->D0ExitLock);
         WdfTimerStart(
             pCtx->ReaderRestartTimer,
             WDF_REL_TIMEOUT_IN_MS(1));

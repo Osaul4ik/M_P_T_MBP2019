@@ -170,7 +170,32 @@ AmtPtpDeviceUsbKmEvtIoDeviceControl(
     // against a System-log "MTConfig" failure - see the
     // WELLSPRING_MODE_SETFEATURE_* comment in Device.h.
     if (IoControlCode != IOCTL_HID_READ_REPORT) {
-        AmtTrace(pDeviceContext, "EvtIoDeviceControl: ENTER, IoControlCode=0x%08X", IoControlCode);
+        BOOLEAN lifecycleBlocked;
+
+        WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
+        lifecycleBlocked =
+            pDeviceContext->D0ExitInProgress ||
+            pDeviceContext->T2RestartPending ||
+            pDeviceContext->T2ResumeActive;
+        WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+
+        AmtTrace(pDeviceContext,
+            "EvtIoDeviceControl: ENTER, IoControlCode=0x%08X",
+            IoControlCode);
+
+        // Do not start new HID control/feature work against the old hardware
+        // lifecycle once T2 re-enumeration has been requested, or while the
+        // D3->D0 T2 startup gate is active. READ_REPORT is deliberately not
+        // rejected here: its manual input queue is non-power-managed and
+        // pending reads belong to the FDO lifetime; PnP purge owns their
+        // cancellation when the old stack is removed.
+        if (lifecycleBlocked) {
+            AmtTrace(pDeviceContext,
+                "EvtIoDeviceControl: lifecycle transition/restart pending, "
+                "rejecting IoControlCode=0x%08X", IoControlCode);
+            WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
+            return;
+        }
     }
 
     switch (IoControlCode)
