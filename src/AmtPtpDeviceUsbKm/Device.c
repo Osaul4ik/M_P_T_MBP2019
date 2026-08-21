@@ -695,6 +695,18 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
         }
     }
 
+    // AmtPtpPrepareHwCreateUsbDeviceAttempt() calls WdfUsbTargetDeviceCreate
+    // with &pDeviceContext->UsbDevice as its output parameter and only
+    // returns success when that call succeeds, which guarantees a non-NULL
+    // handle - true exactly as it was when this call sat inline here
+    // before the low-resources retry refactor. PREfast can't see through
+    // the AmtPtpPrepareHardwareRetryOnLowResources() function-pointer
+    // indirection to re-derive that fact on its own (C6387 on the two
+    // uses below), so restate it explicitly rather than adding redundant
+    // runtime NULL checks to otherwise-unconditional lifecycle code - the
+    // same tradeoff already made for pDeviceContext itself above.
+    _Analysis_assume_(pDeviceContext->UsbDevice != NULL);
+
     WdfUsbTargetDeviceGetDeviceDescriptor(
         pDeviceContext->UsbDevice, &pDeviceContext->DeviceDescriptor);
 
