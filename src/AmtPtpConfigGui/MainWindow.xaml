@@ -870,10 +870,17 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="BtnReconnect" Height="36" Padding="12,0" Margin="0,0,8,0"
+                            Style="{StaticResource SecondaryButton}" Click="Reconnect_Click" ToolTip="Reconnect to the device">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <TextBlock Text="↻" FontSize="14" Margin="0,0,7,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="Reconnect" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
                     <Border Background="{DynamicResource ControlFillBrush}"
                             BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
-                            CornerRadius="7" Padding="10,7" MinWidth="132" Height="36">
-                        <StackPanel Orientation="Horizontal">
+                            CornerRadius="7" Padding="10,7" Width="132" Height="36">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                             <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="{DynamicResource StatusOfflineBrush}" VerticalAlignment="Center"/>
                             <TextBlock x:Name="StatusText" Margin="9,0,0,0" VerticalAlignment="Center"
                                        Text="Disconnected"/>
@@ -884,7 +891,7 @@
                             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
                             CornerRadius="7" Padding="10,7" MinWidth="250" MaxWidth="460" Height="36">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <TextBlock Text="Device" Style="{StaticResource SectionCaption}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="Device" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="DeviceModelText" VerticalAlignment="Center"
                                        Foreground="{DynamicResource TextPrimaryBrush}"
                                        FontSize="12" FontWeight="SemiBold"
@@ -906,34 +913,50 @@
             </Grid>
         </Border>
 
-        <!-- ===================== Profiles ===================== -->
-        <Border DockPanel.Dock="Top" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="190"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,14,0">
-                    <TextBlock Text="Profile" FontWeight="SemiBold" FontSize="12.5"/>
-                    <TextBlock Text="Pointer / Scroll / Palm settings" Style="{StaticResource SectionCaption}"/>
-                </StackPanel>
-                <ComboBox x:Name="ProfileCombo" Grid.Column="1"
-                          SelectionChanged="ProfileCombo_SelectionChanged"/>
-                <WrapPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
-                    <Button Content="＋" Width="38" Height="36" Padding="0" Margin="0,0,6,0"
-                            Click="NewProfile_Click" ToolTip="New profile"/>
-                    <Button Content="Rename" MinWidth="128" Height="36" Margin="0,0,6,0" Click="RenameProfile_Click"/>
-                    <Button Content="Delete" MinWidth="90" Height="36" Click="DeleteProfile_Click"/>
+        <!-- ===================== Profiles + advanced mode ===================== -->
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="10"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="14,10">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="190"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,14,0">
+                        <TextBlock Text="Profile" FontWeight="SemiBold" FontSize="12.5"/>
+                        <TextBlock Text="Pointer / Scroll / Palm settings" Style="{StaticResource SectionCaption}"/>
+                    </StackPanel>
+                    <ComboBox x:Name="ProfileCombo" Grid.Column="1"
+                              SelectionChanged="ProfileCombo_SelectionChanged"/>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Button Content="＋" Padding="11,0" Height="36" Margin="0,0,6,0"
+                                Click="NewProfile_Click" ToolTip="New profile"/>
+                        <Button Content="Rename" Padding="12,0" Height="36" Margin="0,0,6,0"
+                                Click="RenameProfile_Click"/>
+                        <Button Content="Delete" Padding="12,0" Height="36"
+                                Click="DeleteProfile_Click"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="2" Style="{StaticResource Card}" Padding="14,10">
+                <Grid>
                     <CheckBox x:Name="ChkProMode" Content="Pro Mode" Style="{StaticResource AndroidSwitch}"
-                              Margin="14,0,0,0" VerticalAlignment="Center" Checked="ProMode_Changed" Unchecked="ProMode_Changed"/>
-                    <CheckBox x:Name="ChkDebugMode" Content="Debug logging" Style="{StaticResource AndroidSwitch}"
-                              Margin="14,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"
+                              HorizontalAlignment="Left" VerticalAlignment="Center"
+                              Checked="ProMode_Changed" Unchecked="ProMode_Changed"/>
+                    <CheckBox x:Name="ChkDebugMode" Content="Debug Logging" Style="{StaticResource AndroidSwitch}"
+                              HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed"
                               Checked="DebugMode_Changed" Unchecked="DebugMode_Changed"
                               ToolTip="Turns on the driver's [AmtPtp] trace output (view with Sysinternals DebugView, run as admin, Capture Kernel + Enable Verbose Kernel Output). Persists across reboot/replug; off by default."/>
-                </WrapPanel>
-            </Grid>
-        </Border>
+                </Grid>
+            </Border>
+        </Grid>
 
         <!-- ===================== Toolbar: Live monitor + diagnostics ===================== -->
         <Border x:Name="LiveToolbarCard" DockPanel.Dock="Top" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,14">
@@ -963,7 +986,7 @@
                     </StackPanel>
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Button Content="Export log .txt" Height="36" Click="SaveErrors_Click"/>
+                        <Button x:Name="BtnExportLog" Content="Export log .txt" Height="36" Click="SaveErrors_Click" Visibility="Collapsed"/>
                         <!-- Expands/collapses the live touch-contact list below.
                              Only meaningful (and only shown) while Live is on;
                              starts collapsed every time Live is (re)enabled so
@@ -974,12 +997,6 @@
                                 Visibility="Collapsed" Click="ToggleLiveDetails_Click"
                                 ToolTip="Show/hide live touch details">
                             <TextBlock x:Name="BtnToggleLiveDetailsIcon" Text="&#x25BE;" FontSize="12" VerticalAlignment="Center"/>
-                        </Button>
-                        <Button Height="36" Click="Reconnect_Click">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="↻" FontSize="14" Margin="0,0,7,0" VerticalAlignment="Center"/>
-                                <TextBlock Text="Reconnect" VerticalAlignment="Center"/>
-                            </StackPanel>
                         </Button>
                     </StackPanel>
                 </Grid>

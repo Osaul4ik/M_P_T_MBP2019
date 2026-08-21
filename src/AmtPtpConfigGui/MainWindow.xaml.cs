@@ -842,7 +842,7 @@ namespace AmtPtpConfigGui
                             ToolTipText = "Ignore a non-Force-Touch contact on every frame unless Major is at least 50 and Minor is at least 30."
                         };
                         requireM.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ToggleSmallContactStrictFromTray));
-                        menu.Items.Add(requireM);
+                        smallReject.DropDownItems.Add(requireM);
                     }
                 }
 
@@ -877,7 +877,7 @@ namespace AmtPtpConfigGui
                             ToolTipText = "Ignore a Force-Touch contact on any frame where pressure is zero."
                         };
                         requirePressureContinuous.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureContinuousFromTray));
-                        menu.Items.Add(requirePressureContinuous);
+                        requirePressure.DropDownItems.Add(requirePressureContinuous);
                     }
 
                     // Dedicated item that expands into the list of Force Tap button types.
@@ -1660,6 +1660,7 @@ namespace AmtPtpConfigGui
             if (!_device.IsConnected)
             {
                 _liveEnabled = false;
+                if (BtnExportLog != null) BtnExportLog.Visibility = Visibility.Collapsed;
                 _liveRenderTimer.Stop();
                 LiveStatusText.Text = "Live: device not connected";
                 if (LiveCoordPanel != null) LiveCoordPanel.Visibility = Visibility.Collapsed;
@@ -1673,6 +1674,7 @@ namespace AmtPtpConfigGui
             if (!_device.SetLiveEnabled(enabled))
             {
                 _liveEnabled = false;
+                if (BtnExportLog != null) BtnExportLog.Visibility = Visibility.Collapsed;
                 _liveRenderTimer.Stop();
                 if (ChkLive.IsChecked == true)
                     ChkLive.IsChecked = false;
@@ -1689,6 +1691,7 @@ namespace AmtPtpConfigGui
 
             _liveEnabled = enabled;
             _lastLiveSequence = 0;
+            if (BtnExportLog != null) BtnExportLog.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
 
             if (enabled)
             {
