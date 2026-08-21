@@ -341,6 +341,154 @@ AmtPtpConfigControlReleaseTargetDevice(_In_opt_ WDFDEVICE TargetDevice)
     }
 }
 
+// AmtPtpRetryOnLowResources - shared bounded-retry engine.
+//
+// Originally scoped to EvtDevicePrepareHardware's re-arrival gap (see the
+// comment where its three PrepareHardware adapter shims are defined,
+// further down in this file): a verifier-injected or genuine transient
+// STATUS_INSUFFICIENT_RESOURCES there has no second PnP Start attempt, so
+// the device sits failed with Code 10 until manual re-enable.
+//
+// The exact same gap exists one step earlier, in
+// AmtPtpDeviceUsbKmCreateDevice (called from EvtDriverDeviceAdd): the
+// reader-restart timer, the aligned contact pool, and the four
+// spinlock/waitlock object creations there are just as capable of eating
+// a one-shot Low Resources Simulation failure, and until a device object
+// exists there is no PnP Start to retry at all - AddDevice itself fails
+// outright. Reusing this engine for those five allocation points closes
+// that earlier gap the same narrowly-scoped way, restricted to
+// STATUS_INSUFFICIENT_RESOURCES only; a genuine non-resource failure
+// (bad parameters, missing hardware, etc.) still fails immediately on the
+// first attempt, unchanged.
+#define AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS   3
+#define AMT_LOW_RESOURCES_RETRY_DELAY_MS       20
+
+typedef NTSTATUS
+(*PFN_AMT_PREPARE_HW_ATTEMPT)(_In_ WDFDEVICE Device);
+
+_IRQL_requires_(PASSIVE_LEVEL)
+static NTSTATUS
+AmtPtpRetryOnLowResources(
+    _In_ WDFDEVICE                  Device,
+    _In_ PDEVICE_CONTEXT            DeviceContext,
+    _In_ PCSTR                      OperationName,
+    _In_ PFN_AMT_PREPARE_HW_ATTEMPT Attempt
+    )
+{
+    ULONG    attempt;
+    NTSTATUS status = STATUS_UNSUCCESSFUL;
+
+    for (attempt = 0; attempt < AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS; attempt++) {
+        status = Attempt(Device);
+        AmtTrace(DeviceContext, "%s attempt %lu/%lu -> status=0x%08X",
+            OperationName, attempt + 1, AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS, status);
+
+        if (NT_SUCCESS(status) || status != STATUS_INSUFFICIENT_RESOURCES) {
+            // Success, or a non-resource failure: stop immediately either
+            // way. Only STATUS_INSUFFICIENT_RESOURCES is treated as the
+            // transient condition worth retrying - anything else (bad
+            // device state, unsupported hardware, etc.) is a real failure
+            // and must take the normal error path unchanged.
+            break;
+        }
+
+        if (attempt + 1 < AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS) {
+            LARGE_INTEGER delay;
+            // Both callers (AddDevice-time CreateDevice and
+            // EvtDevicePrepareHardware) are documented/asserted
+            // PASSIVE_LEVEL, so a short blocking pause here is sanctioned
+            // in either context.
+            delay.QuadPart = WDF_REL_TIMEOUT_IN_MS(
+                AMT_LOW_RESOURCES_RETRY_DELAY_MS * (attempt + 1));
+            KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+    }
+
+    return status;
+}
+
+// AddDevice-time adapter shims giving WdfTimerCreate,
+// AmtAllocateAlignedContactPool, WdfSpinLockCreate x3, and
+// WdfWaitLockCreate the single-WDFDEVICE-argument shape
+// AmtPtpRetryOnLowResources' function pointer expects.
+
+static NTSTATUS
+AmtPtpCreateDeviceTimerAttempt(_In_ WDFDEVICE Device)
+{
+    PDEVICE_CONTEXT       deviceContext = DeviceGetContext(Device);
+    WDF_TIMER_CONFIG      timerConfig;
+    WDF_OBJECT_ATTRIBUTES timerAttributes;
+
+    WDF_TIMER_CONFIG_INIT(&timerConfig, AmtPtpEvtReaderRestartTimer);
+    timerConfig.AutomaticSerialization = FALSE;
+
+    WDF_OBJECT_ATTRIBUTES_INIT(&timerAttributes);
+    timerAttributes.ParentObject   = Device;
+    timerAttributes.ExecutionLevel = WdfExecutionLevelPassive;
+
+    return WdfTimerCreate(
+        &timerConfig, &timerAttributes, &deviceContext->ReaderRestartTimer);
+}
+
+static NTSTATUS
+AmtPtpCreateDeviceContactPoolAttempt(_In_ WDFDEVICE Device)
+{
+    PDEVICE_CONTEXT deviceContext = DeviceGetContext(Device);
+
+    deviceContext->ActiveContacts = AmtAllocateAlignedContactPool();
+    return (deviceContext->ActiveContacts != NULL)
+        ? STATUS_SUCCESS
+        : STATUS_INSUFFICIENT_RESOURCES;
+}
+
+static NTSTATUS
+AmtPtpCreateDeviceStateLockAttempt(_In_ WDFDEVICE Device)
+{
+    PDEVICE_CONTEXT       deviceContext = DeviceGetContext(Device);
+    WDF_OBJECT_ATTRIBUTES lockAttributes;
+
+    WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
+    lockAttributes.ParentObject = Device;
+
+    return WdfSpinLockCreate(&lockAttributes, &deviceContext->StateLock);
+}
+
+static NTSTATUS
+AmtPtpCreateDeviceLiveLockAttempt(_In_ WDFDEVICE Device)
+{
+    PDEVICE_CONTEXT       deviceContext = DeviceGetContext(Device);
+    WDF_OBJECT_ATTRIBUTES lockAttributes;
+
+    WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
+    lockAttributes.ParentObject = Device;
+
+    return WdfSpinLockCreate(&lockAttributes, &deviceContext->LiveLock);
+}
+
+static NTSTATUS
+AmtPtpCreateDeviceD0ExitLockAttempt(_In_ WDFDEVICE Device)
+{
+    PDEVICE_CONTEXT       deviceContext = DeviceGetContext(Device);
+    WDF_OBJECT_ATTRIBUTES lockAttributes;
+
+    WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
+    lockAttributes.ParentObject = Device;
+
+    return WdfSpinLockCreate(&lockAttributes, &deviceContext->D0ExitLock);
+}
+
+static NTSTATUS
+AmtPtpCreateDeviceRecoveryLockAttempt(_In_ WDFDEVICE Device)
+{
+    PDEVICE_CONTEXT       deviceContext = DeviceGetContext(Device);
+    WDF_OBJECT_ATTRIBUTES lockAttributes;
+
+    WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
+    lockAttributes.ParentObject = Device;
+
+    return WdfWaitLockCreate(&lockAttributes, &deviceContext->RecoveryLock);
+}
+
 // AmtPtpDeviceUsbKmCreateDevice
 
 NTSTATUS
@@ -394,35 +542,33 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     // Its callback calls WdfIoTargetStart, which requires PASSIVE_LEVEL,
     // hence the explicit passive execution level here rather than the
     // default DISPATCH_LEVEL timer callback.
-    {
-        WDF_TIMER_CONFIG      timerConfig;
-        WDF_OBJECT_ATTRIBUTES timerAttributes;
-
-        WDF_TIMER_CONFIG_INIT(&timerConfig, AmtPtpEvtReaderRestartTimer);
-
-        // Explicit, not relying on the (TRUE) default: this callback's own
-        // synchronization is entirely D0ExitLock/RecoveryLock/
-        // RecoveryGeneration (see Device.h) - it does not rely on, and must
-        // not rely on, WDF's automatic-serialization device callback lock,
-        // which is a separate mechanism scoped to the device's default
-        // PASSIVE/DISPATCH callback synchronization and not coordinated
-        // with the lifecycle locks this driver defines itself.
-        timerConfig.AutomaticSerialization = FALSE;
-
-        WDF_OBJECT_ATTRIBUTES_INIT(&timerAttributes);
-        timerAttributes.ParentObject   = device;
-        timerAttributes.ExecutionLevel = WdfExecutionLevelPassive;
-
-        status = WdfTimerCreate(
-            &timerConfig, &timerAttributes, &deviceContext->ReaderRestartTimer);
-        if (!NT_SUCCESS(status)) {
-            return status;
-        }
+    //
+    // Explicit AutomaticSerialization = FALSE (set inside
+    // AmtPtpCreateDeviceTimerAttempt), not relying on the (TRUE) default:
+    // this callback's own synchronization is entirely D0ExitLock/
+    // RecoveryLock/RecoveryGeneration (see Device.h) - it does not rely
+    // on, and must not rely on, WDF's automatic-serialization device
+    // callback lock, which is a separate mechanism scoped to the device's
+    // default PASSIVE/DISPATCH callback synchronization and not
+    // coordinated with the lifecycle locks this driver defines itself.
+    //
+    // Routed through AmtPtpRetryOnLowResources: a one-shot verifier Low
+    // Resources Simulation (or genuine transient low memory) hitting this
+    // WdfTimerCreate has no PnP Start to retry - AddDevice fails outright
+    // - so the same bounded retry PrepareHardware already uses applies
+    // here too.
+    status = AmtPtpRetryOnLowResources(
+        device, deviceContext, "CreateDevice: WdfTimerCreate(ReaderRestartTimer)",
+        AmtPtpCreateDeviceTimerAttempt);
+    if (!NT_SUCCESS(status)) {
+        return status;
     }
 
-    deviceContext->ActiveContacts = AmtAllocateAlignedContactPool();
-    if (deviceContext->ActiveContacts == NULL) {
-        return STATUS_INSUFFICIENT_RESOURCES;
+    status = AmtPtpRetryOnLowResources(
+        device, deviceContext, "CreateDevice: AmtAllocateAlignedContactPool",
+        AmtPtpCreateDeviceContactPoolAttempt);
+    if (!NT_SUCCESS(status)) {
+        return status;
     }
 
     deviceContext->PtpReportButton = TRUE;
@@ -460,46 +606,54 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     AmtScrollConfigLoadFromRegistry(device, &deviceContext->ScrollConfig);
     AmtScrollRuntimeRebuild(&deviceContext->ScrollConfig, &deviceContext->ScrollRuntime);
 
-    // Create the shared state lock for frame processing.
-    {
-        WDF_OBJECT_ATTRIBUTES lockAttributes;
-        WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
-        lockAttributes.ParentObject = device;
+    // Create the shared state lock for frame processing. Each creation is
+    // routed through AmtPtpRetryOnLowResources for the same reason the
+    // timer and contact pool above are: these are WDF object-manager
+    // allocations, just as susceptible to a one-shot verifier Low
+    // Resources Simulation failure at AddDevice time as the pool
+    // allocation above, and with the same "no PnP Start to retry, AddDevice
+    // just fails" consequence if left unretried.
+    status = AmtPtpRetryOnLowResources(
+        device, deviceContext, "CreateDevice: WdfSpinLockCreate(StateLock)",
+        AmtPtpCreateDeviceStateLockAttempt);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
 
-        status = WdfSpinLockCreate(&lockAttributes, &deviceContext->StateLock);
-        if (!NT_SUCCESS(status)) {
-            return status;
-        }
+    status = AmtPtpRetryOnLowResources(
+        device, deviceContext, "CreateDevice: WdfSpinLockCreate(LiveLock)",
+        AmtPtpCreateDeviceLiveLockAttempt);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
 
-        status = WdfSpinLockCreate(&lockAttributes, &deviceContext->LiveLock);
-        if (!NT_SUCCESS(status)) {
-            return status;
-        }
+    // MS-RECOMMENDED SYNCHRONIZATION: guards D0ExitInProgress/
+    // ReaderRecoveryStage/RecoveryGeneration together with a consistent
+    // snapshot of InterruptPipe/UsbDevice - see the two-level
+    // synchronization model comment on D0ExitLock/RecoveryLock in
+    // Device.h for why a WDFSPINLOCK, not WDFWAITLOCK (PASSIVE_LEVEL-
+    // only, disqualified by the DISPATCH_LEVEL
+    // AmtPtpEvtUsbInterruptReadersFailed caller) or a bare Interlocked
+    // flag (individually atomic ops, not atomic as the check-then-read
+    // sequence this needs), is the correct primitive here.
+    status = AmtPtpRetryOnLowResources(
+        device, deviceContext, "CreateDevice: WdfSpinLockCreate(D0ExitLock)",
+        AmtPtpCreateDeviceD0ExitLockAttempt);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
 
-        // MS-RECOMMENDED SYNCHRONIZATION: guards D0ExitInProgress/
-        // ReaderRecoveryStage/RecoveryGeneration together with a consistent
-        // snapshot of InterruptPipe/UsbDevice - see the two-level
-        // synchronization model comment on D0ExitLock/RecoveryLock in
-        // Device.h for why a WDFSPINLOCK, not WDFWAITLOCK (PASSIVE_LEVEL-
-        // only, disqualified by the DISPATCH_LEVEL
-        // AmtPtpEvtUsbInterruptReadersFailed caller) or a bare Interlocked
-        // flag (individually atomic ops, not atomic as the check-then-read
-        // sequence this needs), is the correct primitive here.
-        status = WdfSpinLockCreate(&lockAttributes, &deviceContext->D0ExitLock);
-        if (!NT_SUCCESS(status)) {
-            return status;
-        }
-
-        // PASSIVE_LEVEL-only counterpart to D0ExitLock - serializes the
-        // actual (blocking) recovery/D0Exit/ReleaseHardware cleanup work so
-        // WdfIoTargetStop/WdfUsbTargetPipeResetSynchronously/
-        // WdfUsbTargetDeviceResetPortSynchronously/AmtPtpCyclePort/
-        // WdfIoTargetStart never run concurrently against each other. See
-        // the Device.h comment on RecoveryLock for the full model.
-        status = WdfWaitLockCreate(&lockAttributes, &deviceContext->RecoveryLock);
-        if (!NT_SUCCESS(status)) {
-            return status;
-        }
+    // PASSIVE_LEVEL-only counterpart to D0ExitLock - serializes the
+    // actual (blocking) recovery/D0Exit/ReleaseHardware cleanup work so
+    // WdfIoTargetStop/WdfUsbTargetPipeResetSynchronously/
+    // WdfUsbTargetDeviceResetPortSynchronously/AmtPtpCyclePort/
+    // WdfIoTargetStart never run concurrently against each other. See
+    // the Device.h comment on RecoveryLock for the full model.
+    status = AmtPtpRetryOnLowResources(
+        device, deviceContext, "CreateDevice: WdfWaitLockCreate(RecoveryLock)",
+        AmtPtpCreateDeviceRecoveryLockAttempt);
+    if (!NT_SUCCESS(status)) {
+        return status;
     }
 
     // The GUI talks to a separate KMDF control device that is
@@ -574,58 +728,18 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
 // same USB composite device). The bounded retry above is the correct,
 // narrowly-scoped fix; the framework's own default restart-on-failure
 // behavior is left alone to handle anything the retry still can't clear.
-#define PREPARE_HARDWARE_ALLOC_MAX_ATTEMPTS   3
-#define PREPARE_HARDWARE_ALLOC_RETRY_DELAY_MS 20
-
-typedef NTSTATUS
-(*PFN_AMT_PREPARE_HW_ATTEMPT)(_In_ WDFDEVICE Device);
-
-_IRQL_requires_(PASSIVE_LEVEL)
-static NTSTATUS
-AmtPtpPrepareHardwareRetryOnLowResources(
-    _In_ WDFDEVICE                  Device,
-    _In_ PDEVICE_CONTEXT            DeviceContext,
-    _In_ PCSTR                      OperationName,
-    _In_ PFN_AMT_PREPARE_HW_ATTEMPT Attempt
-    )
-{
-    ULONG    attempt;
-    NTSTATUS status = STATUS_UNSUCCESSFUL;
-
-    for (attempt = 0; attempt < PREPARE_HARDWARE_ALLOC_MAX_ATTEMPTS; attempt++) {
-        status = Attempt(Device);
-        AmtTrace(DeviceContext, "PrepareHardware: %s attempt %lu/%lu -> status=0x%08X",
-            OperationName, attempt + 1, PREPARE_HARDWARE_ALLOC_MAX_ATTEMPTS, status);
-
-        if (NT_SUCCESS(status) || status != STATUS_INSUFFICIENT_RESOURCES) {
-            // Success, or a non-resource failure: stop immediately either
-            // way. Only STATUS_INSUFFICIENT_RESOURCES is treated as the
-            // transient condition worth retrying - anything else (bad
-            // device state, unsupported hardware, etc.) is a real failure
-            // and must take the normal error path unchanged.
-            break;
-        }
-
-        if (attempt + 1 < PREPARE_HARDWARE_ALLOC_MAX_ATTEMPTS) {
-            LARGE_INTEGER delay;
-            // EvtDevicePrepareHardware is documented PASSIVE_LEVEL (and
-            // PAGED_CODE()-asserted in the caller), so a short blocking
-            // pause here is the same sanctioned trade-off
-            // AmtPtpD0EntryRetry already makes on the sleep/wake path.
-            delay.QuadPart = WDF_REL_TIMEOUT_IN_MS(
-                PREPARE_HARDWARE_ALLOC_RETRY_DELAY_MS * (attempt + 1));
-            KeDelayExecutionThread(KernelMode, FALSE, &delay);
-        }
-    }
-
-    return status;
-}
+//
+// The retry engine itself (AmtPtpRetryOnLowResources) now lives earlier in
+// this file, immediately before AmtPtpDeviceUsbKmCreateDevice - it covers
+// that function's own allocation points (timer, contact pool, four lock
+// creations) the same way it covers the three below, since AddDevice-time
+// failures hit an identical gap one PnP phase earlier.
 
 // Adapter shims giving WdfUsbTargetDeviceCreate, SelectInterruptInterface
 // and AmtPtpConfigContReaderForInterruptEndPoint the single-WDFDEVICE-
-// argument shape AmtPtpPrepareHardwareRetryOnLowResources' function
-// pointer expects, so all three share the one retry loop above instead of
-// three near-identical copies of it.
+// argument shape AmtPtpRetryOnLowResources' function pointer expects, so
+// all three share the one retry loop instead of three near-identical
+// copies of it.
 
 static NTSTATUS
 AmtPtpPrepareHwCreateUsbDeviceAttempt(_In_ WDFDEVICE Device)
@@ -685,8 +799,8 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
         pDeviceContext->UsbDevice);
 
     if (pDeviceContext->UsbDevice == NULL) {
-        status = AmtPtpPrepareHardwareRetryOnLowResources(
-            Device, pDeviceContext, "WdfUsbTargetDeviceCreate",
+        status = AmtPtpRetryOnLowResources(
+            Device, pDeviceContext, "PrepareHardware: WdfUsbTargetDeviceCreate",
             AmtPtpPrepareHwCreateUsbDeviceAttempt);
         if (!NT_SUCCESS(status)) {
             AmtTrace(pDeviceContext, "PrepareHardware: WdfUsbTargetDeviceCreate FAILED, status=0x%08X",
@@ -700,7 +814,7 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
     // returns success when that call succeeds, which guarantees a non-NULL
     // handle - true exactly as it was when this call sat inline here
     // before the low-resources retry refactor. PREfast can't see through
-    // the AmtPtpPrepareHardwareRetryOnLowResources() function-pointer
+    // the AmtPtpRetryOnLowResources() function-pointer
     // indirection to re-derive that fact on its own (C6387 on the two
     // uses below), so restate it explicitly rather than adding redundant
     // runtime NULL checks to otherwise-unconditional lifecycle code - the
@@ -746,8 +860,8 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
         pDeviceContext->UsbDeviceTraits = 0;
     }
 
-    status = AmtPtpPrepareHardwareRetryOnLowResources(
-        Device, pDeviceContext, "SelectInterruptInterface",
+    status = AmtPtpRetryOnLowResources(
+        Device, pDeviceContext, "PrepareHardware: SelectInterruptInterface",
         AmtPtpPrepareHwSelectInterruptInterfaceAttempt);
     if (!NT_SUCCESS(status)) {
         AmtTrace(pDeviceContext, "PrepareHardware: SelectInterruptInterface FAILED, status=0x%08X",
@@ -755,8 +869,8 @@ AmtPtpDeviceUsbKmEvtDevicePrepareHardware(
         return status;
     }
 
-    status = AmtPtpPrepareHardwareRetryOnLowResources(
-        Device, pDeviceContext, "ConfigContReaderForInterruptEndPoint",
+    status = AmtPtpRetryOnLowResources(
+        Device, pDeviceContext, "PrepareHardware: ConfigContReaderForInterruptEndPoint",
         AmtPtpPrepareHwConfigContReaderAttempt);
     if (!NT_SUCCESS(status)) {
         AmtTrace(pDeviceContext, "PrepareHardware: ConfigContReaderForInterruptEndPoint FAILED, status=0x%08X",
@@ -1008,8 +1122,8 @@ typedef NTSTATUS
 // and the WDFREQUEST/WDFMEMORY allocations underlying both
 // AmtPtpSetWellspringMode's control transfer and the continuous reader's
 // resubmission are exactly the kind of allocation that targets. Unlike
-// AmtPtpPrepareHardwareRetryOnLowResources (Device.c, PrepareHardware),
-// this resume path used to only retry STATUS_NO_SUCH_DEVICE, so a single
+// AmtPtpRetryOnLowResources (Device.c, shared by CreateDevice and
+// PrepareHardware), this resume path used to only retry STATUS_NO_SUCH_DEVICE, so a single
 // verifier-injected STATUS_INSUFFICIENT_RESOURCES here failed the whole
 // D0Entry on the first (and only) attempt with zero retry - confirmed
 // against a real ~45s stall in SAKURAMBPRO.log. Both statuses are
