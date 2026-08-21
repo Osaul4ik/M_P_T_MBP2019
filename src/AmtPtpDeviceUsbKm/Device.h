@@ -467,6 +467,19 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 // Bound the Wellspring control transfer with a timeout.
 #define WELLSPRING_CONTROL_TRANSFER_TIMEOUT_SEC   5
 
+// Bound RecoveryLock acquisition in ReleaseHardware/D0Entry/D0Exit. WDF's
+// own WdfUsbTargetPipeResetSynchronously / WdfUsbTargetDeviceResetPortSynchronously
+// have no timeout (see the Bug Check 0x9F comment in AmtPtpEvtDeviceD0Exit),
+// so AmtPtpEvtReaderRestartTimer can hold RecoveryLock indefinitely if the
+// USB stack's own request build/completion for one of those calls wedges
+// (e.g. a Driver Verifier Low Resources Simulation injection landing
+// inside it). D0Exit is covered by the power manager's watchdog in that
+// case (worst case: bugcheck 0x9F, at least a dump). ReleaseHardware and
+// D0Entry are not - an infinite WdfWaitLockAcquire there hangs the whole
+// device stack with no bugcheck and no minidump. See
+// AmtPtpRecoveryLockAcquireBounded in Device.c.
+#define RECOVERY_LOCK_ACQUIRE_TIMEOUT_MS 5000
+
 // Small settle delay before each escalation step in the reader-recovery
 // ladder (READER_RECOVERY_STAGE above). The recovery calls themselves
 // (port reset, port cycle) already take real time on the wire; this just
@@ -824,5 +837,21 @@ _IRQL_requires_max_(DISPATCH_LEVEL)
 BOOLEAN AmtPtpRecoveryMarkExhaustedIfCurrent(
     _In_ PDEVICE_CONTEXT DeviceContext,
     _In_ ULONG           SnapshotGeneration);
+
+// WdfWaitLockAcquire(RecoveryLock, NULL) blocks forever. RecoveryLock is
+// held by AmtPtpEvtReaderRestartTimer (Interrupt.c) across
+// WdfUsbTargetPipeResetSynchronously / WdfUsbTargetDeviceResetPortSynchronously
+// - both documented as having NO timeout - so any *other* acquirer of
+// RecoveryLock (AmtPtpEvtDeviceReleaseHardware / AmtPtpEvtDeviceD0Entry /
+// AmtPtpEvtDeviceD0Exit in Device.c, and AmtPtpSetFeatures's
+// REPORTID_REPORTMODE/SetWellspringMode path in Hid.c) must use this
+// bounded wrapper instead of acquiring RecoveryLock directly - an infinite
+// wait on any one of them hangs that call path with no bugcheck and no
+// minidump if the timer is ever stuck. Returns TRUE with the lock held, or
+// FALSE (lock NOT held) after RECOVERY_LOCK_ACQUIRE_TIMEOUT_MS.
+_IRQL_requires_(PASSIVE_LEVEL)
+BOOLEAN AmtPtpRecoveryLockAcquireBounded(
+    _In_ PDEVICE_CONTEXT DeviceContext,
+    _In_ PCSTR           CallerName);
 
 EXTERN_C_END

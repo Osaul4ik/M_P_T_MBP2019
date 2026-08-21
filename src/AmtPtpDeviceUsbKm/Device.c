@@ -810,6 +810,56 @@ AmtPtpRecoveryMarkExhaustedIfCurrent(
     return current;
 }
 
+// AmtPtpRecoveryLockAcquireBounded
+//
+// WdfWaitLockAcquire(..., NULL) blocks forever. RecoveryLock is held by
+// AmtPtpEvtReaderRestartTimer (Interrupt.c) across
+// WdfUsbTargetPipeResetSynchronously / WdfUsbTargetDeviceResetPortSynchronously
+// - both documented as having NO timeout (see the Bug Check 0x9F comment in
+// AmtPtpEvtDeviceD0Exit below). If a Driver Verifier Low Resources
+// Simulation injection (or a genuine allocation failure) lands inside the
+// USB stack's own request build for one of those calls and its completion
+// routine never fires, the timer thread is stuck holding RecoveryLock
+// indefinitely. D0Exit already avoids this for WdfTimerStop specifically
+// to dodge the power manager's watchdog bugcheck (0x9F) - but an infinite
+// WdfWaitLockAcquire on RecoveryLock right afterward reintroduces the exact
+// same unbounded wait through a different object. EvtDeviceReleaseHardware
+// has no external watchdog protecting it at all: an infinite acquire there
+// hangs the whole device stack with no bugcheck and no minidump. Bound all
+// three RecoveryLock acquisitions (ReleaseHardware, D0Entry, D0Exit) the
+// same way instead.
+_IRQL_requires_(PASSIVE_LEVEL)
+BOOLEAN
+AmtPtpRecoveryLockAcquireBounded(
+    _In_ PDEVICE_CONTEXT DeviceContext,
+    _In_ PCSTR           CallerName
+    )
+{
+    LARGE_INTEGER timeout;
+    NTSTATUS      status;
+
+    timeout.QuadPart = WDF_REL_TIMEOUT_IN_MS(RECOVERY_LOCK_ACQUIRE_TIMEOUT_MS);
+    status = WdfWaitLockAcquire(DeviceContext->RecoveryLock, &timeout);
+
+    if (status == STATUS_TIMEOUT) {
+        // The reader-recovery timer is stuck inside an unbounded USB reset
+        // call (verifier fault injection or a genuine hardware wedge).
+        // Don't wait forever - proceed without the lock so this PnP/power
+        // callback can still return and let the framework continue instead
+        // of hanging the whole device stack. RecoveryGeneration was already
+        // bumped by AmtPtpRecoveryBeginTermination before this call in
+        // every caller, so the stuck timer callback's own post-lock
+        // re-check will see the generation mismatch and back off once (if)
+        // it ever gets that far.
+        AmtTrace(DeviceContext, "%s: RecoveryLock acquire TIMED OUT after %ums - "
+            "reader-recovery timer likely stuck in an unbounded USB reset call, "
+            "proceeding WITHOUT the lock", CallerName, RECOVERY_LOCK_ACQUIRE_TIMEOUT_MS);
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
 // AmtPtpEvtDeviceReleaseHardware
 //
 // Symmetric counterpart to AmtPtpDeviceUsbKmEvtDevicePrepareHardware. Per
@@ -875,41 +925,60 @@ AmtPtpEvtDeviceReleaseHardware(
     // PASSIVE_LEVEL-only (EVT_WDF_DEVICE_RELEASE_HARDWARE), so a blocking
     // wait here is sanctioned regardless of the PAGED_CODE()/alloc_text
     // question addressed above.
-    WdfWaitLockAcquire(pDeviceContext->RecoveryLock, NULL);
+    //
+    // Bounded, not infinite: see AmtPtpRecoveryLockAcquireBounded above for
+    // why an unbounded acquire here is exactly the SAKURAMBPRO no-bugcheck
+    // hang (ReleaseHardware has no external watchdog protecting it the way
+    // D0Exit does).
+    if (AmtPtpRecoveryLockAcquireBounded(pDeviceContext, "ReleaseHardware")) {
 
-    // Best-effort: stop the interrupt pipe's I/O target if it is still
-    // running. Normally D0Exit already did this, but ReleaseHardware can
-    // also be reached without an intervening D0Exit/D0Entry pair (e.g.
-    // surprise removal), so this must not assume the target is already
-    // stopped.
-    if (pDeviceContext->InterruptPipe != NULL) {
-        WdfIoTargetStop(
-            WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe),
-            WdfIoTargetCancelSentIo);
+        // Best-effort: stop the interrupt pipe's I/O target if it is still
+        // running. Normally D0Exit already did this, but ReleaseHardware can
+        // also be reached without an intervening D0Exit/D0Entry pair (e.g.
+        // surprise removal), so this must not assume the target is already
+        // stopped.
+        if (pDeviceContext->InterruptPipe != NULL) {
+            WdfIoTargetStop(
+                WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe),
+                WdfIoTargetCancelSentIo);
+        }
+
+        // Step 3: invalidate the USB handles under D0ExitLock so no concurrent
+        // DISPATCH_LEVEL reader of InterruptPipe/UsbDevice/UsbInterface can
+        // observe a torn/partial update. WdfUsbTargetDeviceCreate's returned
+        // WDFUSBDEVICE, and the interface/pipe handles derived from it via
+        // SelectInterruptInterface, are all parented to Device and torn down by
+        // the framework automatically - this callback only needs to drop this
+        // driver's own references to them so
+        // AmtPtpDeviceUsbKmEvtDevicePrepareHardware's
+        // "if (pDeviceContext->UsbDevice == NULL)" guard re-acquires a fresh
+        // set on the next PrepareHardware instead of skipping acquisition and
+        // reusing now-invalid handles. After this point, no recovery callback
+        // may use these old USB objects - the generation bump in step 1 already
+        // ensures no *new* recovery attempt will act on this D0 session, and
+        // RecoveryLock ensures nothing is using them concurrently with this
+        // clear.
+        WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
+        pDeviceContext->InterruptPipe = NULL;
+        pDeviceContext->UsbInterface  = NULL;
+        pDeviceContext->UsbDevice     = NULL;
+        WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+
+        WdfWaitLockRelease(pDeviceContext->RecoveryLock);
+    } else {
+        // Lock timed out: the stuck recovery timer still owns the old USB
+        // handles. Do NOT clear InterruptPipe/UsbInterface/UsbDevice here
+        // without holding D0ExitLock+RecoveryLock together - that would
+        // race the timer thread's own (eventual) use of them. Leaving them
+        // set means AmtPtpDeviceUsbKmEvtDevicePrepareHardware's
+        // "if (pDeviceContext->UsbDevice == NULL)" guard will skip
+        // re-acquisition on the next PrepareHardware and reuse stale
+        // handles - a real correctness gap, but a torn/UAF-prone clear
+        // under a stuck timer is worse. Traced above; this is the
+        // documented trade-off of surviving the hang at all.
+        AmtTrace(pDeviceContext, "ReleaseHardware: proceeding without RecoveryLock, "
+            "USB handles left in place (stale) for the stuck recovery timer");
     }
-
-    // Step 3: invalidate the USB handles under D0ExitLock so no concurrent
-    // DISPATCH_LEVEL reader of InterruptPipe/UsbDevice/UsbInterface can
-    // observe a torn/partial update. WdfUsbTargetDeviceCreate's returned
-    // WDFUSBDEVICE, and the interface/pipe handles derived from it via
-    // SelectInterruptInterface, are all parented to Device and torn down by
-    // the framework automatically - this callback only needs to drop this
-    // driver's own references to them so
-    // AmtPtpDeviceUsbKmEvtDevicePrepareHardware's
-    // "if (pDeviceContext->UsbDevice == NULL)" guard re-acquires a fresh
-    // set on the next PrepareHardware instead of skipping acquisition and
-    // reusing now-invalid handles. After this point, no recovery callback
-    // may use these old USB objects - the generation bump in step 1 already
-    // ensures no *new* recovery attempt will act on this D0 session, and
-    // RecoveryLock ensures nothing is using them concurrently with this
-    // clear.
-    WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
-    pDeviceContext->InterruptPipe = NULL;
-    pDeviceContext->UsbInterface  = NULL;
-    pDeviceContext->UsbDevice     = NULL;
-    WdfSpinLockRelease(pDeviceContext->D0ExitLock);
-
-    WdfWaitLockRelease(pDeviceContext->RecoveryLock);
 
     return STATUS_SUCCESS;
 }
@@ -931,20 +1000,40 @@ typedef NTSTATUS
 // it back. A lighter D3 -> D0 resume gets a smaller, separate retry budget:
 // on the affected T2 hardware WDF can enter D0 before the USB child has
 // finished re-enumerating, so the first request can legitimately return
-// STATUS_NO_SUCH_DEVICE. In that resume path we retry only that transient
-// status; other failures remain immediate failures and preserve the normal
-// error path.
+// STATUS_NO_SUCH_DEVICE.
+//
+// It can also legitimately return STATUS_INSUFFICIENT_RESOURCES: Driver
+// Verifier's Low Resources Simulation fails ~6% of pool/IRP/MDL allocation
+// calls by default (learn.microsoft.com/windows-hardware/drivers/devtest/low-resources-simulation),
+// and the WDFREQUEST/WDFMEMORY allocations underlying both
+// AmtPtpSetWellspringMode's control transfer and the continuous reader's
+// resubmission are exactly the kind of allocation that targets. Unlike
+// AmtPtpPrepareHardwareRetryOnLowResources (Device.c, PrepareHardware),
+// this resume path used to only retry STATUS_NO_SUCH_DEVICE, so a single
+// verifier-injected STATUS_INSUFFICIENT_RESOURCES here failed the whole
+// D0Entry on the first (and only) attempt with zero retry - confirmed
+// against a real ~45s stall in SAKURAMBPRO.log. Both statuses are
+// equally transient (retrying a moment later is expected to succeed), so
+// both share this same bounded retry. All other failures remain immediate
+// failures and preserve the normal error path.
 //
 // Factored out so both D0Entry operations (SetWellspringMode and
 // WdfIoTargetStart) share exactly the same bounded policy instead of
 // carrying separate retry loops.
+static BOOLEAN
+AmtPtpIsTransientD0EntryStatus(_In_ NTSTATUS Status)
+{
+    return (Status == STATUS_NO_SUCH_DEVICE) ||
+           (Status == STATUS_INSUFFICIENT_RESOURCES);
+}
+
 _IRQL_requires_(PASSIVE_LEVEL)
 static NTSTATUS
 AmtPtpD0EntryRetry(
     _In_ PDEVICE_CONTEXT           DeviceContext,
     _In_ ULONG                     MaxAttempts,
     _In_ ULONG                     RetryDelayMsUnit,
-    _In_ BOOLEAN                   RetryOnlyNoSuchDevice,
+    _In_ BOOLEAN                   RetryOnlyTransient,
     _In_ PCSTR                     OperationName,
     _In_ PFN_AMT_D0ENTRY_ATTEMPT   Attempt
     )
@@ -961,7 +1050,7 @@ AmtPtpD0EntryRetry(
             break;
         }
 
-        if (RetryOnlyNoSuchDevice && status != STATUS_NO_SUCH_DEVICE) {
+        if (RetryOnlyTransient && !AmtPtpIsTransientD0EntryStatus(status)) {
             break;
         }
 
@@ -1044,7 +1133,22 @@ AmtPtpEvtDeviceD0Entry(
     // WDFWAITLOCK across these blocking calls is sanctioned - identical to
     // how AmtPtpEvtDeviceD0Exit already holds RecoveryLock across its own
     // WdfIoTargetStop/SetWellspringMode(FALSE) sequence.
-    WdfWaitLockAcquire(pDeviceContext->RecoveryLock, NULL);
+    //
+    // Bounded, not infinite: see AmtPtpRecoveryLockAcquireBounded above. If
+    // the stuck timer still owns RecoveryLock, do NOT proceed into the
+    // SetWellspringMode/WdfIoTargetStart sequence below unserialized - that
+    // would race the timer thread's own in-flight use of the same
+    // InterruptPipe/UsbDevice, exactly the class of bug the RecoveryLock
+    // design exists to prevent. Fail this D0Entry instead (status stays
+    // STATUS_UNSUCCESSFUL from its initializer below) so the power manager
+    // retries the transition rather than this function hanging alongside
+    // the stuck timer.
+    if (!AmtPtpRecoveryLockAcquireBounded(pDeviceContext, "D0Entry")) {
+        status = STATUS_IO_TIMEOUT;
+        AmtTrace(pDeviceContext, "D0Entry: EXIT EARLY, RecoveryLock timed out, status=0x%08X",
+            status);
+        return status;
+    }
     WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
     pDeviceContext->RecoveryGeneration++;
     pDeviceContext->D0ExitInProgress    = FALSE;
@@ -1107,10 +1211,11 @@ AmtPtpEvtDeviceD0Entry(
     // result below determines this function's return value.
     //
     // D3Final keeps the full recovery retry budget. A normal D3 -> D0 resume
-    // gets a small two-attempt budget because the USB child may still be
+    // gets a smaller budget because the USB child may still be
     // re-enumerating on the parent hub when WDF calls D0Entry. In that case
-    // retry only STATUS_NO_SUCH_DEVICE so unrelated failures still take the
-    // normal error path.
+    // retry only the transient statuses (STATUS_NO_SUCH_DEVICE and
+    // STATUS_INSUFFICIENT_RESOURCES - see AmtPtpIsTransientD0EntryStatus)
+    // so unrelated failures still take the normal error path.
     {
         const BOOLEAN fromD3Final =
             (PreviousState == WdfPowerDeviceD3Final);
@@ -1240,35 +1345,50 @@ AmtPtpEvtDeviceD0Exit(
     // only (EVT_WDF_DEVICE_D0_EXIT), so a blocking wait here is sanctioned
     // by the WDF power-callback contract regardless of the PAGED_CODE()/
     // alloc_text question addressed at the top of this function.
-    WdfWaitLockAcquire(pDeviceContext->RecoveryLock, NULL);
+    //
+    // Bounded, not infinite: see AmtPtpRecoveryLockAcquireBounded above.
+    // WdfTimerStop above already dodges Bug Check 0x9F for the direct
+    // wait-for-timer-to-finish case, but an infinite WdfWaitLockAcquire
+    // here reintroduces the identical unbounded wait through RecoveryLock
+    // instead - defeating the point of the Wait=FALSE choice above.
+    if (AmtPtpRecoveryLockAcquireBounded(pDeviceContext, "D0Exit")) {
 
-    // Step 3: re-snapshot InterruptPipe under D0ExitLock now that
-    // RecoveryLock is held. InterruptPipe is ordinarily non-NULL here (only
-    // AmtPtpEvtDeviceReleaseHardware nulls it), but this driver has
-    // observed physical device loss during S3 (STATUS_NO_SUCH_DEVICE in the
-    // reader-recovery ladder). Skipping the stop when the pipe is already
-    // gone is strictly safer than passing a NULL handle into
-    // WdfUsbTargetPipeGetIoTarget.
-    {
-        WDFUSBPIPE snapshotPipe;
+        // Step 3: re-snapshot InterruptPipe under D0ExitLock now that
+        // RecoveryLock is held. InterruptPipe is ordinarily non-NULL here (only
+        // AmtPtpEvtDeviceReleaseHardware nulls it), but this driver has
+        // observed physical device loss during S3 (STATUS_NO_SUCH_DEVICE in the
+        // reader-recovery ladder). Skipping the stop when the pipe is already
+        // gone is strictly safer than passing a NULL handle into
+        // WdfUsbTargetPipeGetIoTarget.
+        {
+            WDFUSBPIPE snapshotPipe;
 
-        WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
-        snapshotPipe = pDeviceContext->InterruptPipe;
-        WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+            WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
+            snapshotPipe = pDeviceContext->InterruptPipe;
+            WdfSpinLockRelease(pDeviceContext->D0ExitLock);
 
-        if (snapshotPipe != NULL) {
-            WdfIoTargetStop(
-                WdfUsbTargetPipeGetIoTarget(snapshotPipe),
-                WdfIoTargetCancelSentIo);
+            if (snapshotPipe != NULL) {
+                WdfIoTargetStop(
+                    WdfUsbTargetPipeGetIoTarget(snapshotPipe),
+                    WdfIoTargetCancelSentIo);
+            }
         }
+
+        wellspringOffStatus = AmtPtpSetWellspringMode(pDeviceContext, FALSE);
+
+        WdfWaitLockRelease(pDeviceContext->RecoveryLock);
+
+        AmtTrace(pDeviceContext, "D0Exit: EXIT, SetWellspringMode(FALSE) -> status=0x%08X",
+            wellspringOffStatus);
+    } else {
+        // Lock timed out: the stuck recovery timer still owns InterruptPipe.
+        // Do not touch it or send SetWellspringMode(FALSE) unserialized -
+        // this D0Exit still returns STATUS_SUCCESS (D0Exit is not expected
+        // to fail the power transition over this), but skips its own
+        // cleanup rather than hanging indefinitely alongside the timer.
+        AmtTrace(pDeviceContext,
+            "D0Exit: EXIT, proceeding without RecoveryLock (cleanup skipped)");
     }
-
-    wellspringOffStatus = AmtPtpSetWellspringMode(pDeviceContext, FALSE);
-
-    WdfWaitLockRelease(pDeviceContext->RecoveryLock);
-
-    AmtTrace(pDeviceContext, "D0Exit: EXIT, SetWellspringMode(FALSE) -> status=0x%08X",
-        wellspringOffStatus);
 
     return STATUS_SUCCESS;
 }

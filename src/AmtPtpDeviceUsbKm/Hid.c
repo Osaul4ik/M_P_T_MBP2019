@@ -568,7 +568,19 @@ AmtPtpSetFeatures(
 						// ReleaseHardware cleanup, then re-validate the
 						// Phase 1 snapshot - lifecycle may have moved on
 						// while this handler was waiting for the lock.
-						WdfWaitLockAcquire(pDeviceContext->RecoveryLock, NULL);
+						//
+						// Bounded, not infinite: see
+						// AmtPtpRecoveryLockAcquireBounded (Device.c/.h) -
+						// AmtPtpEvtReaderRestartTimer can hold RecoveryLock
+						// indefinitely inside an unbounded USB reset call,
+						// and this handler has no external watchdog any
+						// more than AmtPtpEvtDeviceReleaseHardware does.
+						if (!AmtPtpRecoveryLockAcquireBounded(pDeviceContext, "SetFeatures")) {
+							AmtTrace(pDeviceContext,
+								"SetFeatures: RecoveryLock timed out, skipping SetWellspringMode");
+							status = STATUS_DEVICE_NOT_CONNECTED;
+							goto exit;
+						}
 
 						WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
 						lifecycleGone = pDeviceContext->D0ExitInProgress ||
