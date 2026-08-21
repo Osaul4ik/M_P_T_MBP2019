@@ -1815,6 +1815,30 @@ namespace AmtPtpConfigGui
             }
         }
 
+        private static string BuildLiveContactText(in LiveFrame frame, int count)
+        {
+            if (count <= 0 || frame.Contacts == null)
+                return "Live: no active contacts";
+
+            int slots = Math.Min(count, Math.Min(frame.Contacts.Length, LiveOverlaySlots));
+            var sb = new System.Text.StringBuilder(slots * 42);
+
+            for (int i = 0; i < slots; i++)
+            {
+                var c = frame.Contacts[i];
+                if (i > 0)
+                    sb.AppendLine();
+
+                sb.Append('C').Append(i + 1)
+                  .Append("  ")
+                  .Append(c.X).Append(',').Append(c.Y)
+                  .Append("  P:").Append(c.Pressure)
+                  .Append("  M:").Append(c.Major).Append('/').Append(c.Minor);
+            }
+
+            return sb.ToString();
+        }
+
         private void StartLivePolling()
         {
             StopLivePolling();
