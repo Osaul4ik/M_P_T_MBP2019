@@ -1,4 +1,6 @@
 // Device.c - Device handling events. Kernel-mode Driver Framework
+// Lifecycle fix: RecoveryLock timeout paths now report real callback/device
+// failure instead of continuing with stale hardware state.
 
 #include "driver.h"
 #include "Match.h" // MATCH_MAX_TIME_DELTA_100NS, for the D0Entry tick-cache
@@ -37,6 +39,18 @@
 
 #define ACTIVE_CONTACTS_ALIGNMENT 64
 #define ACTIVE_CONTACTS_POOL_TAG  'ApAc' // "AmtPtp Active Contacts"
+
+// AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS / _DELAY_MS - shared policy
+// constants for every bounded low-resources retry in this file
+// (AmtPtpRetryOnLowResources and AmtPtpRetryOnLowResourcesCtx, defined
+// further down next to the engines themselves - see the comment there for
+// the full rationale). Hoisted up here because AmtPtpControlDeviceCreateOnce's
+// direct retry loop in AmtPtpAcquireConfigControlDevice (below, needed for
+// /analyze to trace its _Outptr_ contract - see that function's comment)
+// runs earlier in this file than either engine's definition and needs the
+// same numbers.
+#define AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS   3
+#define AMT_LOW_RESOURCES_RETRY_DELAY_MS       20
 
 // Allocates the ActiveContacts pool on a real 64-byte boundary. 
 static PACTIVE_CONTACT
@@ -114,49 +128,58 @@ AmtPtpQueueCreateAttempt(_Inout_ PVOID Context)
         ctx->Device, ctx->QueueConfig, WDF_NO_OBJECT_ATTRIBUTES, ctx->OutQueue);
 }
 
-// AmtPtpControlDeviceCreateAttempt / AMT_CONTROL_DEVICE_CREATE_CTX
+// AmtPtpControlDeviceCreateOnce
 //
-// Attempt for AmtPtpAcquireConfigControlDevice's WdfDeviceCreate below.
-// Unlike the shims above, this rebuilds the entire WDFDEVICE_INIT from
-// scratch on every call: a failed WdfDeviceCreate consumes/invalidates
-// its DeviceInit (the caller must WdfDeviceInitFree it and cannot
-// resubmit the same pointer, per the WDF documentation), so a retry has
-// nothing reusable to retry with - it has to start over from
+// Single attempt at creating the KMDF control device from scratch.
+// Deliberately NOT routed through AmtPtpRetryOnLowResourcesCtx's
+// PVOID-Context indirection the way the symlink/queue attempts below are:
+// /analyze does not trace side effects through an indirect (function-
+// pointer) call, so a void*-Context attempt that sets an [out] field on
+// success left *ControlDevice looking unproven at the call site (PREfast
+// C6387, "'controlDevice' could be '0'") even though it is always set
+// whenever this returns STATUS_SUCCESS. A direct call with a proper SAL
+// _Outptr_ contract - the same shape WdfDeviceCreate itself uses - keeps
+// that guarantee intact end to end, including through the bounded retry
+// loop in AmtPtpAcquireConfigControlDevice below.
+//
+// Rebuilds the entire WDFDEVICE_INIT from scratch on every call, unlike
+// the symlink/queue attempts: a failed WdfDeviceCreate consumes/
+// invalidates its DeviceInit (the caller must WdfDeviceInitFree it and
+// cannot resubmit the same pointer, per the WDF documentation), so a
+// retry has nothing reusable to retry with - it has to start over from
 // WdfControlDeviceInitAllocate.
-typedef struct _AMT_CONTROL_DEVICE_CREATE_CTX {
-    WDFDRIVER              Driver;
-    PCUNICODE_STRING       Sddl;
-    PCUNICODE_STRING       NtName;
-    PWDF_FILEOBJECT_CONFIG FileConfig;
-    PWDF_OBJECT_ATTRIBUTES FileContextAttributes;
-    PWDF_OBJECT_ATTRIBUTES ControlAttributes;
-    WDFDEVICE              ControlDevice; // [out] valid only on success
-} AMT_CONTROL_DEVICE_CREATE_CTX, *PAMT_CONTROL_DEVICE_CREATE_CTX;
-
+_IRQL_requires_(PASSIVE_LEVEL)
 static NTSTATUS
-AmtPtpControlDeviceCreateAttempt(_Inout_ PVOID Context)
+AmtPtpControlDeviceCreateOnce(
+    _In_ WDFDRIVER              Driver,
+    _In_ PCUNICODE_STRING       Sddl,
+    _In_ PCUNICODE_STRING       NtName,
+    _In_ PWDF_FILEOBJECT_CONFIG FileConfig,
+    _In_ PWDF_OBJECT_ATTRIBUTES FileContextAttributes,
+    _In_ PWDF_OBJECT_ATTRIBUTES ControlAttributes,
+    _Outptr_result_nullonfailure_ WDFDEVICE* ControlDevice
+    )
 {
-    PAMT_CONTROL_DEVICE_CREATE_CTX ctx = (PAMT_CONTROL_DEVICE_CREATE_CTX)Context;
-    PWDFDEVICE_INIT                controlInit;
-    WDFDEVICE                      controlDevice;
-    NTSTATUS                       status;
+    PWDFDEVICE_INIT controlInit;
+    NTSTATUS        status;
 
-    controlInit = WdfControlDeviceInitAllocate(ctx->Driver, ctx->Sddl);
+    *ControlDevice = NULL;
+
+    controlInit = WdfControlDeviceInitAllocate(Driver, Sddl);
     if (controlInit == NULL) {
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
-    status = WdfDeviceInitAssignName(controlInit, ctx->NtName);
+    status = WdfDeviceInitAssignName(controlInit, NtName);
     if (!NT_SUCCESS(status)) {
         WdfDeviceInitFree(controlInit);
         return status;
     }
 
     WdfDeviceInitSetExclusive(controlInit, FALSE);
-    WdfDeviceInitSetFileObjectConfig(
-        controlInit, ctx->FileConfig, ctx->FileContextAttributes);
+    WdfDeviceInitSetFileObjectConfig(controlInit, FileConfig, FileContextAttributes);
 
-    status = WdfDeviceCreate(&controlInit, ctx->ControlAttributes, &controlDevice);
+    status = WdfDeviceCreate(&controlInit, ControlAttributes, ControlDevice);
     if (!NT_SUCCESS(status)) {
         // Same reasoning as the original single-attempt code: controlInit
         // came from WdfControlDeviceInitAllocate (not EvtDriverDeviceAdd),
@@ -166,13 +189,14 @@ AmtPtpControlDeviceCreateAttempt(_Inout_ PVOID Context)
         return status;
     }
 
-    ctx->ControlDevice = controlDevice;
     return STATUS_SUCCESS;
 }
 
 // AmtPtpControlDeviceSymlinkAttempt - the symbolic-link create reuses the
 // same already-created controlDevice across retries, unlike WdfDeviceCreate
-// above; no rebuild-from-scratch needed here.
+// above; no rebuild-from-scratch needed here. This one has no [out] value
+// PREfast needs to prove non-null afterward, so the generic void*-Context
+// engine (AmtPtpRetryOnLowResourcesCtx) is fine for it as-is.
 typedef struct _AMT_CONTROL_DEVICE_SYMLINK_CTX {
     WDFDEVICE        ControlDevice;
     PCUNICODE_STRING DosName;
@@ -272,13 +296,15 @@ AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice)
     // stays safe even if that calling assumption ever changes.
     //
     // WdfDeviceCreate, WdfDeviceCreateSymbolicLink, and WdfIoQueueCreate
-    // below are each routed through AmtPtpRetryOnLowResourcesCtx - the
-    // same bounded, STATUS_INSUFFICIENT_RESOURCES-only retry every other
-    // allocation point on this install path already gets, and for the
-    // same reason: this branch runs once per driver load, from
-    // EvtDriverDeviceAdd's call chain, with no PnP Start to retry at if a
-    // one-shot verifier Low Resources Simulation (or genuine transient
-    // low memory) lands here - AddDevice just fails outright.
+    // below are each given the same bounded, STATUS_INSUFFICIENT_RESOURCES-
+    // only retry every other allocation point on this install path already
+    // gets, for the same reason: this branch runs once per driver load,
+    // from EvtDriverDeviceAdd's call chain, with no PnP Start to retry at
+    // if a one-shot verifier Low Resources Simulation (or genuine
+    // transient low memory) lands here - AddDevice just fails outright.
+    // WdfDeviceCreate gets a direct retry loop (calling
+    // AmtPtpControlDeviceCreateOnce - see its comment for why); the other
+    // two go through the shared AmtPtpRetryOnLowResourcesCtx engine.
     {
         PDEVICE_CONTEXT                traceContext = DeviceGetContext(TargetDevice);
         WDF_OBJECT_ATTRIBUTES          controlAttributes;
@@ -286,9 +312,9 @@ AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice)
         WDF_OBJECT_ATTRIBUTES          fileContextAttributes;
         WDF_IO_QUEUE_CONFIG            queueConfig;
         WDFDEVICE                      controlDevice = NULL;
-        AMT_CONTROL_DEVICE_CREATE_CTX  createCtx;
         AMT_CONTROL_DEVICE_SYMLINK_CTX symlinkCtx;
         AMT_QUEUE_CREATE_CTX           queueCtx;
+        ULONG                          attempt;
 
         DECLARE_CONST_UNICODE_STRING(sddl,
             L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)");
@@ -302,7 +328,7 @@ AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice)
         // cleanup - is caught by the driver itself and used to force
         // LiveEnabled back off. Built once, outside the retry loop: it
         // does not depend on controlInit and is safe for
-        // AmtPtpControlDeviceCreateAttempt to hand to
+        // AmtPtpControlDeviceCreateOnce to hand to
         // WdfDeviceInitSetFileObjectConfig on every attempt.
         WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
             &fileContextAttributes,
@@ -320,23 +346,36 @@ AmtPtpAcquireConfigControlDevice(_In_ WDFDEVICE TargetDevice)
         controlAttributes.EvtCleanupCallback = AmtPtpConfigControlEvtConfigControlCleanup;
         controlAttributes.ExecutionLevel = WdfExecutionLevelPassive;
 
-        createCtx.Driver                = WdfDeviceGetDriver(TargetDevice);
-        createCtx.Sddl                  = &sddl;
-        createCtx.NtName                = &ntName;
-        createCtx.FileConfig            = &fileConfig;
-        createCtx.FileContextAttributes = &fileContextAttributes;
-        createCtx.ControlAttributes     = &controlAttributes;
-        createCtx.ControlDevice         = NULL;
+        // Called directly (not through AmtPtpRetryOnLowResourcesCtx's
+        // void*-Context indirection - see the comment on
+        // AmtPtpControlDeviceCreateOnce above for why) so its
+        // _Outptr_result_nullonfailure_ contract on controlDevice stays
+        // visible to /analyze across the loop. Same policy/backoff as
+        // every other retry site in this file.
+        status = STATUS_UNSUCCESSFUL;
+        for (attempt = 0; attempt < AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS; attempt++) {
+            status = AmtPtpControlDeviceCreateOnce(
+                WdfDeviceGetDriver(TargetDevice), &sddl, &ntName,
+                &fileConfig, &fileContextAttributes, &controlAttributes,
+                &controlDevice);
+            AmtTrace(traceContext,
+                "AcquireConfigControlDevice: WdfDeviceCreate(control) attempt %lu/%lu -> status=0x%08X",
+                attempt + 1, AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS, status);
 
-        status = AmtPtpRetryOnLowResourcesCtx(
-            traceContext,
-            "AcquireConfigControlDevice: WdfDeviceCreate(control)",
-            AmtPtpControlDeviceCreateAttempt,
-            &createCtx);
+            if (NT_SUCCESS(status) || status != STATUS_INSUFFICIENT_RESOURCES) {
+                break;
+            }
+
+            if (attempt + 1 < AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS) {
+                LARGE_INTEGER delay;
+                delay.QuadPart = WDF_REL_TIMEOUT_IN_MS(
+                    AMT_LOW_RESOURCES_RETRY_DELAY_MS * (attempt + 1));
+                KeDelayExecutionThread(KernelMode, FALSE, &delay);
+            }
+        }
         if (!NT_SUCCESS(status)) {
             goto unlock_and_return;
         }
-        controlDevice = createCtx.ControlDevice;
 
         controlContext = AmtConfigControlGetContext(controlDevice);
         controlContext->TargetDevice = TargetDevice;
@@ -453,8 +492,10 @@ AmtPtpConfigControlReleaseTargetDevice(_In_opt_ WDFDEVICE TargetDevice)
 // STATUS_INSUFFICIENT_RESOURCES only; a genuine non-resource failure
 // (bad parameters, missing hardware, etc.) still fails immediately on the
 // first attempt, unchanged.
-#define AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS   3
-#define AMT_LOW_RESOURCES_RETRY_DELAY_MS       20
+//
+// AMT_LOW_RESOURCES_RETRY_MAX_ATTEMPTS / _DELAY_MS themselves now live up
+// near the top of this file (next to ACTIVE_CONTACTS_ALIGNMENT) - see the
+// comment there for why.
 
 typedef NTSTATUS
 (*PFN_AMT_PREPARE_HW_ATTEMPT)(_In_ WDFDEVICE Device);
@@ -868,20 +909,10 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
 // resource-exhaustion condition - that case still exhausts the retry
 // budget and fails exactly as before.
 //
-// Deliberately NOT paired with WdfDeviceSetFailed(WdfDeviceFailedAttemptRestart):
-// per "Reporting Device Failures", KMDF already asks the PnP manager to
-// reenumerate the device by default whenever a PnP callback like this one
-// returns a failing status - a driver "does not have to call
-// WdfDeviceSetFailed" to get that. The explicit call would add nothing
-// here and, per WDF_DEVICE_FAILED_ACTION, WdfDeviceFailedAttemptRestart
-// additionally "reloads the drivers" - i.e. can unload/reload the whole
-// .sys image, not just this device instance. That is disproportionate for
-// a one-shot transient allocation failure and risks disrupting the other
-// HID collections this filter also attaches to (col01/col02/col03 in the
-// same USB composite device). The bounded retry above is the correct,
-// narrowly-scoped fix; the framework's own default restart-on-failure
-// behavior is left alone to handle anything the retry still can't clear.
-//
+// The bounded retry above is deliberately restricted to STATUS_INSUFFICIENT_RESOURCES.
+// Any other failure is returned to KMDF unchanged; the framework handles the
+// callback failure through the normal PnP/power lifecycle.
+
 // The retry engine itself (AmtPtpRetryOnLowResources) now lives earlier in
 // this file, immediately before AmtPtpDeviceUsbKmCreateDevice - it covers
 // that function's own allocation points (timer, contact pool, four lock
@@ -1094,7 +1125,9 @@ AmtPtpRecoveryMarkExhaustedIfCurrent(
 // has no external watchdog protecting it at all: an infinite acquire there
 // hangs the whole device stack with no bugcheck and no minidump. Bound all
 // three RecoveryLock acquisitions (ReleaseHardware, D0Entry, D0Exit) the
-// same way instead.
+// same way instead. The helper intentionally returns only acquisition
+// success/failure so its existing Device.h contract remains unchanged; callers
+// that receive FALSE treat it as a lifecycle failure and use STATUS_IO_TIMEOUT.
 _IRQL_requires_(PASSIVE_LEVEL)
 BOOLEAN
 AmtPtpRecoveryLockAcquireBounded(
@@ -1108,19 +1141,11 @@ AmtPtpRecoveryLockAcquireBounded(
     timeout.QuadPart = WDF_REL_TIMEOUT_IN_MS(RECOVERY_LOCK_ACQUIRE_TIMEOUT_MS);
     status = WdfWaitLockAcquire(DeviceContext->RecoveryLock, &timeout.QuadPart);
 
-    if (status == STATUS_TIMEOUT) {
-        // The reader-recovery timer is stuck inside an unbounded USB reset
-        // call (verifier fault injection or a genuine hardware wedge).
-        // Don't wait forever - proceed without the lock so this PnP/power
-        // callback can still return and let the framework continue instead
-        // of hanging the whole device stack. RecoveryGeneration was already
-        // bumped by AmtPtpRecoveryBeginTermination before this call in
-        // every caller, so the stuck timer callback's own post-lock
-        // re-check will see the generation mismatch and back off once (if)
-        // it ever gets that far.
-        AmtTrace(DeviceContext, "%s: RecoveryLock acquire TIMED OUT after %ums - "
-            "reader-recovery timer likely stuck in an unbounded USB reset call, "
-            "proceeding WITHOUT the lock", CallerName, RECOVERY_LOCK_ACQUIRE_TIMEOUT_MS);
+    if (!NT_SUCCESS(status)) {
+        AmtTrace(DeviceContext,
+            "%s: RecoveryLock acquire failed, status=0x%08X",
+            CallerName,
+            status);
         return FALSE;
     }
 
@@ -1193,38 +1218,47 @@ AmtPtpEvtDeviceReleaseHardware(
     // wait here is sanctioned regardless of the PAGED_CODE()/alloc_text
     // question addressed above.
     //
-    // Bounded, not infinite: see AmtPtpRecoveryLockAcquireBounded above for
-    // why an unbounded acquire here is exactly the SAKURAMBPRO no-bugcheck
-    // hang (ReleaseHardware has no external watchdog protecting it the way
-    // D0Exit does).
-    if (AmtPtpRecoveryLockAcquireBounded(pDeviceContext, "ReleaseHardware")) {
+    // Bounded, not infinite: see AmtPtpRecoveryLockAcquireBounded above.
+    // A timeout is treated as a real lifecycle failure, never as permission
+    // to continue with stale hardware handles.
+    {
+        BOOLEAN lockAcquired;
 
-        // Best-effort: stop the interrupt pipe's I/O target if it is still
-        // running. Normally D0Exit already did this, but ReleaseHardware can
-        // also be reached without an intervening D0Exit/D0Entry pair (e.g.
-        // surprise removal), so this must not assume the target is already
-        // stopped.
+        lockAcquired = AmtPtpRecoveryLockAcquireBounded(
+            pDeviceContext,
+            "ReleaseHardware");
+
+        if (!lockAcquired) {
+            // The recovery callback may still own the USB handles and may be
+            // executing inside a synchronous USB reset. We cannot safely
+            // stop that I/O target or clear InterruptPipe/UsbInterface/
+            // UsbDevice without RecoveryLock.
+            //
+            // Do not report success after skipping required ReleaseHardware
+            // synchronization. A later PrepareHardware must never be allowed
+            // to interpret these stale handles as a newly prepared hardware
+            // instance. Return a callback failure instead of racing the
+            // in-flight recovery operation or reporting successful cleanup.
+            AmtTrace(
+                pDeviceContext,
+                "ReleaseHardware: RecoveryLock acquire failed; "
+                "returning lifecycle failure");
+
+            return STATUS_IO_TIMEOUT;
+        }
+
+        // RecoveryLock is held from this point until all ReleaseHardware
+        // accesses to the recovery-owned USB objects are complete.
         if (pDeviceContext->InterruptPipe != NULL) {
             WdfIoTargetStop(
                 WdfUsbTargetPipeGetIoTarget(pDeviceContext->InterruptPipe),
                 WdfIoTargetCancelSentIo);
         }
 
-        // Step 3: invalidate the USB handles under D0ExitLock so no concurrent
-        // DISPATCH_LEVEL reader of InterruptPipe/UsbDevice/UsbInterface can
-        // observe a torn/partial update. WdfUsbTargetDeviceCreate's returned
-        // WDFUSBDEVICE, and the interface/pipe handles derived from it via
-        // SelectInterruptInterface, are all parented to Device and torn down by
-        // the framework automatically - this callback only needs to drop this
-        // driver's own references to them so
-        // AmtPtpDeviceUsbKmEvtDevicePrepareHardware's
-        // "if (pDeviceContext->UsbDevice == NULL)" guard re-acquires a fresh
-        // set on the next PrepareHardware instead of skipping acquisition and
-        // reusing now-invalid handles. After this point, no recovery callback
-        // may use these old USB objects - the generation bump in step 1 already
-        // ensures no *new* recovery attempt will act on this D0 session, and
-        // RecoveryLock ensures nothing is using them concurrently with this
-        // clear.
+        // Invalidate the cached USB handles while RecoveryLock excludes the
+        // recovery timer/D0Entry/ReleaseHardware peer paths, and D0ExitLock
+        // protects DISPATCH_LEVEL readers of the fields. PrepareHardware will
+        // see UsbDevice == NULL and acquire a fresh hardware instance.
         WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
         pDeviceContext->InterruptPipe = NULL;
         pDeviceContext->UsbInterface  = NULL;
@@ -1232,21 +1266,7 @@ AmtPtpEvtDeviceReleaseHardware(
         WdfSpinLockRelease(pDeviceContext->D0ExitLock);
 
         WdfWaitLockRelease(pDeviceContext->RecoveryLock);
-    } else {
-        // Lock timed out: the stuck recovery timer still owns the old USB
-        // handles. Do NOT clear InterruptPipe/UsbInterface/UsbDevice here
-        // without holding D0ExitLock+RecoveryLock together - that would
-        // race the timer thread's own (eventual) use of them. Leaving them
-        // set means AmtPtpDeviceUsbKmEvtDevicePrepareHardware's
-        // "if (pDeviceContext->UsbDevice == NULL)" guard will skip
-        // re-acquisition on the next PrepareHardware and reuse stale
-        // handles - a real correctness gap, but a torn/UAF-prone clear
-        // under a stuck timer is worse. Traced above; this is the
-        // documented trade-off of surviving the hang at all.
-        AmtTrace(pDeviceContext, "ReleaseHardware: proceeding without RecoveryLock, "
-            "USB handles left in place (stale) for the stuck recovery timer");
     }
-
     return STATUS_SUCCESS;
 }
 
@@ -1406,13 +1426,12 @@ AmtPtpEvtDeviceD0Entry(
     // SetWellspringMode/WdfIoTargetStart sequence below unserialized - that
     // would race the timer thread's own in-flight use of the same
     // InterruptPipe/UsbDevice, exactly the class of bug the RecoveryLock
-    // design exists to prevent. Fail this D0Entry instead (status stays
-    // STATUS_UNSUCCESSFUL from its initializer below) so the power manager
-    // retries the transition rather than this function hanging alongside
-    // the stuck timer.
+    // design exists to prevent. Return the actual synchronization failure.
     if (!AmtPtpRecoveryLockAcquireBounded(pDeviceContext, "D0Entry")) {
         status = STATUS_IO_TIMEOUT;
-        AmtTrace(pDeviceContext, "D0Entry: EXIT EARLY, RecoveryLock timed out, status=0x%08X",
+        AmtTrace(
+            pDeviceContext,
+            "D0Entry: EXIT EARLY, RecoveryLock acquire failed, status=0x%08X",
             status);
         return status;
     }
@@ -1614,19 +1633,35 @@ AmtPtpEvtDeviceD0Exit(
     // alloc_text question addressed at the top of this function.
     //
     // Bounded, not infinite: see AmtPtpRecoveryLockAcquireBounded above.
-    // WdfTimerStop above already dodges Bug Check 0x9F for the direct
-    // wait-for-timer-to-finish case, but an infinite WdfWaitLockAcquire
-    // here reintroduces the identical unbounded wait through RecoveryLock
-    // instead - defeating the point of the Wait=FALSE choice above.
-    if (AmtPtpRecoveryLockAcquireBounded(pDeviceContext, "D0Exit")) {
+    // WdfTimerStop above deliberately uses Wait=FALSE; the bounded
+    // RecoveryLock acquisition provides the serialization without introducing
+    // another unbounded wait in this power callback.
+    {
+        BOOLEAN lockAcquired;
 
-        // Step 3: re-snapshot InterruptPipe under D0ExitLock now that
-        // RecoveryLock is held. InterruptPipe is ordinarily non-NULL here (only
-        // AmtPtpEvtDeviceReleaseHardware nulls it), but this driver has
-        // observed physical device loss during S3 (STATUS_NO_SUCH_DEVICE in the
-        // reader-recovery ladder). Skipping the stop when the pipe is already
-        // gone is strictly safer than passing a NULL handle into
-        // WdfUsbTargetPipeGetIoTarget.
+        lockAcquired = AmtPtpRecoveryLockAcquireBounded(
+            pDeviceContext,
+            "D0Exit");
+
+        if (!lockAcquired) {
+            // The recovery timer still owns InterruptPipe and may be inside a
+            // synchronous USB recovery operation. Do not touch that state
+            // without RecoveryLock, and do not report success after skipping
+            // required D0-exit cleanup. Returning the real failure status is
+            // the KMDF callback failure path.
+            AmtTrace(
+                pDeviceContext,
+                "D0Exit: RecoveryLock acquire failed; "
+                "cleanup not serialized");
+
+            // Return a real callback failure. Do not report a successful
+            // D0-exit after skipping the required synchronization.
+            return STATUS_IO_TIMEOUT;
+        }
+
+        // Re-snapshot InterruptPipe under D0ExitLock now that RecoveryLock is
+        // held. The pipe may already be NULL after ReleaseHardware or after
+        // physical device loss; never pass a NULL handle into WDF.
         {
             WDFUSBPIPE snapshotPipe;
 
@@ -1647,17 +1682,15 @@ AmtPtpEvtDeviceD0Exit(
 
         AmtTrace(pDeviceContext, "D0Exit: EXIT, SetWellspringMode(FALSE) -> status=0x%08X",
             wellspringOffStatus);
-    } else {
-        // Lock timed out: the stuck recovery timer still owns InterruptPipe.
-        // Do not touch it or send SetWellspringMode(FALSE) unserialized -
-        // this D0Exit still returns STATUS_SUCCESS (D0Exit is not expected
-        // to fail the power transition over this), but skips its own
-        // cleanup rather than hanging indefinitely alongside the timer.
-        AmtTrace(pDeviceContext,
-            "D0Exit: EXIT, proceeding without RecoveryLock (cleanup skipped)");
     }
 
-    return STATUS_SUCCESS;
+    // The mode-off control transfer is part of the D0-exit operation. If it
+    // failed, do not report a successful power transition to KMDF. The pipe
+    // has already been stopped and RecoveryLock is released above, so the
+    // callback can safely propagate the actual failure status.
+    return NT_SUCCESS(wellspringOffStatus)
+        ? STATUS_SUCCESS
+        : wellspringOffStatus;
 }
 
 // AmtPtpEvtDeviceContextCleanup
