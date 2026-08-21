@@ -755,7 +755,19 @@ namespace AmtPtpConfigGui
             var label = new Forms.Label
             {
                 Text = text,
-                AutoSize = false,
+                // Let the label size itself from its own Font/Padding via
+                // GetPreferredSize instead of us pre-computing pixel
+                // dimensions with a one-off TextRenderer.MeasureText call.
+                // That call measured against whatever DPI happened to be
+                // current at construction time, which didn't necessarily
+                // match the DPI the strip actually renders at - on a
+                // high-DPI panel (e.g. a 16" MacBook Pro screen) that
+                // mismatch is what made the header (and the row height
+                // derived from it) come out too small/cramped. AutoSize
+                // routes sizing through the normal WinForms/DPI-aware
+                // layout pass instead, so it comes out correct on any
+                // display without us guessing.
+                AutoSize = true,
                 Dock = Forms.DockStyle.Fill,
                 TextAlign = System.Drawing.ContentAlignment.MiddleLeft,
                 Font = font,
@@ -772,29 +784,25 @@ namespace AmtPtpConfigGui
                 // avoids depending on that transparency support at all.
                 BackColor = trayColors.Back,
                 AutoEllipsis = true,
-                Padding = new System.Windows.Forms.Padding(34, 0, 10, 0)
+                // The vertical padding here (8/8) is what used to be the
+                // "+16" fudge factor added to a manually computed host
+                // height; keeping it as Padding lets AutoSize fold it into
+                // the preferred size Windows computes, rather than us
+                // adding it back on top of a hand-measured number.
+                Padding = new System.Windows.Forms.Padding(34, 8, 10, 8)
             };
-
-            // ToolStripDropDownMenu stretches every item to the strip's
-            // final width, but that stretch happens *after* the Label has
-            // already decided how to lay out its text at its initial
-            // preferred size. Longer titles like "Wellspring Control
-            // Center" don't fit the small default width a fresh
-            // ToolStripControlHost starts with, so the Label wraps onto a
-            // second line before the stretch ever happens - and the fixed,
-            // single-line host height then clips that second line.
-            // Measuring the text up front and sizing the host to it avoids
-            // that intermediate wrap; AutoEllipsis above is just a safety
-            // net if a future theme/DPI combination still runs short.
-            var textSize = Forms.TextRenderer.MeasureText(text, font);
-            int width = textSize.Width + 40;
 
             var host = new Forms.ToolStripControlHost(label)
             {
-                AutoSize = false,
+                // AutoSize here (the default for ToolStripControlHost, made
+                // explicit for clarity) asks the label for its preferred
+                // size instead of us assigning one. ToolStripDropDownMenu
+                // still stretches every item - including this one - to the
+                // strip's final width once that's known, same as before;
+                // we're only removing our own manual width/height guess.
+                AutoSize = true,
                 Margin = System.Windows.Forms.Padding.Empty,
-                Padding = System.Windows.Forms.Padding.Empty,
-                Size = new System.Drawing.Size(width, font.Height + 16)
+                Padding = System.Windows.Forms.Padding.Empty
             };
             return host;
         }
