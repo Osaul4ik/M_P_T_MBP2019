@@ -281,42 +281,6 @@ typedef struct _DEVICE_CONTEXT
     // checks it - and NULL-guards InterruptPipe itself - before every use.
     WDFTIMER               ReaderRestartTimer;
 
-    // Work item used for the post-D0Entry Wellspring mode switch on normal
-    // D3 -> D0 resume. WdfIoTargetStart always runs first. On the initial/full
-    // D3Final -> D0 path, D0Entry performs the same bounded Wellspring
-    // operation synchronously so initial enumeration does not depend on a
-    // later sleep/wake cycle. On normal resume, the work item preserves the
-    // deferred/grace-window behavior that avoids turning a transient
-    // STATUS_NO_SUCH_DEVICE into an immediate PnP restart. Parented to the
-    // device like ReaderRestartTimer; runs at PASSIVE_LEVEL like every
-    // WDFWORKITEM callback by default, which AmtPtpSetWellspringMode's
-    // blocking control transfers require.
-    WDFWORKITEM             WellspringInitWorkItem;
-
-    // Lifecycle generation associated with the Wellspring initialization,
-    // and whether that D0Entry was from D3Final (full/initial enumeration)
-    // or ordinary D3 sleep. Written under D0ExitLock by
-    // AmtPtpEvtDeviceD0Entry; the normal-resume path passes it to the work
-    // item, while the D3Final path uses it to guard the synchronous operation.
-    // AmtPtpEvtWellspringInitWorkItem re-reads both under D0ExitLock as part of
-    // the same
-    // snapshot-then-revalidate-under-RecoveryLock shape AmtPtpEvtReaderRestartTimer
-    // uses (see RecoveryGeneration below) - a stale callback from a D0
-    // session that has already exited (or exited and re-entered again)
-    // must never touch a UsbDevice handle that belongs to a different
-    // lifecycle generation than the one it was queued for.
-    ULONG                   WellspringInitGeneration;
-    BOOLEAN                 WellspringInitFromD3Final;
-
-    // TRUE while the post-D0 Wellspring mode-switch work item owns the
-    // current lifecycle generation. Reader failures seen during this
-    // bounded post-wake window must not immediately escalate into PnP
-    // restart: the USB child has already proved that it can start, and the
-    // control endpoint may simply need a little more settle time. This flag
-    // is always accessed under D0ExitLock and is valid only when its
-    // WellspringInitGeneration matches RecoveryGeneration.
-    BOOLEAN                 WellspringInitPending;
-
     // Lifecycle-protected - every read/write goes through D0ExitLock (see
     // below). Never left as a plain concurrent-access variable: it is
     // read/written from both the PASSIVE_LEVEL D0Entry/D0Exit/
@@ -345,7 +309,7 @@ typedef struct _DEVICE_CONTEXT
     //                  READER_RECOVERY_STAGE ladder), D0Exit cleanup,
     //                  ReleaseHardware cleanup, and the deferred
     //                  AmtPtpSetWellspringMode(TRUE) work item queued by
-    //                  D0Entry (AmtPtpEvtWellspringInitWorkItem). Guarantees
+    //                  D0Entry and reader/PnP recovery paths. Guarantees
     //                  at most one of { WdfIoTargetStop,
     //                  WdfUsbTargetPipeResetSynchronously,
     //                  WdfUsbTargetDeviceResetPortSynchronously,
@@ -530,7 +494,7 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 // full power-off (D3Final -> D0). On the initial/full enumeration path the
 // retry loop runs synchronously in D0Entry after WdfIoTargetStart succeeds;
 // on normal D3 -> D0 resume the same budget is consumed by the deferred
-// WellspringInitWorkItem.
+// the PASSIVE_LEVEL T2 PnP recovery timer.
 #define WELLSPRING_MODE_D0ENTRY_MAX_ATTEMPTS       3
 #define WELLSPRING_MODE_D0ENTRY_RETRY_DELAY_MS_UNIT 50
 
@@ -555,22 +519,6 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 // and equally recoverable by retry; all other failures remain immediate
 // failures. Budget widened from 2/50ms to 5/75ms-per-step (linear backoff,
 // worst case ~5*75=375ms extra) to give either condition real room to clear.
-// Consumed by AmtPtpEvtWellspringInitWorkItem (Device.c), which now runs
-// this control transfer only after WdfIoTargetStart has already confirmed
-// USB transport is back - not, as originally, in the same uncertain window
-// as that confirmation itself. This budget is kept unchanged regardless:
-// the interrupt pipe's transport and the separate control endpoint used
-// here can still settle independently of each other, so retry room here is
-// still worth having even though the common case should now need it less.
-#define WELLSPRING_MODE_D0ENTRY_RESUME_MAX_ATTEMPTS        5
-#define WELLSPRING_MODE_D0ENTRY_RESUME_RETRY_DELAY_MS_UNIT 75
-
-// If the interrupt reader fails while the Wellspring post-wake work item is
-// still inside its bounded retry window, give that work item time to finish
-// before the reader-recovery timer is allowed to escalate to PnP. The timer
-// callback re-checks WellspringInitPending on every fire, so this is a
-// grace/backoff delay rather than an unbounded wait.
-#define WELLSPRING_INIT_READER_GRACE_DELAY_MS 250
 
 // Bounded retries for the D0Entry interrupt-pipe WdfIoTargetStart, after
 // the same D3Final -> D0 transition. This is subject to the identical
@@ -588,11 +536,13 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 #define INTERRUPT_PIPE_D0ENTRY_MAX_ATTEMPTS        3
 #define INTERRUPT_PIPE_D0ENTRY_RETRY_DELAY_MS_UNIT 50
 
-// Small, separate retry budget for the same transient D3 -> D0 USB
-// re-enumeration window described above. Device.c retries this path for
-// both STATUS_NO_SUCH_DEVICE and STATUS_INSUFFICIENT_RESOURCES - see the
-// WELLSPRING_MODE_D0ENTRY_RESUME_* comment above for why the latter belongs
-// here too (Low Resources Simulation / SAKURAMBPRO.log). WdfIoTargetStart
+// Small, separate retry budget for the D3 -> D0 interrupt-target start.
+// This retry remains intentionally in place for Driver Verifier / low-resource
+// testing: STATUS_INSUFFICIENT_RESOURCES must not make one injected allocation
+// failure fail the power transition unnecessarily. A T2 reader failure after
+// a successful start is handled by PnP re-enumeration rather than by retrying
+// Wellspring in place.
+// WdfIoTargetStart
 // itself does not allocate per Microsoft Learn's own documented return
 // codes (learn.microsoft.com/windows-hardware/drivers/ddi/wdfiotarget/nf-wdfiotarget-wdfiotargetstart),
 // but the continuous reader it starts pre-allocates its WDFREQUEST pool via
@@ -661,12 +611,6 @@ EVT_WDF_DEVICE_RELEASE_HARDWARE AmtPtpEvtDeviceReleaseHardware;
 EVT_WDF_DEVICE_D0_ENTRY         AmtPtpEvtDeviceD0Entry;
 EVT_WDF_DEVICE_D0_EXIT          AmtPtpEvtDeviceD0Exit;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP  AmtPtpEvtDeviceContextCleanup;
-
-// Deferred Wellspring-mode-on initialization, queued by AmtPtpEvtDeviceD0Entry
-// once the interrupt pipe's I/O target is confirmed started. See the
-// WellspringInitWorkItem field comment above and the definition in Device.c
-// for the full rationale.
-EVT_WDF_WORKITEM                AmtPtpEvtWellspringInitWorkItem;
 
 // The PnP device is a lower filter. User-mode configuration therefore uses
 // a separate KMDF control device with a DOS symbolic link instead of a
@@ -939,7 +883,7 @@ BOOLEAN AmtPtpRecoveryMarkExhaustedIfCurrent(
 // WdfUsbTargetPipeResetSynchronously / WdfUsbTargetDeviceResetPortSynchronously
 // - both documented as having NO timeout - so any *other* acquirer of
 // RecoveryLock (AmtPtpEvtDeviceReleaseHardware / AmtPtpEvtDeviceD0Entry /
-// AmtPtpEvtDeviceD0Exit / AmtPtpEvtWellspringInitWorkItem in Device.c, and
+// AmtPtpEvtDeviceD0Exit in Device.c, and
 // AmtPtpSetFeatures's REPORTID_REPORTMODE/SetWellspringMode path in Hid.c)
 // must use this bounded wrapper instead of acquiring RecoveryLock directly
 // - an infinite wait on any one of them hangs that call path with no

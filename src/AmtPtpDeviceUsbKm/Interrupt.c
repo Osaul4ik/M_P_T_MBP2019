@@ -4,6 +4,29 @@
 #include "PTPCore.h"
 #include "Input.h"
 
+
+static BOOLEAN
+AmtPtpIsT2Device(_In_ const PDEVICE_CONTEXT DeviceContext)
+{
+    if (DeviceContext->DeviceInfo == NULL) {
+        return FALSE;
+    }
+
+    switch ((USHORT)DeviceContext->DeviceInfo->identification) {
+    case USB_DEVICE_ID_APPLE_T2_J152F:
+    case USB_DEVICE_ID_APPLE_T2_J680:
+    case USB_DEVICE_ID_APPLE_T2_J140K:
+    case USB_DEVICE_ID_APPLE_T2_J132:
+    case USB_DEVICE_ID_APPLE_T2_J213:
+    case USB_DEVICE_ID_APPLE_T2_J214K:
+    case USB_DEVICE_ID_APPLE_T2_J223:
+    case USB_DEVICE_ID_APPLE_T2_J230K:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
 #ifdef ALLOC_PRAGMA
 // AmtPtpCyclePort is the only PASSIVE_LEVEL-only, non-hot-path function in
 // this file that stays genuinely pageable - everything else here runs on
@@ -664,83 +687,30 @@ VOID
 AmtPtpEvtReaderRestartTimer(
     _In_ WDFTIMER Timer)
 {
-    WDFDEVICE        device = (WDFDEVICE)WdfTimerGetParentObject(Timer);
-    PDEVICE_CONTEXT  pCtx   = DeviceGetContext(device);
-    WDFUSBPIPE       localInterruptPipe;
-    ULONG            snapshotGeneration;
+    WDFDEVICE       device = (WDFDEVICE)WdfTimerGetParentObject(Timer);
+    PDEVICE_CONTEXT pCtx   = DeviceGetContext(device);
+    WDFUSBPIPE      localInterruptPipe;
+    ULONG           snapshotGeneration;
     READER_RECOVERY_STAGE stage;
-    BOOLEAN          wellspringInitPending;
 
-    // See the identical PREfast note in AmtPtpDeviceUsbKmEvtDevicePrepareHardware (Device.c).
     _Analysis_assume_(pCtx != NULL);
 
-    // NOTE: deliberately no PAGED_CODE() here - see the alloc_text comment
-    // at the top of this file (this function acquires D0ExitLock, a
-    // WDFSPINLOCK, in Phase 1 immediately below, which briefly raises IRQL
-    // to DISPATCH_LEVEL). The timer's ExecutionLevel = WdfExecutionLevelPassive
-    // configuration (Device.c) is what actually enforces the real
-    // PASSIVE_LEVEL-only runtime contract here.
-
-    // Phase 1 (DISPATCH-safe): quick check-and-snapshot under D0ExitLock
-    // only. No blocking call is made while this lock is held.
+    // The timer is configured for PASSIVE_LEVEL execution, but this callback
+    // briefly acquires D0ExitLock, so it intentionally remains resident.
     WdfSpinLockAcquire(pCtx->D0ExitLock);
     if (pCtx->D0ExitInProgress) {
         WdfSpinLockRelease(pCtx->D0ExitLock);
         AmtTrace(pCtx, "ReaderRestartTimer: D0Exit in progress, backing off");
         return;
     }
-    snapshotGeneration  = pCtx->RecoveryGeneration;
-    stage               = pCtx->ReaderRecoveryStage;
-    localInterruptPipe  = pCtx->InterruptPipe;
-    wellspringInitPending =
-        pCtx->WellspringInitPending &&
-        (pCtx->WellspringInitGeneration == snapshotGeneration);
+
+    snapshotGeneration = pCtx->RecoveryGeneration;
+    stage = pCtx->ReaderRecoveryStage;
+    localInterruptPipe = pCtx->InterruptPipe;
     WdfSpinLockRelease(pCtx->D0ExitLock);
-
-    if (stage >= READER_RECOVERY_EXHAUSTED) {
-        // Already tried every rung this D0 session. Stay silent - and
-        // leave the pipe target untouched - until the next D0Entry
-        // (sleep/wake cycle or replug) resets the ladder.
-        AmtTrace(pCtx, "ReaderRestartTimer: ladder EXHAUSTED, giving up until next D0Entry");
-        return;
-    }
-
-    if (localInterruptPipe == NULL) {
-        AmtTrace(pCtx, "ReaderRestartTimer: InterruptPipe is NULL, bailing out");
-        (VOID)AmtPtpRecoveryMarkExhaustedIfCurrent(pCtx, snapshotGeneration);
-        return;
-    }
-
-    // A normal D3->D0 resume deliberately completes in two phases:
-    // WdfIoTargetStart first, then the Wellspring mode switch in a PASSIVE
-    // work item. The reader can report a transient STATUS_NO_SUCH_DEVICE in
-    // the small interval between those phases. Do not turn that first wake
-    // hiccup into an immediate PnP restart while the bounded Wellspring
-    // retry window is still active. Re-arm the same recovery timer so the
-    // decision is revisited after the work item has had time to finish.
-    if (wellspringInitPending) {
-        AmtTrace(pCtx,
-            "ReaderRestartTimer: Wellspring init pending for generation=%lu, "
-            "deferring reader recovery/escalation",
-            snapshotGeneration);
-        WdfTimerStart(
-            pCtx->ReaderRestartTimer,
-            WDF_REL_TIMEOUT_IN_MS(WELLSPRING_INIT_READER_GRACE_DELAY_MS));
-        return;
-    }
 
     AmtTrace(pCtx, "ReaderRestartTimer: ENTER, stage=%d", (int)stage);
 
-    // Phase 2 (PASSIVE_LEVEL): acquire RecoveryLock to serialize with any
-    // other in-flight recovery/D0Exit/ReleaseHardware cleanup, then
-    // re-validate the snapshot from Phase 1 - lifecycle may have moved on
-    // (D0Exit, ReleaseHardware, or a full D0Exit->D0Entry cycle) while this
-    // callback was waiting for the lock.
-    //
-    // BUG FIX: bounded acquire. The USB reset/cycle operations below are
-    // themselves allowed to block without a short caller-supplied timeout;
-    // a timer callback must not be able to wait forever merely to acquire
-    // RecoveryLock while another recovery operation is stuck.
     if (!AmtPtpRecoveryLockAcquireBounded(pCtx, "ReaderRestartTimer")) {
         AmtTrace(pCtx,
             "ReaderRestartTimer: RecoveryLock acquire timed out, deferring this recovery fire");
@@ -750,168 +720,72 @@ AmtPtpEvtReaderRestartTimer(
         return;
     }
 
-    {
-        BOOLEAN lifecycleStale;
-        BOOLEAN pendingForCurrentGeneration;
-
-        WdfSpinLockAcquire(pCtx->D0ExitLock);
-        lifecycleStale =
-            pCtx->D0ExitInProgress ||
-            (pCtx->RecoveryGeneration != snapshotGeneration);
-        pendingForCurrentGeneration =
-            pCtx->WellspringInitPending &&
-            (pCtx->WellspringInitGeneration == pCtx->RecoveryGeneration);
-
-        // BUG FIX: the Wellspring-pending state must be re-checked AFTER
-        // RecoveryLock is acquired. A new D0Entry can queue a fresh
-        // WellspringInitWorkItem after Phase 1's snapshot but before this
-        // callback gets RecoveryLock. Without this second check the timer
-        // could start RESET_PIPE/RESET_PORT/CYCLE_PORT concurrently with
-        // the new post-wake Wellspring initialization.
-        if (!lifecycleStale && pendingForCurrentGeneration) {
-            lifecycleStale = TRUE;
-        }
-
-        // BUG FIX: re-read ReaderRecoveryStage here too, not just
-        // D0ExitInProgress/RecoveryGeneration. AmtPtpEvtUsbInterruptPipeReadComplete
-        // resets ReaderRecoveryStage to READER_RECOVERY_RESET_PIPE on every
-        // successful transfer WITHOUT bumping RecoveryGeneration (a
-        // successful read is not a lifecycle transition), so a stage
-        // snapshotted in Phase 1 can go stale purely from ladder progress -
-        // no D0Exit/D0Entry/ReleaseHardware involved at all - and the
-        // generation check above would not catch it. Without this refresh,
-        // the switch below could act on a rung the driver has already
-        // moved past (e.g. still executing RESET_PORT after a read already
-        // succeeded and reset the ladder to RESET_PIPE), and the
-        // escalation step further down - which increments the *current*
-        // field value, not this local - would then diverge from the rung
-        // actually executed.
-        if (!lifecycleStale) {
-            stage = pCtx->ReaderRecoveryStage;
-        }
+    // Re-validate lifecycle after taking RecoveryLock. D0Exit/ReleaseHardware
+    // can race with the timer between the Phase-1 snapshot and lock acquire.
+    WdfSpinLockAcquire(pCtx->D0ExitLock);
+    if (pCtx->D0ExitInProgress ||
+        pCtx->RecoveryGeneration != snapshotGeneration) {
         WdfSpinLockRelease(pCtx->D0ExitLock);
+        AmtTrace(pCtx, "ReaderRestartTimer: lifecycle changed since snapshot, aborting");
+        WdfWaitLockRelease(pCtx->RecoveryLock);
+        return;
+    }
+    stage = pCtx->ReaderRecoveryStage;
+    localInterruptPipe = pCtx->InterruptPipe;
+    WdfSpinLockRelease(pCtx->D0ExitLock);
 
-        if (lifecycleStale) {
-            if (pendingForCurrentGeneration) {
-                AmtTrace(pCtx,
-                    "ReaderRestartTimer: Wellspring init became pending after snapshot, "
-                    "deferring recovery");
-                WdfWaitLockRelease(pCtx->RecoveryLock);
-                WdfTimerStart(
-                    pCtx->ReaderRestartTimer,
-                    WDF_REL_TIMEOUT_IN_MS(WELLSPRING_INIT_READER_GRACE_DELAY_MS));
-                return;
-            }
-
-            AmtTrace(pCtx, "ReaderRestartTimer: lifecycle changed since snapshot, aborting");
-            WdfWaitLockRelease(pCtx->RecoveryLock);
-            return;
-        }
-
-        if (stage >= READER_RECOVERY_EXHAUSTED) {
-            // The ladder was already reset/exhausted by something else
-            // (e.g. a successful read, or another timer fire) between
-            // Phase 1 and here - nothing left to do this fire.
-            AmtTrace(pCtx, "ReaderRestartTimer: stage changed to EXHAUSTED since snapshot, aborting");
-            WdfWaitLockRelease(pCtx->RecoveryLock);
-            return;
-        }
+    // T2 recovery policy: once the interrupt reader fails after a normal
+    // D3 -> D0 resume, do not try to repair the stale Wellspring endpoint
+    // in-place.  The known-good path is a full PnP re-enumeration so that
+    // ReleaseHardware/PrepareHardware creates a fresh USB topology.
+    if (AmtPtpIsT2Device(pCtx)) {
+        AmtTrace(pCtx,
+            "ReaderRestartTimer: T2 failure after D3->D0, requesting PnP "
+            "re-enumeration via WdfDeviceSetFailed");
+        WdfWaitLockRelease(pCtx->RecoveryLock);
+        WdfDeviceSetFailed(device, WdfDeviceFailedAttemptRestart);
+        return;
     }
 
-    // MS-RECOMMENDED CHECK (How to Recover From USB Pipe Errors,
-    // learn.microsoft.com/windows-hardware/drivers/usbcon/how-to-recover-from-usb-pipe-errors):
-    // "Before issuing any request that resets the pipe or the device, make
-    // sure that the device is connected. You can determine the connected
-    // state of the device by calling the WdfUsbTargetDeviceIsConnectedSynchronous
-    // method." Confirmed via DbgPrint capture across a real sleep/wake
-    // cycle: the failure driving this timer was STATUS_NO_SUCH_DEVICE (the
-    // physical device gone, not a stalled endpoint), so every rung was
-    // guaranteed to fail and burn through the whole ladder for nothing.
-    // Checking first avoids sending pointless reset/cycle-port requests at
-    // a PDO that's already gone.
-    //
-    // BUG FIX (SAKURAMBPRO.log / Driver Verifier "Pool Allocations Failed
-    // Deliberately" investigation): this branch used to stop at
-    // AmtPtpRecoveryMarkExhaustedIfCurrent and just return, "waiting for
-    // PnP re-enumeration" that nothing in this driver ever actually asked
-    // for - re-enumeration here depends entirely on the parent USB hub's
-    // own port-change polling, which in the captured trace did not fire
-    // again until the *next* full S3 sleep/wake cycle, ~45s later, leaving
-    // the touchpad completely dead (Code 10) the whole time in between.
-    //
-    // Per Microsoft's own "Reporting Device Failures" documentation
-    // (learn.microsoft.com/windows-hardware/drivers/wdf/reporting-device-failures):
-    // "If a driver encounters an unrecoverable hardware or software error,
-    // it must call WdfDeviceSetFailed so that the system can unload the
-    // device's drivers", and WdfDeviceFailedAttemptRestart specifically
-    // "attempts to restart the device by requesting the bus driver to
-    // reenumerate its devices" (WDF_DEVICE_FAILED_ACTION reference,
-    // learn.microsoft.com/windows-hardware/drivers/ddi/wdfdevice/ne-wdfdevice-_wdf_device_failed_action).
-    // That is the canonical, framework-native way to turn "wait
-    // indefinitely for someone else to notice" into "actively ask PnP to
-    // retry now" - exactly this driver's situation, since by this point
-    // EvtDeviceD0Entry already returned success (the failure only showed up
-    // afterward, on the continuous reader's first completion) and so never
-    // got a chance to report it via its own return value. WdfDeviceSetFailed
-    // is called after releasing RecoveryLock, matching the same
-    // lock-before-framework-callback ordering already used everywhere else
-    // in this file, since the framework may synchronously drive
-    // EvtDeviceReleaseHardware/EvtDevicePrepareHardware back into this
-    // device from within the call. If the device is genuinely gone for
-    // good, WDF's own "several consecutive restart attempts fail" backoff
-    // (same reference) still applies, so this cannot loop forever either.
-    if (!NT_SUCCESS(WdfUsbTargetDeviceIsConnectedSynchronous(pCtx->UsbDevice))) {
-        AmtTrace(pCtx, "ReaderRestartTimer: device not connected, skipping "
-            "reset ladder, requesting PnP restart via WdfDeviceSetFailed");
+    // Non-T2 devices retain the existing bounded reset ladder.
+    if (stage >= READER_RECOVERY_EXHAUSTED) {
+        AmtTrace(pCtx,
+            "ReaderRestartTimer: ladder EXHAUSTED, giving up until next D0Entry");
+        WdfWaitLockRelease(pCtx->RecoveryLock);
+        return;
+    }
+
+    if (localInterruptPipe == NULL || pCtx->UsbDevice == NULL) {
+        AmtTrace(pCtx,
+            "ReaderRestartTimer: USB handles unavailable, requesting PnP re-enumeration");
         (VOID)AmtPtpRecoveryMarkExhaustedIfCurrent(pCtx, snapshotGeneration);
         WdfWaitLockRelease(pCtx->RecoveryLock);
         WdfDeviceSetFailed(device, WdfDeviceFailedAttemptRestart);
         return;
     }
 
-    // All three rungs require the interrupt pipe's I/O target to be
-    // stopped first - this is not optional bookkeeping, it is a documented
-    // precondition of each underlying WDFUSB call:
-    //   - WdfUsbTargetPipeResetSynchronously:      "The driver must call
-    //     WdfIoTargetStop before it calls WdfUsbTargetPipeResetSynchronously."
-    //   - WdfUsbTargetDeviceResetPortSynchronously: "The driver must call
-    //     WdfIoTargetStop before it calls WdfUsbTargetDeviceResetPortSynchronously."
-    //   - cycle-port (IOCTL_INTERNAL_USB_CYCLE_PORT / the
-    //     WdfUsbTargetDeviceCyclePortSynchronously wrapper it stands in
-    //     for): same requirement, per WdfUsbTargetDeviceFormatRequestForCyclePort
-    //     remarks ("Before the driver calls WdfRequestSend, it must call
-    //     WdfIoTargetStop").
-    // (See Microsoft Learn / wdfusb.h reference for each function.)
+    if (!NT_SUCCESS(WdfUsbTargetDeviceIsConnectedSynchronous(pCtx->UsbDevice))) {
+        AmtTrace(pCtx,
+            "ReaderRestartTimer: device not connected, skipping reset ladder, "
+            "requesting PnP restart via WdfDeviceSetFailed");
+        (VOID)AmtPtpRecoveryMarkExhaustedIfCurrent(pCtx, snapshotGeneration);
+        WdfWaitLockRelease(pCtx->RecoveryLock);
+        WdfDeviceSetFailed(device, WdfDeviceFailedAttemptRestart);
+        return;
+    }
+
+    // All reset rungs require the interrupt-pipe I/O target to be stopped.
     WdfIoTargetStop(
         WdfUsbTargetPipeGetIoTarget(localInterruptPipe),
         WdfIoTargetCancelSentIo);
 
     if (stage == READER_RECOVERY_CYCLE_PORT) {
-        // CYCLE_PORT is NOT just another rung of the ladder - see the
-        // Device.h READER_RECOVERY_STAGE comment and the CYCLE_PORT
-        // sections of the lifecycle design notes. IOCTL_INTERNAL_USB_CYCLE_PORT
-        // power-cycles the port: the device is expected to disappear and
-        // come back through ordinary PnP (surprise removal ->
-        // ReleaseHardware -> PrepareHardware -> D0Entry), not to keep
-        // living as the same WDFUSBDEVICE/WDFUSBPIPE/IoTarget this
-        // function is holding right now. Continuing on afterward to
-        // WdfIoTargetStart(localInterruptPipe) - as the other two rungs do
-        // - would resubmit reads against a pipe object PnP may be in the
-        // middle of tearing down underneath this function, which is
-        // exactly the lock-inversion/UAF shape the lifecycle redesign
-        // exists to prevent.
-        //
-        // So: mark the ladder exhausted for this (now-ending) D0 session,
-        // release RecoveryLock, and return immediately without touching
-        // localInterruptPipe again. PnP owns everything from here; the
-        // eventual D0Entry that follows re-enumeration gives the ladder a
-        // clean slate on a new RecoveryGeneration.
         NTSTATUS rungStatus = AmtPtpCyclePort(pCtx);
-        AmtTrace(pCtx, "ReaderRestartTimer: CYCLE_PORT -> status=0x%08X, "
-            "handing lifecycle to PnP", rungStatus);
+        AmtTrace(pCtx,
+            "ReaderRestartTimer: CYCLE_PORT -> status=0x%08X, handing lifecycle to PnP",
+            rungStatus);
 
         (VOID)AmtPtpRecoveryMarkExhaustedIfCurrent(pCtx, snapshotGeneration);
-
         WdfWaitLockRelease(pCtx->RecoveryLock);
         return;
     }
@@ -922,31 +796,21 @@ AmtPtpEvtReaderRestartTimer(
             localInterruptPipe,
             WDF_NO_HANDLE,
             NULL);
-        AmtTrace(pCtx, "ReaderRestartTimer: RESET_PIPE -> status=0x%08X", rungStatus);
+        AmtTrace(pCtx,
+            "ReaderRestartTimer: RESET_PIPE -> status=0x%08X", rungStatus);
         break;
     }
 
     case READER_RECOVERY_RESET_PORT:
     default: {
-        // The framework reselects the current USB configuration after
-        // a successful port reset, so InterruptPipe/UsbInterface stay
-        // valid - no need to redo SelectInterruptInterface here.
-        // READER_RECOVERY_RESET_PORT is the only remaining value stage
-        // can hold here (RESET_PIPE handled above, CYCLE_PORT handled and
-        // returned above, EXHAUSTED+ returned in Phase 1); default is kept
-        // only as a defensive fallback.
-        NTSTATUS rungStatus = WdfUsbTargetDeviceResetPortSynchronously(pCtx->UsbDevice);
-        AmtTrace(pCtx, "ReaderRestartTimer: RESET_PORT -> status=0x%08X", rungStatus);
+        NTSTATUS rungStatus = WdfUsbTargetDeviceResetPortSynchronously(
+            pCtx->UsbDevice);
+        AmtTrace(pCtx,
+            "ReaderRestartTimer: RESET_PORT -> status=0x%08X", rungStatus);
         break;
     }
     }
 
-    // Escalate for next time regardless of this step's own result - if the
-    // reader is still stuck after this recovery action, the *next* failure
-    // callback should try the next rung, not repeat this one forever. Only
-    // apply if this is still the same generation the snapshot was taken
-    // from - a concurrent D0Exit/D0Entry may have already reset the ladder
-    // for a new session, and this stale callback must not stomp on that.
     {
         READER_RECOVERY_STAGE nextStage = stage;
 
@@ -957,18 +821,14 @@ AmtPtpEvtReaderRestartTimer(
         }
         WdfSpinLockRelease(pCtx->D0ExitLock);
 
-        // Always attempt to resume the reader, even if the recovery call
-        // above failed: if reads are still broken, this resubmission will
-        // itself fail and drive AmtPtpEvtUsbInterruptReadersFailed again,
-        // which is what carries the ladder forward to the next rung. Still
-        // safe to do even if generation moved on underneath: WdfIoTargetStart
-        // against a pipe whose target has since been stopped/torn down by a
-        // concurrent D0Exit/ReleaseHardware simply fails, which every call
-        // site already discards.
+        // Restart even when the reset operation itself failed. A persistent
+        // reader failure will re-enter ReadersFailed and advance the ladder.
         NTSTATUS restartStatus = WdfIoTargetStart(
             WdfUsbTargetPipeGetIoTarget(localInterruptPipe));
-        AmtTrace(pCtx, "ReaderRestartTimer: EXIT, WdfIoTargetStart -> status=0x%08X, next stage=%d",
-            restartStatus, (int)nextStage);
+        AmtTrace(pCtx,
+            "ReaderRestartTimer: EXIT, WdfIoTargetStart -> status=0x%08X, next stage=%d",
+            restartStatus,
+            (int)nextStage);
     }
 
     WdfWaitLockRelease(pCtx->RecoveryLock);
@@ -984,7 +844,6 @@ AmtPtpEvtUsbInterruptReadersFailed(
     WDFDEVICE        device   = WdfIoTargetGetDevice(ioTarget);
     PDEVICE_CONTEXT  pCtx     = DeviceGetContext(device);
     BOOLEAN                d0ExitInProgress;
-    BOOLEAN                wellspringInitPending;
     READER_RECOVERY_STAGE  stage;
 
     // See the identical PREfast note in AmtPtpDeviceUsbKmEvtDevicePrepareHardware (Device.c).
@@ -1018,9 +877,6 @@ AmtPtpEvtUsbInterruptReadersFailed(
     // WDFSPINLOCK and not a WDFWAITLOCK.
     WdfSpinLockAcquire(pCtx->D0ExitLock);
     d0ExitInProgress = pCtx->D0ExitInProgress;
-    wellspringInitPending =
-        pCtx->WellspringInitPending &&
-        (pCtx->WellspringInitGeneration == pCtx->RecoveryGeneration);
     stage            = pCtx->ReaderRecoveryStage;
     WdfSpinLockRelease(pCtx->D0ExitLock);
 
@@ -1037,13 +893,18 @@ AmtPtpEvtUsbInterruptReadersFailed(
         return FALSE;
     }
 
-    if (wellspringInitPending) {
+    if (AmtPtpIsT2Device(pCtx)) {
+        // T2 does not recover the Wellspring endpoint in-place across the
+        // ordinary D3 -> D0 transition.  The known-good path is a complete
+        // PnP re-enumeration: ReleaseHardware -> PrepareHardware -> D0Entry.
+        // Use the passive timer as the execution bridge before calling
+        // WdfDeviceSetFailed; the reader-failed callback can run at DISPATCH_LEVEL.
         AmtTrace(pCtx,
-            "ReadersFailed: Wellspring init pending, deferring reader recovery "
-            "for post-wake grace window");
+            "ReadersFailed: T2 post-resume reader failure, scheduling PnP "
+            "re-enumeration");
         WdfTimerStart(
             pCtx->ReaderRestartTimer,
-            WDF_REL_TIMEOUT_IN_MS(WELLSPRING_INIT_READER_GRACE_DELAY_MS));
+            WDF_REL_TIMEOUT_IN_MS(1));
         return FALSE;
     }
 
