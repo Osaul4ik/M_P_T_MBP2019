@@ -749,26 +749,25 @@ namespace AmtPtpConfigGui
         // gutter and lays its text out relative to that gutter (even with
         // TextAlign = MiddleCenter), which is what made the title
         // read as off-center rather than a centered title.
-        private Forms.ToolStripItem BuildTrayHeaderItem(string text, (System.Drawing.Color Back, System.Drawing.Color Fore, System.Drawing.Color Selected, System.Drawing.Color Border, System.Drawing.Color Accent) trayColors, int dpi)
+        private Forms.ToolStripItem BuildTrayHeaderItem(string text, (System.Drawing.Color Back, System.Drawing.Color Fore, System.Drawing.Color Selected, System.Drawing.Color Border, System.Drawing.Color Accent) trayColors)
         {
             var font = ResolveTrayFont(9F, System.Drawing.FontStyle.Bold);
             var label = new Forms.Label
             {
                 Text = text,
-                // AutoSize=true together with Dock=Fill on the SAME control
-                // is a known-bad WinForms combination: Dock=Fill tells the
-                // layout engine "take whatever bounds your parent gives
-                // you", which fights AutoSize's "give me the bounds my
-                // content needs" and the result some of the time is a
-                // near-empty preferred size - which is exactly why the
-                // header collapsed to a clipped single letter. Keep
-                // AutoSize off; Control.PreferredSize (used below by the
-                // host) is computed from Text/Font/Padding regardless of
-                // this flag, so sizing is still correct - Dock=Fill is then
-                // free to stretch the label to the row's final width once
-                // ToolStripDropDownMenu resizes the host to match the
-                // widest item.
-                AutoSize = false,
+                // Let the label size itself from its own Font/Padding via
+                // GetPreferredSize instead of us pre-computing pixel
+                // dimensions with a one-off TextRenderer.MeasureText call.
+                // That call measured against whatever DPI happened to be
+                // current at construction time, which didn't necessarily
+                // match the DPI the strip actually renders at - on a
+                // high-DPI panel (e.g. a 16" MacBook Pro screen) that
+                // mismatch is what made the header (and the row height
+                // derived from it) come out too small/cramped. AutoSize
+                // routes sizing through the normal WinForms/DPI-aware
+                // layout pass instead, so it comes out correct on any
+                // display without us guessing.
+                AutoSize = true,
                 Dock = Forms.DockStyle.Fill,
                 TextAlign = System.Drawing.ContentAlignment.MiddleLeft,
                 Font = font,
@@ -785,33 +784,28 @@ namespace AmtPtpConfigGui
                 // avoids depending on that transparency support at all.
                 BackColor = trayColors.Back,
                 AutoEllipsis = true,
-                // Authored at 96 DPI and scaled to the strip's actual DPI,
-                // same as the corner radius below - a fixed logical padding
-                // value doesn't grow with the monitor's scale factor on its
-                // own, which is what read as "cramped" on a high-DPI panel.
-                Padding = new System.Windows.Forms.Padding(ScaleDpi(34, dpi), ScaleDpi(8, dpi), ScaleDpi(10, dpi), ScaleDpi(8, dpi))
+                // The vertical padding here (8/8) is what used to be the
+                // "+16" fudge factor added to a manually computed host
+                // height; keeping it as Padding lets AutoSize fold it into
+                // the preferred size Windows computes, rather than us
+                // adding it back on top of a hand-measured number.
+                Padding = new System.Windows.Forms.Padding(34, 8, 10, 8)
             };
 
             var host = new Forms.ToolStripControlHost(label)
             {
-                // Asks the label for its Control.PreferredSize instead of
-                // us assigning a pixel Size ourselves. ToolStripDropDownMenu
+                // AutoSize here (the default for ToolStripControlHost, made
+                // explicit for clarity) asks the label for its preferred
+                // size instead of us assigning one. ToolStripDropDownMenu
                 // still stretches every item - including this one - to the
-                // strip's final width once that's known, same as before.
+                // strip's final width once that's known, same as before;
+                // we're only removing our own manual width/height guess.
                 AutoSize = true,
                 Margin = System.Windows.Forms.Padding.Empty,
                 Padding = System.Windows.Forms.Padding.Empty
             };
             return host;
         }
-
-        // Shared DPI scaling helper: a value authored at 96 DPI (100%),
-        // scaled to whatever DPI the tray menu is actually rendering at.
-        // Used for anything we set as a raw pixel number (Padding, the
-        // header's own padding) that WinForms won't rescale for us on its
-        // own the way it rescales Font.
-        internal static int ScaleDpi(int valueAt96Dpi, int dpi) =>
-            (int)Math.Round(valueAt96Dpi * dpi / 96.0);
 
         private Forms.ContextMenuStrip BuildTrayMenu()
         {
