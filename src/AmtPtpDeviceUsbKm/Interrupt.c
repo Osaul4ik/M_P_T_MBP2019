@@ -941,6 +941,6 @@ AmtPtpEvtUsbInterruptReadersFailed(
         WDF_REL_TIMEOUT_IN_MS(READER_RECOVERY_STEP_DELAY_MS));
 
     // We own the recovery/restart via the timer above, so tell the
-    // framework not to immediately resubmit the reader itself.
+    // framework not to immediately resubmit the reader itself..
     return FALSE;
 }
