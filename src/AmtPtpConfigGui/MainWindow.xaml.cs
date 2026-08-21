@@ -132,6 +132,11 @@ namespace AmtPtpConfigGui
         private LiveFrame _latestLiveFrame;
         private bool _hasLatestLiveFrame;
         private bool _liveEnabled;
+        // Set when Live polling/rendering is paused for a close-to-tray
+        // Hide() (see MainWindow_Closing / ResumeLiveAfterShow). Distinct
+        // from _liveEnabled/ChkLive.IsChecked, which stay true the whole
+        // time - this only tracks "should ShowFromTray restart the pump."
+        private bool _liveWasEnabledBeforeHide;
         // Whether the detailed live touch-contact list (LiveCoordPanel) is
         // expanded. Reset to false every time Live is (re)enabled so the
         // panel always starts collapsed by default.
@@ -1137,7 +1142,16 @@ namespace AmtPtpConfigGui
             Topmost = true;
             Topmost = false;
             Focus();
+
+            if (_liveWasEnabledBeforeHide)
+                ResumeLiveAfterShow();
         }
+
+        // Entry point for App's named-pipe activation server: a second
+        // `.exe` launch attempt was detected and handed off here instead of
+        // starting its own process. Same effect as double-clicking the tray
+        // icon.
+        public void ActivateFromExternalLaunch() => ShowFromTray();
 
         private void ExitApplication()
         {
@@ -1151,6 +1165,24 @@ namespace AmtPtpConfigGui
             {
                 e.Cancel = true;
                 Hide();
+
+                // Live overlay has nothing to render while hidden - the
+                // 30 Hz DeviceIoControl poll task and the ~24 FPS
+                // DispatcherTimer were previously left running against a
+                // hidden window, which is why the tray-parked process used
+                // the same CPU/memory footprint as the open one. Pause both
+                // here; SetLiveEnabled(false) also tells the driver side to
+                // stop assembling live frames for us. ChkLive.IsChecked and
+                // _liveEnabled are deliberately left alone so the checkbox
+                // still reflects the user's actual choice on next Show().
+                if (_liveEnabled)
+                {
+                    _liveWasEnabledBeforeHide = true;
+                    StopLivePolling();
+                    _liveRenderTimer.Stop();
+                    _device.SetLiveEnabled(false);
+                }
+
                 SetBottomStatus("Wellspring Control Center is running in the system tray.");
                 return;
             }
@@ -1916,6 +1948,32 @@ namespace AmtPtpConfigGui
                     // worker is between cancellation and its wait handle.
                 }
             }, token);
+        }
+
+        // Symmetric counterpart to the pause block in MainWindow_Closing.
+        // Re-enables live on the driver side and restarts both the poll
+        // task and render timer, but only if Live was actually running when
+        // we hid (a user who unchecked Live while parked in the tray - via
+        // the tray's own Force Touch/palm toggles, none of which touch
+        // Live - shouldn't have it silently turn back on).
+        private void ResumeLiveAfterShow()
+        {
+            _liveWasEnabledBeforeHide = false;
+
+            if (!_liveEnabled || !_device.IsConnected)
+                return;
+
+            if (!_device.SetLiveEnabled(true))
+            {
+                _liveEnabled = false;
+                if (ChkLive.IsChecked == true)
+                    ChkLive.IsChecked = false;
+                return;
+            }
+
+            _hasLatestLiveFrame = false;
+            StartLivePolling();
+            _liveRenderTimer.Start();
         }
 
         private void StopLivePolling()
