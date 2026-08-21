@@ -838,11 +838,11 @@ namespace AmtPtpConfigGui
                         var requireM = new Forms.ToolStripMenuItem("Require M:50/30 continuously")
                         {
                             Checked = pointerCfg.SmallContactRejectionStrict != 0,
-                            Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
+                            Padding = new System.Windows.Forms.Padding(28, 7, 10, 7),
                             ToolTipText = "Ignore a non-Force-Touch contact on every frame unless Major is at least 50 and Minor is at least 30."
                         };
                         requireM.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ToggleSmallContactStrictFromTray));
-                        smallReject.DropDownItems.Add(requireM);
+                        menu.Items.Add(requireM);
                     }
                 }
 
@@ -873,11 +873,11 @@ namespace AmtPtpConfigGui
                         var requirePressureContinuous = new Forms.ToolStripMenuItem("Require pressure continuously")
                         {
                             Checked = pointerCfg.RequirePressureContinuously != 0,
-                            Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
+                            Padding = new System.Windows.Forms.Padding(28, 7, 10, 7),
                             ToolTipText = "Ignore a Force-Touch contact on any frame where pressure is zero."
                         };
                         requirePressureContinuous.Click += (_, _) => Dispatcher.BeginInvoke(new Action(TogglePressureContinuousFromTray));
-                        requirePressure.DropDownItems.Add(requirePressureContinuous);
+                        menu.Items.Add(requirePressureContinuous);
                     }
 
                     // Dedicated item that expands into the list of Force Tap button types.

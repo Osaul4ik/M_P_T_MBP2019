@@ -871,7 +871,7 @@
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button x:Name="BtnReconnect" Height="36" Padding="12,0" Margin="0,0,8,0"
-                            Style="{StaticResource SecondaryButton}" Click="Reconnect_Click" ToolTip="Reconnect to the device">
+                            Style="{StaticResource SecondaryButton}" FontSize="12.5" FontWeight="Normal" Click="Reconnect_Click" ToolTip="Reconnect to the device">
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                             <TextBlock Text="↻" FontSize="14" Margin="0,0,7,0" VerticalAlignment="Center"/>
                             <TextBlock Text="Reconnect" VerticalAlignment="Center"/>
@@ -883,22 +883,28 @@
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                             <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="{DynamicResource StatusOfflineBrush}" VerticalAlignment="Center"/>
                             <TextBlock x:Name="StatusText" Margin="9,0,0,0" VerticalAlignment="Center"
+                                       FontSize="12.5" FontWeight="Normal"
                                        Text="Disconnected"/>
                         </StackPanel>
                     </Border>
                     <Border Margin="8,0,0,0"
                             Background="{DynamicResource CardBrush}"
                             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
-                            CornerRadius="7" Padding="10,7" MinWidth="250" MaxWidth="460" Height="36">
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <TextBlock Text="Device" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                            <TextBlock x:Name="DeviceModelText" VerticalAlignment="Center"
+                            CornerRadius="7" Padding="12,7" MinWidth="280" MaxWidth="460" Height="36">
+                        <Grid VerticalAlignment="Center">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Device:" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,8,0"
+                                       VerticalAlignment="Center" FontSize="12.5" FontWeight="Normal"/>
+                            <TextBlock x:Name="DeviceModelText" Grid.Column="1" VerticalAlignment="Center"
                                        Foreground="{DynamicResource TextPrimaryBrush}"
-                                       FontSize="12" FontWeight="SemiBold"
+                                       FontSize="12.5" FontWeight="Normal"
                                        TextTrimming="CharacterEllipsis"
                                        Text="No device detected"
                                        ToolTip="Detected Mac/trackpad model"/>
-                        </StackPanel>
+                        </Grid>
                     </Border>
                     <Button x:Name="BtnAppSettings" Width="40" Height="36" MinWidth="40" Margin="8,0,0,0"
                             Padding="0" Background="{DynamicResource ControlFillBrush}"
@@ -916,16 +922,16 @@
         <!-- ===================== Profiles + advanced mode ===================== -->
         <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="1.65*"/>
                 <ColumnDefinition Width="10"/>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="0.75*"/>
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" Style="{StaticResource Card}" Padding="14,10">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="190"/>
+                        <ColumnDefinition Width="175"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,14,0">
@@ -935,11 +941,11 @@
                     <ComboBox x:Name="ProfileCombo" Grid.Column="1"
                               SelectionChanged="ProfileCombo_SelectionChanged"/>
                     <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <Button Content="＋" Padding="11,0" Height="36" Margin="0,0,6,0"
+                        <Button Content="＋" Padding="8,0" Width="36" MinWidth="0" Height="36" Margin="0,0,6,0"
                                 Click="NewProfile_Click" ToolTip="New profile"/>
-                        <Button Content="Rename" Padding="12,0" Height="36" Margin="0,0,6,0"
+                        <Button Content="Rename" Padding="8,0" Width="74" MinWidth="0" Height="36" Margin="0,0,6,0"
                                 Click="RenameProfile_Click"/>
-                        <Button Content="Delete" Padding="12,0" Height="36"
+                        <Button Content="Delete" Padding="8,0" Width="66" MinWidth="0" Height="36"
                                 Click="DeleteProfile_Click"/>
                     </StackPanel>
                 </Grid>
@@ -966,7 +972,7 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <Grid Grid.Row="0">
+                <Grid Grid.Row="0" Height="36" VerticalAlignment="Top">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
@@ -1285,8 +1291,8 @@
                                     </StackPanel>
                                 </GroupBox.Header>
                                 <StackPanel>
-                                    <CheckBox x:Name="ChkSmallContactRejection" Style="{StaticResource OptionCheckBox}" Margin="0,10,0,8" Content="Enable small-contact rejection" Checked="SmallContactRejectionOption_Changed" Unchecked="SmallContactRejectionOption_Changed" ToolTip="On trackpads without Force Touch, reject a new contact while Major is below 80 and Minor is below 60. Once it reaches Major 80 or Minor 60, that contact remains accepted until it is lifted."/>
-                                    <CheckBox x:Name="ChkSmallContactRejectionStrict" Style="{StaticResource OptionCheckBox}" Margin="0,0,0,8" Content="Require M:50/30 continuously" Visibility="Collapsed" ToolTip="While enabled, a non-Force-Touch contact is ignored on every frame unless Major is at least 50 AND Minor is at least 30. If either value drops below the threshold while you move, the contact is ignored until it qualifies again."/>
+                                    <CheckBox x:Name="ChkSmallContactRejection" Style="{StaticResource OptionCheckBox}" Margin="0,10,0,4" Content="Enable small-contact rejection" Checked="SmallContactRejectionOption_Changed" Unchecked="SmallContactRejectionOption_Changed" ToolTip="On trackpads without Force Touch, reject a new contact while Major is below 80 and Minor is below 60. Once it reaches Major 80 or Minor 60, that contact remains accepted until it is lifted."/>
+                                    <CheckBox x:Name="ChkSmallContactRejectionStrict" Style="{StaticResource OptionCheckBox}" Margin="22,0,0,8" Content="Require M:50/30 continuously" Visibility="Collapsed" ToolTip="While enabled, a non-Force-Touch contact is ignored on every frame unless Major is at least 50 AND Minor is at least 30. If either value drops below the threshold while you move, the contact is ignored until it qualifies again."/>
                                     <TextBlock Style="{StaticResource HintText}" Text="Normal mode checks M only when a contact starts. Strict mode checks M on every frame and requires Major ≥ 50 AND Minor ≥ 30."/>
                                 </StackPanel>
                             </GroupBox>
@@ -1305,8 +1311,8 @@
                                     </Grid>
                                     <Slider x:Name="SlForceTapThreshold" Minimum="200" Maximum="400" ValueChanged="PointerSlider_Changed"/>
                                     <CheckBox x:Name="ChkForceTouchEnabled" Style="{StaticResource OptionCheckBox}" Margin="0,10,0,4" Content="Enable Force Touch" Checked="ForceTouchOption_Changed" Unchecked="ForceTouchOption_Changed" ToolTip="Enables Force Touch click arbitration on trackpads that support it. On standard trackpads the driver ignores this setting."/>
-                                    <CheckBox x:Name="ChkRequirePressure" Style="{StaticResource OptionCheckBox}" Margin="0,4,0,8" Content="Require pressure to activate contact" Checked="ForceTouchOption_Changed" Unchecked="ForceTouchOption_Changed" ToolTip="For Force Touch-capable trackpads, a brand-new contact with zero pressure is ignored until pressure becomes positive. Existing contacts are unaffected."/>
-                                    <CheckBox x:Name="ChkRequirePressureContinuously" Style="{StaticResource OptionCheckBox}" Margin="0,0,0,8" Content="Require pressure continuously" Visibility="Collapsed" ToolTip="For Force Touch-capable trackpads, a contact is ignored on every frame while pressure is zero. If pressure disappears while you move, the contact is treated as absent until pressure becomes positive again."/>
+                                    <CheckBox x:Name="ChkRequirePressure" Style="{StaticResource OptionCheckBox}" Margin="0,4,0,4" Content="Require pressure to activate contact" Checked="ForceTouchOption_Changed" Unchecked="ForceTouchOption_Changed" ToolTip="For Force Touch-capable trackpads, a brand-new contact with zero pressure is ignored until pressure becomes positive. Existing contacts are unaffected."/>
+                                    <CheckBox x:Name="ChkRequirePressureContinuously" Style="{StaticResource OptionCheckBox}" Margin="22,0,0,8" Content="Require pressure continuously" Visibility="Collapsed" ToolTip="For Force Touch-capable trackpads, a contact is ignored on every frame while pressure is zero. If pressure disappears while you move, the contact is treated as absent until pressure becomes positive again."/>
                                     <TextBlock Text="Force Tap action" Style="{StaticResource SliderLabel}" Margin="0,10,0,6" ToolTip="Action emitted when Force Touch is recognized. Choose the mouse action that best matches how you want a hard press to behave."/>
                                     <StackPanel>
                                         <RadioButton x:Name="RbActionContextMenu" Content="Context menu" GroupName="ForceTapAction" Margin="0,4" Checked="PointerAction_Changed" ToolTip="Open the context menu, equivalent to a right-click."/>
