@@ -839,7 +839,7 @@ AmtPtpRecoveryLockAcquireBounded(
     NTSTATUS      status;
 
     timeout.QuadPart = WDF_REL_TIMEOUT_IN_MS(RECOVERY_LOCK_ACQUIRE_TIMEOUT_MS);
-    status = WdfWaitLockAcquire(DeviceContext->RecoveryLock, &timeout);
+    status = WdfWaitLockAcquire(DeviceContext->RecoveryLock, &timeout.QuadPart);
 
     if (status == STATUS_TIMEOUT) {
         // The reader-recovery timer is stuck inside an unbounded USB reset
