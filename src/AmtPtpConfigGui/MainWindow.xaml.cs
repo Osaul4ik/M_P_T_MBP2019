@@ -2379,7 +2379,9 @@ namespace AmtPtpConfigGui
             const int sampleMinor = 180;
             double sensorX = sampleXPct * xRange;
             double sensorY = sampleYPct * yRange;
-            bool isBirth = ChkIsBirth.IsChecked == true;
+            // Test Contact was removed; keep classification preview in the
+            // non-birth state so it no longer depends on a deleted control.
+            const bool isBirth = false;
             var cls = PalmPreviewEngine.Classify(_geometry, cfg, sampleMajor, sampleMinor, sensorX, sensorY, isBirth);
 
             Brush fingerBrush = cls switch

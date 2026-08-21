@@ -125,11 +125,11 @@ namespace AmtPtpConfigGui
                         await server.WaitForConnectionAsync(token).ConfigureAwait(false);
                         _ = server.ReadByte();
 
-                        Dispatcher.BeginInvoke(new Action(() =>
+                        await Dispatcher.InvokeAsync(() =>
                         {
                             if (MainWindow is MainWindow mw)
                                 mw.ActivateFromExternalLaunch();
-                        }));
+                        });
                     }
                     catch (OperationCanceledException)
                     {
