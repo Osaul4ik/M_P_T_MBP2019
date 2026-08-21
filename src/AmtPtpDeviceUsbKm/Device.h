@@ -716,6 +716,9 @@ _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS
 AmtPtpConfigContReaderForInterruptEndPoint(_In_ PDEVICE_CONTEXT DeviceContext);
 
+BOOLEAN
+AmtPtpIsT2Device(_In_ const PDEVICE_CONTEXT DeviceContext);
+
 EVT_WDF_USB_READER_COMPLETION_ROUTINE AmtPtpEvtUsbInterruptPipeReadComplete;
 EVT_WDF_USB_READERS_FAILED            AmtPtpEvtUsbInterruptReadersFailed;
 EVT_WDF_TIMER                         AmtPtpEvtReaderRestartTimer;

@@ -5,7 +5,7 @@
 #include "Input.h"
 
 
-static BOOLEAN
+BOOLEAN
 AmtPtpIsT2Device(_In_ const PDEVICE_CONTEXT DeviceContext)
 {
     if (DeviceContext->DeviceInfo == NULL) {
