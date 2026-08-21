@@ -1757,34 +1757,77 @@ AmtPtpEvtDeviceD0Entry(
     isTargetStarted = TRUE;
 
     // Interrupt pipe confirmed started, i.e. USB transport is confirmed
-    // back - hand the Wellspring mode-switch off to
-    // AmtPtpEvtWellspringInitWorkItem instead of performing it here. This
-    // keeps it from delaying D0Entry's own return (which the continuous
-    // reader's first completion is already racing) and gives it a real shot
-    // at succeeding on the first attempt, since it no longer runs during the
-    // uncertain window before transport presence was confirmed - it now
-    // runs strictly after.
+    // back. There are two deliberately different startup paths here:
+    //
+    //   * D3Final -> D0 is the initial/full enumeration path.  The first
+    //     D0Entry must leave the device fully functional without relying on
+    //     a later sleep/wake transition to give Wellspring another chance.
+    //     Therefore Wellspring mode is initialized synchronously here, after
+    //     WdfIoTargetStart has succeeded, while RecoveryLock is already held.
+    //
+    //   * D3 -> D0 is the normal resume path.  Keep this deferred so a short
+    //     post-wake USB settling window cannot make D0Entry fail just because
+    //     the vendor control transfer is temporarily returning
+    //     STATUS_NO_SUCH_DEVICE. The work item owns the same bounded retry
+    //     window used before, but only after the interrupt target is running.
+    //
+    // This distinction fixes the observed startup-only failure where the
+    // device becomes usable only after the first sleep/wake cycle.
     //
     // Written under D0ExitLock, matching every other write to
-    // RecoveryGeneration-adjacent lifecycle state: RecoveryGeneration was
-    // just bumped for this session at the top of this function, still under
-    // RecoveryLock (held continuously since then), so no D0Exit/
-    // ReleaseHardware/older-generation timer callback can be mid-transition
-    // right now. WdfWorkItemEnqueue itself is safe to call while still
-    // holding RecoveryLock - it only schedules the callback, it does not run
-    // it synchronously, so it cannot deadlock against this function's own
-    // RecoveryLock ownership.
+    // RecoveryGeneration-adjacent lifecycle state. RecoveryLock is held for
+    // the whole D0Entry, so no D0Exit/ReleaseHardware/older-generation timer
+    // callback can invalidate this state before the synchronous path or the
+    // queued work item has captured it.
     WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
     pDeviceContext->WellspringInitGeneration  = pDeviceContext->RecoveryGeneration;
     pDeviceContext->WellspringInitFromD3Final = (PreviousState == WdfPowerDeviceD3Final);
     pDeviceContext->WellspringInitPending     = TRUE;
     WdfSpinLockRelease(pDeviceContext->D0ExitLock);
 
-    AmtTrace(pDeviceContext,
-        "D0Entry: WdfIoTargetStart SUCCESS, queueing deferred Wellspring init "
-        "for generation=%lu",
-        pDeviceContext->WellspringInitGeneration);
-    WdfWorkItemEnqueue(pDeviceContext->WellspringInitWorkItem);
+    if (PreviousState == WdfPowerDeviceD3Final) {
+        ULONG initAttempts = WELLSPRING_MODE_D0ENTRY_MAX_ATTEMPTS;
+        ULONG initDelayMsUnit = WELLSPRING_MODE_D0ENTRY_RETRY_DELAY_MS_UNIT;
+        NTSTATUS wellspringStatus;
+
+        // D3Final is the full/initial enumeration path: do not return from
+        // D0Entry until Wellspring mode has had its bounded chance to become
+        // ready.  This keeps initial enumeration self-contained and removes
+        // the accidental dependency on a future sleep/wake cycle.
+        AmtTrace(pDeviceContext,
+            "D0Entry: WdfIoTargetStart SUCCESS, performing synchronous Wellspring init "
+            "for initial/full enumeration generation=%lu",
+            pDeviceContext->RecoveryGeneration);
+
+        wellspringStatus = AmtPtpD0EntryRetry(
+            pDeviceContext,
+            initAttempts,
+            initDelayMsUnit,
+            FALSE,
+            "SetWellspringMode",
+            AmtPtpD0EntrySetWellspringModeAttempt);
+
+        WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
+        if (pDeviceContext->RecoveryGeneration == pDeviceContext->WellspringInitGeneration) {
+            pDeviceContext->WellspringInitPending = FALSE;
+        }
+        WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+
+        AmtTrace(pDeviceContext,
+            "D0Entry: initial/full Wellspring init -> status=0x%08X",
+            wellspringStatus);
+
+        if (!NT_SUCCESS(wellspringStatus)) {
+            status = wellspringStatus;
+            goto end;
+        }
+    } else {
+        AmtTrace(pDeviceContext,
+            "D0Entry: WdfIoTargetStart SUCCESS, queueing deferred Wellspring init "
+            "for resume generation=%lu",
+            pDeviceContext->RecoveryGeneration);
+        WdfWorkItemEnqueue(pDeviceContext->WellspringInitWorkItem);
+    }
 
 end:
     if (!NT_SUCCESS(status) && isTargetStarted) {

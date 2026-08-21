@@ -281,33 +281,25 @@ typedef struct _DEVICE_CONTEXT
     // checks it - and NULL-guards InterruptPipe itself - before every use.
     WDFTIMER               ReaderRestartTimer;
 
-    // Work item that performs AmtPtpSetWellspringMode(TRUE) OUTSIDE
-    // AmtPtpEvtDeviceD0Entry itself - see AmtPtpEvtWellspringInitWorkItem
-    // (Device.c) for the full rationale. In short: D0Entry used to run the
-    // Wellspring mode-switch control transfer synchronously BEFORE
-    // starting the interrupt pipe's I/O target, on the theory that the
-    // pipe should not come up "in the wrong mode". In practice this made
-    // D0Entry's own return value (and therefore whether PnP tears the
-    // device down and restarts it) depend on the SAME transient
-    // post-resume settling window as the interrupt pipe start immediately
-    // after it, and the two retry loops raced each other for that window
-    // instead of one confirming device presence for the other. Now
-    // WdfIoTargetStart runs first (it alone still gates D0Entry's return
-    // value, unchanged), and only once it has actually succeeded - i.e.
-    // USB transport is confirmed back - does D0Entry hand the Wellspring
-    // mode-switch off to this work item, so a slow/failed Wellspring
-    // control transfer can no longer starve the interrupt pipe's own retry
-    // budget or delay D0Entry's return. Parented to the device like
-    // ReaderRestartTimer; runs at PASSIVE_LEVEL like every WDFWORKITEM
-    // callback by default, which AmtPtpSetWellspringMode's blocking
-    // control transfers require.
+    // Work item used for the post-D0Entry Wellspring mode switch on normal
+    // D3 -> D0 resume. WdfIoTargetStart always runs first. On the initial/full
+    // D3Final -> D0 path, D0Entry performs the same bounded Wellspring
+    // operation synchronously so initial enumeration does not depend on a
+    // later sleep/wake cycle. On normal resume, the work item preserves the
+    // deferred/grace-window behavior that avoids turning a transient
+    // STATUS_NO_SUCH_DEVICE into an immediate PnP restart. Parented to the
+    // device like ReaderRestartTimer; runs at PASSIVE_LEVEL like every
+    // WDFWORKITEM callback by default, which AmtPtpSetWellspringMode's
+    // blocking control transfers require.
     WDFWORKITEM             WellspringInitWorkItem;
 
-    // Lifecycle generation this work item was queued for, and whether that
-    // D0Entry was resuming from D3Final (full power-off) or an ordinary
-    // D3 sleep - both written under D0ExitLock, immediately before
-    // WdfWorkItemEnqueue, by AmtPtpEvtDeviceD0Entry. AmtPtpEvtWellspringInitWorkItem
-    // re-reads both under D0ExitLock as part of the same
+    // Lifecycle generation associated with the Wellspring initialization,
+    // and whether that D0Entry was from D3Final (full/initial enumeration)
+    // or ordinary D3 sleep. Written under D0ExitLock by
+    // AmtPtpEvtDeviceD0Entry; the normal-resume path passes it to the work
+    // item, while the D3Final path uses it to guard the synchronous operation.
+    // AmtPtpEvtWellspringInitWorkItem re-reads both under D0ExitLock as part of
+    // the same
     // snapshot-then-revalidate-under-RecoveryLock shape AmtPtpEvtReaderRestartTimer
     // uses (see RecoveryGeneration below) - a stale callback from a D0
     // session that has already exited (or exited and re-entered again)
@@ -535,11 +527,10 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
 #define READER_RECOVERY_STEP_DELAY_MS 100
 
 // Bounded retries for the Wellspring mode-switch control transfer after a
-// full power-off (D3Final -> D0), where the device may not yet accept
-// control transfers in the first instant it is back in D0. Consumed by
-// AmtPtpEvtWellspringInitWorkItem (Device.c), not directly by D0Entry
-// itself - see the WellspringInitWorkItem field comment above for why the
-// call was moved out of D0Entry.
+// full power-off (D3Final -> D0). On the initial/full enumeration path the
+// retry loop runs synchronously in D0Entry after WdfIoTargetStart succeeds;
+// on normal D3 -> D0 resume the same budget is consumed by the deferred
+// WellspringInitWorkItem.
 #define WELLSPRING_MODE_D0ENTRY_MAX_ATTEMPTS       3
 #define WELLSPRING_MODE_D0ENTRY_RETRY_DELAY_MS_UNIT 50
 
