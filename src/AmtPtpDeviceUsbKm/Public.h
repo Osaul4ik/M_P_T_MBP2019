@@ -182,7 +182,7 @@ typedef struct _AMT_POINTER_CONFIG
 // driver clamps AND re-quantizes anything it receives (SET IOCTL or
 // registry) onto the same grid so a hand-crafted or corrupt value can't
 // land between steps.
-#define AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MIN   400
+#define AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MIN   200
 #define AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MAX  2000
 #define AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_STEP   50
 
