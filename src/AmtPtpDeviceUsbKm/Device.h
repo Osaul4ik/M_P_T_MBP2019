@@ -9,12 +9,21 @@
 EXTERN_C_START
 
 // Hold ordinary click reports until the press is classified.
+//
+// NOTE (emulation path only, SupportsForceTouch == FALSE): the "suppress
+// click" behavior of CLICK_ARBITRATION_FORCE_TOUCH below applies only to
+// the hardware (pressure-based) path. The emulation path has nothing to
+// arbitrate the ordinary click against - it reports ButtonDown directly,
+// every frame, regardless of this state (see PTPCore_ProcessFrame) - so
+// this state machine still tracks PENDING/FORCE_TOUCH/HARD_TAP for
+// emulation, but only to gate the *separate* force-touch context-menu
+// pulse, never the ordinary click.
 typedef enum _CLICK_ARBITRATION_STATE
 {
     CLICK_ARBITRATION_IDLE = 0,    // button not down
     CLICK_ARBITRATION_PENDING,     // button down, still deciding
     CLICK_ARBITRATION_HARD_TAP,    // decided: ordinary click - report it
-    CLICK_ARBITRATION_FORCE_TOUCH  // decided: force touch - suppress click
+    CLICK_ARBITRATION_FORCE_TOUCH  // decided: force touch (hardware: suppress click)
 } CLICK_ARBITRATION_STATE;
 
 // Synthetic right-click delivery for force-touch clicks.
@@ -215,6 +224,15 @@ typedef struct _DEVICE_CONTEXT
     USHORT  ForceTouchAnchorX;
     USHORT  ForceTouchAnchorY;
     BOOLEAN ForceTouchDragLockout;
+
+    // Emulation only: set the instant the hold-timer fires (edge-delivered
+    // that same frame - see PTPCore_ProcessFrame). Guards against also
+    // re-delivering the same click on the release frame, since
+    // ClickArbitrationState stays CLICK_ARBITRATION_FORCE_TOUCH from the
+    // firing frame all the way to release. Reset alongside
+    // ForceTouchAnchorValid/ForceTouchDragLockout. Always FALSE on the
+    // hardware (pressure-based) path.
+    BOOLEAN ForceTouchEmulationFired;
 
     // Force-touch click delivery state - see FORCE_TOUCH_DELIVERY_STATE
     // above for the full rationale.
