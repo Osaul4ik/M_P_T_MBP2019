@@ -258,9 +258,9 @@ namespace AmtPtpConfigGui
             {
                 Title = "Wellspring Control Center Settings",
                 Width = 540,
-                Height = 650,
+                Height = 700,
                 MinWidth = 500,
-                MinHeight = 600,
+                MinHeight = 680,
                 ResizeMode = ResizeMode.NoResize,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Owner = this,
@@ -324,32 +324,32 @@ namespace AmtPtpConfigGui
                 "Control how the application stays available and starts with Windows.");
             var behaviorPanel = (StackPanel)behaviorCard.Tag!;
             var behaviorRows = new Grid();
-            behaviorRows.RowDefinitions.Add(new RowDefinition { Height = new GridLength(32) });
-            behaviorRows.RowDefinitions.Add(new RowDefinition { Height = new GridLength(32) });
+            behaviorRows.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            behaviorRows.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             var closeToTray = new System.Windows.Controls.Primitives.ToggleButton
             {
                 Content = "Minimize to tray when closing",
                 IsChecked = _appSettings.CloseToTray,
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
-                VerticalAlignment = System.Windows.VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 0, 4)
+                VerticalAlignment = System.Windows.VerticalAlignment.Stretch,
+                Margin = new Thickness(0, 0, 8, 0)
             };
             closeToTray.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidToggle");
             closeToTray.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TextPrimaryBrush");
-            Grid.SetRow(closeToTray, 0);
+            Grid.SetColumn(closeToTray, 0);
 
             var startup = new System.Windows.Controls.Primitives.ToggleButton
             {
                 Content = "Start the GUI with Windows",
                 IsChecked = _appSettings.StartWithWindows,
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
-                VerticalAlignment = System.Windows.VerticalAlignment.Center,
-                Margin = new Thickness(0, 4, 0, 0)
+                VerticalAlignment = System.Windows.VerticalAlignment.Stretch,
+                Margin = new Thickness(8, 0, 0, 0)
             };
             startup.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidToggle");
             startup.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TextPrimaryBrush");
-            Grid.SetRow(startup, 1);
+            Grid.SetColumn(startup, 1);
 
             behaviorRows.Children.Add(closeToTray);
             behaviorRows.Children.Add(startup);
@@ -510,17 +510,27 @@ namespace AmtPtpConfigGui
             backupPanel.Children.Add(backupButtons);
             content.Children.Add(backupCard);
 
-            var footer = new DockPanel { LastChildFill = false, Margin = new Thickness(0, 16, 0, 0) };
+            var footer = new Grid { Margin = new Thickness(0, 12, 0, 0) };
+            footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var footerHint = new TextBlock
             {
                 Text = "Changes are committed when you press Save; Cancel restores the previous theme.",
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
-                FontSize = 11
+                TextAlignment = TextAlignment.Center,
+                FontSize = 11,
+                Margin = new Thickness(0, 0, 0, 10)
             };
             footerHint.SetResourceReference(TextBlock.ForegroundProperty, "TextTertiaryBrush");
-            DockPanel.SetDock(footerHint, Dock.Left);
+            Grid.SetRow(footerHint, 0);
             footer.Children.Add(footerHint);
-            var footerButtons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
+
+            var footerButtons = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Right
+            };
             var cancel = new Button
             {
                 Content = "Cancel",
@@ -538,8 +548,9 @@ namespace AmtPtpConfigGui
             };
             footerButtons.Children.Add(cancel);
             footerButtons.Children.Add(save);
-            DockPanel.SetDock(footerButtons, Dock.Right);
+            Grid.SetRow(footerButtons, 1);
             footer.Children.Add(footerButtons);
+
             Grid.SetRow(footer, 1);
             root.Children.Add(footer);
 
