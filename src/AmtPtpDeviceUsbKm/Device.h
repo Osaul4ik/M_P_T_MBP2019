@@ -229,8 +229,12 @@ typedef struct _DEVICE_CONTEXT
     // that same frame - see PTPCore_ProcessFrame). Guards against also
     // re-delivering the same click on the release frame, since
     // ClickArbitrationState stays CLICK_ARBITRATION_FORCE_TOUCH from the
-    // firing frame all the way to release. Reset alongside
-    // ForceTouchAnchorValid/ForceTouchDragLockout. Always FALSE on the
+    // firing frame all the way to release. Reset on release (the
+    // ClickArbitrationState -> IDLE transition), deliberately NOT alongside
+    // ForceTouchAnchorValid/ForceTouchDragLockout - those reset earlier in
+    // frame processing than releaseWasForceTouch reads this flag, so
+    // resetting it there cleared it a section too soon and caused a second,
+    // spurious force-touch delivery on release. Always FALSE on the
     // hardware (pressure-based) path.
     BOOLEAN ForceTouchEmulationFired;
 

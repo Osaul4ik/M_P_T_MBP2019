@@ -651,9 +651,8 @@ PTPCore_ProcessFrame(
     USHORT framePeakPressure = 0;
 
     if (!ButtonDown) {
-        pCtx->ForceTouchAnchorValid    = FALSE;
-        pCtx->ForceTouchDragLockout    = FALSE;
-        pCtx->ForceTouchEmulationFired = FALSE;
+        pCtx->ForceTouchAnchorValid = FALSE;
+        pCtx->ForceTouchDragLockout = FALSE;
     } else {
         // AUDIT FIX: previously gated on buttonClickEdge, the anchor was
         // never armed if the edge frame reported zero contacts (mechanical
@@ -738,7 +737,8 @@ PTPCore_ProcessFrame(
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
             releasedFastClick = TRUE;
         }
-        pCtx->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
+        pCtx->ClickArbitrationState    = CLICK_ARBITRATION_IDLE;
+        pCtx->ForceTouchEmulationFired = FALSE;
     } else {
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_IDLE) {
             pCtx->ClickArbitrationState         = CLICK_ARBITRATION_PENDING;
