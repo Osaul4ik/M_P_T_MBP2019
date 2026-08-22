@@ -1448,7 +1448,7 @@
                                         <TextBlock Style="{StaticResource SliderLabel}" Text="Hold duration" ToolTip="How long a Hard Tap must be held before the emulated Force Touch action fires. Releasing earlier than this behaves as an ordinary click."/>
                                         <TextBlock x:Name="LblForceTouchEmulationHoldMs" Grid.Column="1" Style="{StaticResource SliderValue}"/>
                                     </Grid>
-                                    <Slider x:Name="SlForceTouchEmulationHoldMs" Minimum="400" Maximum="2000" SmallChange="50" LargeChange="50" IsSnapToTickEnabled="True" TickFrequency="50" ValueChanged="PointerSlider_Changed"/>
+                                    <Slider x:Name="SlForceTouchEmulationHoldMs" Minimum="200" Maximum="2000" SmallChange="50" LargeChange="50" IsSnapToTickEnabled="True" TickFrequency="50" ValueChanged="PointerSlider_Changed"/>
                                     <TextBlock Style="{StaticResource HintText}" Margin="0,8,0,0" Text="Available only on trackpads without hardware Force Touch (no pressure sensor). This does not change or interfere with real Force Touch hardware."/>
                                 </StackPanel>
                             </GroupBox>

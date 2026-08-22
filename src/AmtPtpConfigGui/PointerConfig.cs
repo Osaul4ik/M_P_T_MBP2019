@@ -36,7 +36,7 @@ namespace AmtPtpConfigGui.Native
         public const uint ThresholdMin = 200;
         public const uint ThresholdMax = 400;
         public const uint ActionMax = 2;
-        public const uint EmulationHoldMsMin = 400;
+        public const uint EmulationHoldMsMin = 200;
         public const uint EmulationHoldMsMax = 2000;
         public const uint EmulationHoldMsStep = 50;
 

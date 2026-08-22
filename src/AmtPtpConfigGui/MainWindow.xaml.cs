@@ -918,6 +918,34 @@ namespace AmtPtpConfigGui
                         requireM.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ToggleSmallContactStrictFromTray));
                         menu.Items.Add(requireM);
                     }
+
+                    // Force Touch emulation: same idea as the hardware Force Touch
+                    // block below, but for trackpads with no pressure sensor - hold
+                    // a Hard Tap for the configured duration instead of a pressure
+                    // threshold. Mutually exclusive with the hardware block since
+                    // both are gated on _forceTouchSupported / !_forceTouchSupported.
+                    bool forceTouchEmulationOn = pointerCfg.ForceTouchEmulationEnabled != 0;
+
+                    var forceTouchEmulation = new Forms.ToolStripMenuItem("Force Touch emulation")
+                    {
+                        Checked = forceTouchEmulationOn,
+                        Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
+                        ToolTipText = "On trackpads with no pressure sensor, hold a Hard Tap for the configured duration to trigger a Force Touch action."
+                    };
+                    forceTouchEmulation.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ToggleForceTouchEmulationFromTray));
+
+                    var emulationActionMenu = new RoundedMenuItem("Force Touch emulation action")
+                    {
+                        Enabled = forceTouchEmulationOn,
+                        Padding = new System.Windows.Forms.Padding(10, 7, 10, 7),
+                        ToolTipText = "Choose what a held Hard Tap sends: context menu, middle click, or double click."
+                    };
+                    AddTrayEmulationActionItem(emulationActionMenu, "Context menu", PointerConfig.ActionContextMenu, pointerCfg.ForceTouchEmulationAction);
+                    AddTrayEmulationActionItem(emulationActionMenu, "Middle mouse button", PointerConfig.ActionMiddleClick, pointerCfg.ForceTouchEmulationAction);
+                    AddTrayEmulationActionItem(emulationActionMenu, "Double click", PointerConfig.ActionDoubleClick, pointerCfg.ForceTouchEmulationAction);
+
+                    menu.Items.Add(forceTouchEmulation);
+                    menu.Items.Add(emulationActionMenu);
                 }
 
                 // Force Touch controls now live directly in the main menu instead of
@@ -1003,6 +1031,17 @@ namespace AmtPtpConfigGui
             parent.DropDownItems.Add(item);
         }
 
+        private void AddTrayEmulationActionItem(Forms.ToolStripMenuItem parent, string text, uint action, uint current)
+        {
+            var item = new Forms.ToolStripMenuItem(text)
+            {
+                Checked = current == action,
+                Padding = new System.Windows.Forms.Padding(10, 7, 10, 7)
+            };
+            item.Click += (_, _) => Dispatcher.BeginInvoke(new Action(() => SetForceTouchEmulationActionFromTray(action)));
+            parent.DropDownItems.Add(item);
+        }
+
         private void ToggleForceTouchFromTray()
         {
             ChkForceTouchEnabled.IsChecked = ChkForceTouchEnabled.IsChecked != true;
@@ -1034,6 +1073,13 @@ namespace AmtPtpConfigGui
         private void ToggleSmallContactStrictFromTray()
         {
             ChkSmallContactRejectionStrict.IsChecked = ChkSmallContactRejectionStrict.IsChecked != true;
+            Save_Click(this, new RoutedEventArgs());
+            RefreshTrayMenu();
+        }
+
+        private void ToggleForceTouchEmulationFromTray()
+        {
+            ChkForceTouchEmulationEnabled.IsChecked = ChkForceTouchEmulationEnabled.IsChecked != true;
             Save_Click(this, new RoutedEventArgs());
             RefreshTrayMenu();
         }
@@ -1074,6 +1120,23 @@ namespace AmtPtpConfigGui
                 RbActionContextMenu.IsChecked = action == PointerConfig.ActionContextMenu;
                 RbActionMiddleClick.IsChecked = action == PointerConfig.ActionMiddleClick;
                 RbActionDoubleClick.IsChecked = action == PointerConfig.ActionDoubleClick;
+            }
+            finally
+            {
+                _suppressPointerEvents = false;
+            }
+            Save_Click(this, new RoutedEventArgs());
+            RefreshTrayMenu();
+        }
+
+        private void SetForceTouchEmulationActionFromTray(uint action)
+        {
+            _suppressPointerEvents = true;
+            try
+            {
+                RbEmulationActionContextMenu.IsChecked = action == PointerConfig.ActionContextMenu;
+                RbEmulationActionMiddleClick.IsChecked = action == PointerConfig.ActionMiddleClick;
+                RbEmulationActionDoubleClick.IsChecked = action == PointerConfig.ActionDoubleClick;
             }
             finally
             {
