@@ -344,8 +344,8 @@ namespace AmtPtpConfigGui
             {
                 Content = "Minimize to tray",
                 IsChecked = _appSettings.CloseToTray,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
-                VerticalAlignment = System.Windows.VerticalAlignment.Stretch,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+                VerticalAlignment = System.Windows.VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0)
             };
             closeToTray.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidToggle");
@@ -356,8 +356,8 @@ namespace AmtPtpConfigGui
             {
                 Content = "Start the GUI with Windows",
                 IsChecked = _appSettings.StartWithWindows,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
-                VerticalAlignment = System.Windows.VerticalAlignment.Stretch,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+                VerticalAlignment = System.Windows.VerticalAlignment.Center,
                 Margin = new Thickness(8, 0, 0, 0)
             };
             startup.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidToggle");
