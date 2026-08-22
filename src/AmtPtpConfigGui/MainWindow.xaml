@@ -1090,20 +1090,21 @@
             </Border>
 
             <Border Grid.Column="2" Style="{StaticResource Card}" Padding="14,10">
-                <!-- Was a 2x "*" column Grid, which stretched each switch across
-                     half the card and pushed the two tracks far apart. A tightly
-                     packed StackPanel with a fixed gap keeps Pro Mode / Debug
-                     Logging the same natural size as the Live switch and the
-                     spacing between them small and constant regardless of card width. -->
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <CheckBox x:Name="ChkProMode" Content="Pro Mode" Style="{StaticResource AndroidSwitch}"
-                              VerticalAlignment="Center"
+                <!-- Pro Mode pinned to the left edge, Debug Logging pinned to the
+                     right edge - opposite ends of the card, not next to each other. -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <CheckBox x:Name="ChkProMode" Grid.Column="0" Content="Pro Mode" Style="{StaticResource AndroidSwitch}"
+                              HorizontalAlignment="Left" VerticalAlignment="Center"
                               Checked="ProMode_Changed" Unchecked="ProMode_Changed"/>
-                    <CheckBox x:Name="ChkDebugMode" Content="Debug Logging" Style="{StaticResource AndroidSwitch}"
-                              VerticalAlignment="Center" Margin="16,0,0,0" Visibility="Collapsed"
+                    <CheckBox x:Name="ChkDebugMode" Grid.Column="1" Content="Debug Logging" Style="{StaticResource AndroidSwitch}"
+                              HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed"
                               Checked="DebugMode_Changed" Unchecked="DebugMode_Changed"
                               ToolTip="Turns on the driver's [AmtPtp] trace output (view with Sysinternals DebugView, run as admin, Capture Kernel + Enable Verbose Kernel Output). Persists across reboot/replug; off by default."/>
-                </StackPanel>
+                </Grid>
             </Border>
         </Grid>
 
@@ -1123,7 +1124,7 @@
 
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <CheckBox x:Name="ChkLive" Style="{StaticResource AndroidSwitch}" Content="Live"
-                                  Width="108" Height="28" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                  HorizontalAlignment="Left" VerticalAlignment="Center"
                                   Checked="Live_Changed" Unchecked="Live_Changed"/>
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
                             <Ellipse x:Name="LiveDot" Width="7" Height="7" Fill="{DynamicResource StatusIdleBrush}" VerticalAlignment="Center"/>

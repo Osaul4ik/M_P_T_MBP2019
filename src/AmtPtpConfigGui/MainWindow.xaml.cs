@@ -342,7 +342,7 @@ namespace AmtPtpConfigGui
 
             var closeToTray = new System.Windows.Controls.Primitives.ToggleButton
             {
-                Content = "Minimize to tray when closing",
+                Content = "Minimize to tray",
                 IsChecked = _appSettings.CloseToTray,
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
                 VerticalAlignment = System.Windows.VerticalAlignment.Stretch,
