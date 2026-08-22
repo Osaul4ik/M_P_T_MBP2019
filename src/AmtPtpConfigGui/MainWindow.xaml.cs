@@ -323,37 +323,42 @@ namespace AmtPtpConfigGui
                 "Behavior",
                 "Control how the application stays available and starts with Windows.");
             var behaviorPanel = (StackPanel)behaviorCard.Tag!;
-            var closeToTray = new CheckBox
+            var behaviorRows = new Grid();
+            behaviorRows.RowDefinitions.Add(new RowDefinition { Height = new GridLength(32) });
+            behaviorRows.RowDefinitions.Add(new RowDefinition { Height = new GridLength(32) });
+
+            var closeToTray = new System.Windows.Controls.Primitives.ToggleButton
             {
                 Content = "Minimize to tray when closing",
                 IsChecked = _appSettings.CloseToTray,
-                Width = 300,
-                Height = 28,
-                Margin = new Thickness(0, 0, 0, 8),
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
-                VerticalAlignment = System.Windows.VerticalAlignment.Center
+                VerticalAlignment = System.Windows.VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 4)
             };
-            closeToTray.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidSwitch");
+            closeToTray.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidToggle");
             closeToTray.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TextPrimaryBrush");
-            var startup = new CheckBox
+            Grid.SetRow(closeToTray, 0);
+
+            var startup = new System.Windows.Controls.Primitives.ToggleButton
             {
                 Content = "Start the GUI with Windows",
                 IsChecked = _appSettings.StartWithWindows,
-                Width = 300,
-                Height = 28,
-                Margin = new Thickness(0, 0, 0, 8),
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
-                VerticalAlignment = System.Windows.VerticalAlignment.Center
+                VerticalAlignment = System.Windows.VerticalAlignment.Center,
+                Margin = new Thickness(0, 4, 0, 0)
             };
-            startup.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidSwitch");
+            startup.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidToggle");
             startup.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TextPrimaryBrush");
-            behaviorPanel.Children.Add(closeToTray);
-            behaviorPanel.Children.Add(startup);
+            Grid.SetRow(startup, 1);
+
+            behaviorRows.Children.Add(closeToTray);
+            behaviorRows.Children.Add(startup);
+            behaviorPanel.Children.Add(behaviorRows);
             content.Children.Add(behaviorCard);
 
             var themeCard = MakeCard(
                 "Appearance",
-                "Choose the palette preview. The selected theme is applied after Save.");
+                "Choose the palette preview. The selected theme is kept when you press Save.");
             var themePanel = (StackPanel)themeCard.Tag!;
             var themeButtons = new StackPanel
             {
@@ -466,6 +471,8 @@ namespace AmtPtpConfigGui
                     button.Click += (_, _) =>
                     {
                         selectedTheme = theme.Id;
+                        ThemeManager.Apply(selectedTheme, Resources);
+                        dialog.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "PageBrush");
                         UpdateThemePreview();
                     };
                     themeButtons.Children.Add(button);
@@ -480,7 +487,7 @@ namespace AmtPtpConfigGui
                 "Backup & restore",
                 "Export all profiles and application settings to one file, or restore a previous backup.");
             var backupPanel = (StackPanel)backupCard.Tag!;
-            var backupButtons = new StackPanel { Orientation = Orientation.Horizontal };
+            var backupButtons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Center };
             var exportBackup = new Button
             {
                 Content = "Export backup...",
@@ -506,7 +513,7 @@ namespace AmtPtpConfigGui
             var footer = new DockPanel { LastChildFill = false, Margin = new Thickness(0, 16, 0, 0) };
             var footerHint = new TextBlock
             {
-                Text = "Changes are saved only when you press Save.",
+                Text = "Changes are committed when you press Save; Cancel restores the previous theme.",
                 VerticalAlignment = VerticalAlignment.Center,
                 FontSize = 11
             };
@@ -2693,12 +2700,14 @@ namespace AmtPtpConfigGui
             if (viewer == null)
                 return;
 
-            // One mouse-wheel notch = a deliberately small movement.
-            // WPF's default line/page behavior is too aggressive for this dense settings UI.
-            // Increased from 18.0 by 50% - the original rate felt sluggish.
+            // Keep the normal mouse-wheel rate unchanged, but make smooth/high-resolution
+            // trackpad wheel events 30% faster. Precision touchpads typically report
+            // fractional/sub-notch deltas, while a conventional mouse reports 120 per notch.
             const double pixelsPerNotch = 27.0;
+            bool highResolutionInput = Math.Abs(e.Delta) < System.Windows.Input.Mouse.MouseWheelDeltaForOneLine;
+            double multiplier = highResolutionInput ? 1.30 : 1.0;
             double notches = e.Delta / (double)System.Windows.Input.Mouse.MouseWheelDeltaForOneLine;
-            viewer.ScrollToVerticalOffset(viewer.VerticalOffset - notches * pixelsPerNotch);
+            viewer.ScrollToVerticalOffset(viewer.VerticalOffset - notches * pixelsPerNotch * multiplier);
             e.Handled = true;
         }
 
