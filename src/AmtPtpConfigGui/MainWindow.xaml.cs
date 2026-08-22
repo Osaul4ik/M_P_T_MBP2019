@@ -258,9 +258,9 @@ namespace AmtPtpConfigGui
             {
                 Title = "Wellspring Control Center Settings",
                 Width = 540,
-                Height = 700,
+                SizeToContent = SizeToContent.Height,
                 MinWidth = 500,
-                MinHeight = 680,
+                MaxHeight = 640,
                 ResizeMode = ResizeMode.NoResize,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Owner = this,
@@ -269,16 +269,29 @@ namespace AmtPtpConfigGui
                 FontFamily = new FontFamily("Segoe UI Variable Text, Segoe UI"),
                 FontSize = 13
             };
+            // This dialog is a standalone Window, not part of MainWindow's visual
+            // tree, so DynamicResource/StaticResource lookups (AndroidToggle,
+            // PageBrush, CardBrush, ThemePreviewButton, ...) would otherwise fall
+            // through to the (empty) Application resources and silently render
+            // with default WPF chrome - e.g. the tray/startup toggles falling back
+            // to plain checkboxes instead of the app's switch style. Merging
+            // MainWindow's resource dictionary in fixes every lookup below at once.
+            dialog.Resources.MergedDictionaries.Add(Resources);
             dialog.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "PageBrush");
 
             var root = new Grid { Margin = new Thickness(22) };
-            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            // Was a "*" row: with a fixed-height window that made the ScrollViewer
+            // stretch to fill unused space, showing an empty gap below the cards.
+            // Now the window sizes to content (SizeToContent above) and the row
+            // sizes to content too, so the dialog is only as tall as it needs to be.
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             var scroll = new ScrollViewer
             {
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                MaxHeight = 520
             };
             var content = new StackPanel();
             scroll.Content = content;

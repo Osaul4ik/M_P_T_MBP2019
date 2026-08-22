@@ -1090,19 +1090,20 @@
             </Border>
 
             <Border Grid.Column="2" Style="{StaticResource Card}" Padding="14,10">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <CheckBox x:Name="ChkProMode" Grid.Column="0" Content="Pro Mode" Style="{StaticResource AndroidSwitch}"
-                              HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="0,0,8,0"
+                <!-- Was a 2x "*" column Grid, which stretched each switch across
+                     half the card and pushed the two tracks far apart. A tightly
+                     packed StackPanel with a fixed gap keeps Pro Mode / Debug
+                     Logging the same natural size as the Live switch and the
+                     spacing between them small and constant regardless of card width. -->
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <CheckBox x:Name="ChkProMode" Content="Pro Mode" Style="{StaticResource AndroidSwitch}"
+                              VerticalAlignment="Center"
                               Checked="ProMode_Changed" Unchecked="ProMode_Changed"/>
-                    <CheckBox x:Name="ChkDebugMode" Grid.Column="1" Content="Debug Logging" Style="{StaticResource AndroidSwitch}"
-                              HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="8,0,0,0" Visibility="Collapsed"
+                    <CheckBox x:Name="ChkDebugMode" Content="Debug Logging" Style="{StaticResource AndroidSwitch}"
+                              VerticalAlignment="Center" Margin="16,0,0,0" Visibility="Collapsed"
                               Checked="DebugMode_Changed" Unchecked="DebugMode_Changed"
                               ToolTip="Turns on the driver's [AmtPtp] trace output (view with Sysinternals DebugView, run as admin, Capture Kernel + Enable Verbose Kernel Output). Persists across reboot/replug; off by default."/>
-                </Grid>
+                </StackPanel>
             </Border>
         </Grid>
 
@@ -1396,7 +1397,7 @@
                                 </GroupBox.Header>
                                 <StackPanel>
                                     <CheckBox x:Name="ChkSmallContactRejection" Style="{StaticResource OptionCheckBox}" Margin="0,10,0,4" Content="Enable small-contact rejection" Checked="SmallContactRejectionOption_Changed" Unchecked="SmallContactRejectionOption_Changed" ToolTip="On trackpads without Force Touch, reject a new contact while Major is below 80 and Minor is below 60. Once it reaches Major 80 or Minor 60, that contact remains accepted until it is lifted."/>
-                                    <CheckBox x:Name="ChkSmallContactRejectionStrict" Style="{StaticResource OptionCheckBox}" Margin="22,0,0,8" Content="Require M:50/30 continuously" Visibility="Collapsed" ToolTip="While enabled, a non-Force-Touch contact is ignored on every frame unless Major is at least 50 AND Minor is at least 30. If either value drops below the threshold while you move, the contact is ignored until it qualifies again."/>
+                                    <CheckBox x:Name="ChkSmallContactRejectionStrict" Style="{StaticResource OptionCheckBox}" Margin="0,0,0,8" Content="Require M:50/30 continuously" Visibility="Collapsed" ToolTip="While enabled, a non-Force-Touch contact is ignored on every frame unless Major is at least 50 AND Minor is at least 30. If either value drops below the threshold while you move, the contact is ignored until it qualifies again."/>
                                     <TextBlock Style="{StaticResource HintText}" Text="Normal mode checks M only when a contact starts. Strict mode checks M on every frame and requires Major ≥ 50 AND Minor ≥ 30."/>
                                 </StackPanel>
                             </GroupBox>
@@ -1416,7 +1417,7 @@
                                     <Slider x:Name="SlForceTapThreshold" Minimum="200" Maximum="400" ValueChanged="PointerSlider_Changed"/>
                                     <CheckBox x:Name="ChkForceTouchEnabled" Style="{StaticResource OptionCheckBox}" Margin="0,10,0,4" Content="Enable Force Touch" Checked="ForceTouchOption_Changed" Unchecked="ForceTouchOption_Changed" ToolTip="Enables Force Touch click arbitration on trackpads that support it. On standard trackpads the driver ignores this setting."/>
                                     <CheckBox x:Name="ChkRequirePressure" Style="{StaticResource OptionCheckBox}" Margin="0,4,0,4" Content="Require pressure to activate contact" Checked="ForceTouchOption_Changed" Unchecked="ForceTouchOption_Changed" ToolTip="For Force Touch-capable trackpads, a brand-new contact with zero pressure is ignored until pressure becomes positive. Existing contacts are unaffected."/>
-                                    <CheckBox x:Name="ChkRequirePressureContinuously" Style="{StaticResource OptionCheckBox}" Margin="22,0,0,8" Content="Require pressure continuously" Visibility="Collapsed" ToolTip="For Force Touch-capable trackpads, a contact is ignored on every frame while pressure is zero. If pressure disappears while you move, the contact is treated as absent until pressure becomes positive again."/>
+                                    <CheckBox x:Name="ChkRequirePressureContinuously" Style="{StaticResource OptionCheckBox}" Margin="0,0,0,8" Content="Require pressure continuously" Visibility="Collapsed" ToolTip="For Force Touch-capable trackpads, a contact is ignored on every frame while pressure is zero. If pressure disappears while you move, the contact is treated as absent until pressure becomes positive again."/>
                                     <TextBlock Text="Force Tap action" Style="{StaticResource SliderLabel}" Margin="0,10,0,6" ToolTip="Action emitted when Force Touch is recognized. Choose the mouse action that best matches how you want a hard press to behave."/>
                                     <StackPanel>
                                         <RadioButton x:Name="RbActionContextMenu" Content="Context menu" GroupName="ForceTapAction" Margin="0,4" Checked="PointerAction_Changed" ToolTip="Open the context menu, equivalent to a right-click."/>
