@@ -616,7 +616,20 @@ PTPCore_ProcessFrame(
 
     AmtContactPoolCheckInvariants(pCtx->ActiveContacts);
 
-    if (!pCtx->SupportsForceTouch || !pCtx->PointerConfig.ForceTouchEnabled) {
+    // Force Touch is either real (pressure-based, hardware) or emulated
+    // (hold-duration-based, software - see AMT_POINTER_CONFIG.
+    // ForceTouchEmulationEnabled/ForceTouchEmulationHoldMs in Public.h).
+    // Emulation is gated on !SupportsForceTouch so it can NEVER activate
+    // on hardware that has a real pressure channel - forceTouchHardwareActive
+    // and forceTouchEmulationActive are mutually exclusive by construction,
+    // and a device with real hardware always takes the unmodified
+    // pressure-based path below, exactly as before this feature existed.
+    BOOLEAN forceTouchHardwareActive =
+        pCtx->SupportsForceTouch && pCtx->PointerConfig.ForceTouchEnabled;
+    BOOLEAN forceTouchEmulationActive =
+        !pCtx->SupportsForceTouch && pCtx->PointerConfig.ForceTouchEmulationEnabled;
+
+    if (!forceTouchHardwareActive && !forceTouchEmulationActive) {
         pCtx->ForceTouchAnchorValid = FALSE;
         pCtx->ForceTouchDragLockout = FALSE;
         pCtx->ClickArbitrationState = ButtonDown
@@ -728,36 +741,72 @@ PTPCore_ProcessFrame(
             // decided earlier this same press.
             pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
         } else if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
-            if (framePeakPressure > pCtx->ClickArbitrationPeakPressure) {
-                pCtx->ClickArbitrationPeakPressure = framePeakPressure;
-                // Still climbing - keep resetting the stall counter. Peak
-                // comparison is noise-robust (only moves up).
-                pCtx->ClickArbitrationStallFrames = 0;
-            } else if (pCtx->ClickArbitrationStallFrames < 255) {
-                pCtx->ClickArbitrationStallFrames++;
-            }
-
-            INT dropFromPeak = (INT)pCtx->ClickArbitrationPeakPressure -
-                                (INT)framePeakPressure;
-
-            if (framePeakPressure > pCtx->PointerConfig.ForceTapThreshold) {
-                pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
-            } else if (dropFromPeak >= CLICK_ARBITRATION_PRESSURE_HYSTERESIS) {
-                pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
-            } else if (pCtx->ClickArbitrationStallFrames >= CLICK_ARBITRATION_STALL_FRAMES_FAST_RESOLVE) {
-                // FIX (soft-press fast resolve): a flat/light press that has
-                // stopped growing for STALL_FRAMES_FAST_RESOLVE consecutive
-                // frames is never a force touch - resolve now instead of
-                // waiting out the full timeout.
-                pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
-            } else {
-                // Safety net: absolute wall-clock cap so a slow ramp that
-                // never stalls in a row still can't wait forever.
-                LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
-                LONGLONG timeoutTicks = pCtx->ClickArbitrationTimeoutTicks; // MICRO-OPT: cached at D0Entry
-                if (elapsedTicks >= timeoutTicks) {
-                    pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
+            if (forceTouchHardwareActive) {
+                if (framePeakPressure > pCtx->ClickArbitrationPeakPressure) {
+                    pCtx->ClickArbitrationPeakPressure = framePeakPressure;
+                    // Still climbing - keep resetting the stall counter. Peak
+                    // comparison is noise-robust (only moves up).
+                    pCtx->ClickArbitrationStallFrames = 0;
+                } else if (pCtx->ClickArbitrationStallFrames < 255) {
+                    pCtx->ClickArbitrationStallFrames++;
                 }
+
+                INT dropFromPeak = (INT)pCtx->ClickArbitrationPeakPressure -
+                                    (INT)framePeakPressure;
+
+                if (framePeakPressure > pCtx->PointerConfig.ForceTapThreshold) {
+                    pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
+                } else if (dropFromPeak >= CLICK_ARBITRATION_PRESSURE_HYSTERESIS) {
+                    pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
+                } else if (pCtx->ClickArbitrationStallFrames >= CLICK_ARBITRATION_STALL_FRAMES_FAST_RESOLVE) {
+                    // FIX (soft-press fast resolve): a flat/light press that has
+                    // stopped growing for STALL_FRAMES_FAST_RESOLVE consecutive
+                    // frames is never a force touch - resolve now instead of
+                    // waiting out the full timeout.
+                    pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
+                } else {
+                    // Safety net: absolute wall-clock cap so a slow ramp that
+                    // never stalls in a row still can't wait forever.
+                    LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
+                    LONGLONG timeoutTicks = pCtx->ClickArbitrationTimeoutTicks; // MICRO-OPT: cached at D0Entry
+                    if (elapsedTicks >= timeoutTicks) {
+                        pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
+                    }
+                }
+            } else {
+                // Force Touch emulation: this hardware has no pressure
+                // channel (framePeakPressure is meaningless here - always
+                // 0), so there is nothing to threshold against. Resolve
+                // purely on elapsed hold time since the Hard Tap
+                // (button-down) began: the software equivalent of the
+                // pressure ramp above, using the same PENDING/QPC state
+                // this FSM already carries (ClickArbitrationStartQpc,
+                // armed once on the IDLE->PENDING transition a few lines
+                // above - not a separate timer object).
+                //
+                // PENDING is simply held for as long as the press
+                // continues and ForceTouchEmulationHoldMs has not yet
+                // elapsed - released early, releasedFastClick below
+                // reports it as an ordinary click and nothing further
+                // happens (see AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_*
+                // in Public.h for the configurable 0.4s-2.0s range). There
+                // is no separate safety-net timeout here, unlike the
+                // hardware path's CLICK_ARBITRATION_TIMEOUT_MS: the
+                // configured hold duration already IS the bound, and it is
+                // always >= that 90ms safety net.
+                LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
+                LONGLONG holdTicks = (pCtx->PerfFrequency.QuadPart > 0)
+                    ? (pCtx->PerfFrequency.QuadPart *
+                       (LONGLONG)pCtx->PointerConfig.ForceTouchEmulationHoldMs) / 1000
+                    : 0;
+
+                if (holdTicks > 0 && elapsedTicks >= holdTicks) {
+                    pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
+                }
+                // else: keep waiting - PerfFrequency unavailable (holdTicks
+                // == 0) degrades to "never resolves early", i.e. always an
+                // ordinary Hard Tap on release, same fail-safe direction as
+                // every other PerfFrequency<=0 guard in this driver.
             }
         }
         // else: FORCE_TOUCH already latched and drag lockout hasn't tripped

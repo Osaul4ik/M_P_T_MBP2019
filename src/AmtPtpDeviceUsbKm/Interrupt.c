@@ -346,8 +346,18 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // under StateLock, matching every other ForceTouchDeliveryState/
     // PendingForceTouchClickCount mutation in this file.
     if (forceTouchClick) {
+        // PTPCore_ProcessFrame only ever latches CLICK_ARBITRATION_FORCE_TOUCH
+        // via the emulation (hold-duration) path when SupportsForceTouch is
+        // FALSE - real pressure-based hardware always takes the other branch
+        // (see PTPCore_ProcessFrame). So SupportsForceTouch alone is enough
+        // to tell which action config this particular click was arbitrated
+        // under, without PTPCore_ProcessFrame having to plumb an extra
+        // "which path fired" output just for this.
+        ULONG forceTapAction = pCtx->SupportsForceTouch
+            ? pCtx->PointerConfig.ForceTapAction
+            : pCtx->PointerConfig.ForceTouchEmulationAction;
         UCHAR clickCount =
-            (pCtx->PointerConfig.ForceTapAction == AMT_POINTER_ACTION_DOUBLE_CLICK)
+            (forceTapAction == AMT_POINTER_ACTION_DOUBLE_CLICK)
                 ? 2 : 1;
         AmtForceTouchClickEnqueue(pCtx, clickCount);
     }
@@ -562,7 +572,18 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
                 mouseReport.ReportID =
                     REPORTID_STANDARDMOUSE;
 
-                switch (pCtx->PointerConfig.ForceTapAction) {
+                // Same SupportsForceTouch-based action-config selection as
+                // the enqueue site above - this delivery pulse may be
+                // completing on a later interrupt than the one that
+                // enqueued it, so it re-derives the choice rather than
+                // trying to carry it through PendingForceTouchClickCount.
+                // SupportsForceTouch doesn't change at runtime, so both
+                // sites always agree on the same action for a given click.
+                ULONG deliveryForceTapAction = pCtx->SupportsForceTouch
+                    ? pCtx->PointerConfig.ForceTapAction
+                    : pCtx->PointerConfig.ForceTouchEmulationAction;
+
+                switch (deliveryForceTapAction) {
                 case AMT_POINTER_ACTION_MIDDLE_CLICK:
                     mouseReport.Button3 =
                         edgeButtonState ? 1 : 0;

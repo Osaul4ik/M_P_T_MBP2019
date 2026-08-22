@@ -56,6 +56,9 @@ EXTERN_C_START
 #define AMT_REG_VALUE_CURSOR_ALPHA_SLOW  L"PointerSmoothingAlphaNumSlow"
 #define AMT_REG_VALUE_SMALL_CONTACT_REJECTION L"PointerSmallContactRejectionEnabled"
 #define AMT_REG_VALUE_SMALL_CONTACT_REJECTION_STRICT L"PointerSmallContactRejectionStrict"
+#define AMT_REG_VALUE_FORCETOUCH_EMULATION_ENABLED L"PointerForceTouchEmulationEnabled"
+#define AMT_REG_VALUE_FORCETOUCH_EMULATION_ACTION  L"PointerForceTouchEmulationAction"
+#define AMT_REG_VALUE_FORCETOUCH_EMULATION_HOLD_MS L"PointerForceTouchEmulationHoldMs"
 
 #define AMT_REG_VALUE_SCROLL_SPEED       L"ScrollSpeed"
 #define AMT_REG_VALUE_SCROLL_FAST_SPEED  L"ScrollFastSpeed"

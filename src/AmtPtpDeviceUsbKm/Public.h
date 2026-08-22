@@ -101,9 +101,25 @@ typedef struct _AMT_POINTER_CONFIG
     // non-Force-Touch device, the Major/Minor gate is applied continuously:
     // every frame requires Major >= 50 AND Minor >= 30.
     ULONG SmallContactRejectionStrict;
+
+    // Software Force Touch emulation for trackpads with no hardware
+    // pressure channel (DEVICE_CONTEXT::SupportsForceTouch == FALSE - see
+    // that field's comment in Device.h). Meaningless (ignored by the
+    // driver) on real Force Touch hardware, exactly like
+    // SmallContactRejection* above is ignored once real pressure is
+    // available - see PTPCore_ProcessFrame in Ptpcore.c.
+    //
+    // Reuses the SAME CLICK_ARBITRATION_STATE machine as hardware Force
+    // Touch: a mechanical Hard Tap (button down) starts PENDING, and instead
+    // of a pressure threshold this path resolves PENDING -> FORCE_TOUCH once
+    // ForceTouchEmulationHoldMs has elapsed while the press is held - see
+    // Ptpcore.c for the resolution logic.
+    ULONG ForceTouchEmulationEnabled;
+    ULONG ForceTouchEmulationAction;    // one of AMT_POINTER_ACTION_*
+    ULONG ForceTouchEmulationHoldMs;    // hold duration to trigger, in ms
 } AMT_POINTER_CONFIG, *PAMT_POINTER_CONFIG;
 
-#define AMT_POINTER_CONFIG_VERSION 7
+#define AMT_POINTER_CONFIG_VERSION 8
 
 #define AMT_POINTER_SMOOTH_MIN       0
 #define AMT_POINTER_SMOOTH_MAX       100
@@ -148,7 +164,10 @@ typedef struct _AMT_POINTER_CONFIG
     8,                                                                      \
     3,                                                                      \
     1,                                                                      \
-    0                                                                       \
+    0,                                                                      \
+    0,                                                                      \
+    AMT_POINTER_ACTION_CONTEXT_MENU,                                        \
+    700                                                                     \
 }
 
 // Sane clamp range - raw pressure realistically spans ~0-300, so keep the
@@ -157,6 +176,15 @@ typedef struct _AMT_POINTER_CONFIG
 #define AMT_POINTER_THRESHOLD_MIN   200
 #define AMT_POINTER_THRESHOLD_MAX   400
 #define AMT_POINTER_ACTION_MAX        2   // highest valid AMT_POINTER_ACTION_* value
+
+// Force Touch emulation hold-duration range/step, in milliseconds. The GUI
+// slider is expected to only ever produce values on this 50ms grid; the
+// driver clamps AND re-quantizes anything it receives (SET IOCTL or
+// registry) onto the same grid so a hand-crafted or corrupt value can't
+// land between steps.
+#define AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MIN   400
+#define AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MAX  2000
+#define AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_STEP   50
 
 
 // ============================================================================

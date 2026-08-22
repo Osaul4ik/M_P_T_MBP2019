@@ -161,6 +161,27 @@ AmtPointerConfigClamp(_Inout_ PAMT_POINTER_CONFIG Config)
     Config->SmallContactRejectionStrict = Config->SmallContactRejectionStrict ? 1u : 0u;
     if (!Config->SmallContactRejectionEnabled)
         Config->SmallContactRejectionStrict = 0;
+
+    Config->ForceTouchEmulationEnabled = Config->ForceTouchEmulationEnabled ? 1u : 0u;
+    if (Config->ForceTouchEmulationAction > AMT_POINTER_ACTION_MAX)
+        Config->ForceTouchEmulationAction = AMT_POINTER_ACTION_CONTEXT_MENU;
+    Config->ForceTouchEmulationHoldMs = AmtClampULong(
+        Config->ForceTouchEmulationHoldMs,
+        AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MIN,
+        AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MAX);
+    // Re-quantize onto the 50ms grid the GUI slider uses - protects against
+    // an odd value arriving via a hand-crafted IOCTL or a hand-edited
+    // registry value, same rationale as every other clamp in this
+    // function. Round to nearest step rather than truncate.
+    Config->ForceTouchEmulationHoldMs =
+        ((Config->ForceTouchEmulationHoldMs + (AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_STEP / 2))
+            / AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_STEP)
+            * AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_STEP;
+    Config->ForceTouchEmulationHoldMs = AmtClampULong(
+        Config->ForceTouchEmulationHoldMs,
+        AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MIN,
+        AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MAX);
+
     Config->CursorSmoothingPercent = AmtClampULong(Config->CursorSmoothingPercent, AMT_POINTER_SMOOTH_MIN, AMT_POINTER_SMOOTH_MAX);
     Config->CursorSpeedPercent = AmtClampULong(Config->CursorSpeedPercent, AMT_POINTER_SPEED_MIN, AMT_POINTER_SPEED_MAX);
     Config->CursorDeadzone = AmtClampULong(Config->CursorDeadzone, AMT_POINTER_DEADZONE_MIN, AMT_POINTER_DEADZONE_MAX);
@@ -337,6 +358,9 @@ AmtPointerConfigLoadFromRegistry(
     AmtRegistryReadDword(key, AMT_REG_VALUE_CURSOR_ALPHA_SLOW,  &Config->SmoothingAlphaNumSlow);
     AmtRegistryReadDword(key, AMT_REG_VALUE_SMALL_CONTACT_REJECTION, &Config->SmallContactRejectionEnabled);
     AmtRegistryReadDword(key, AMT_REG_VALUE_SMALL_CONTACT_REJECTION_STRICT, &Config->SmallContactRejectionStrict);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_ENABLED, &Config->ForceTouchEmulationEnabled);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_ACTION,  &Config->ForceTouchEmulationAction);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_HOLD_MS, &Config->ForceTouchEmulationHoldMs);
 
     WdfRegistryClose(key);
 
@@ -379,6 +403,9 @@ AmtPointerConfigSaveToRegistry(
     AmtRegistryWriteDword(key, AMT_REG_VALUE_CURSOR_ALPHA_SLOW,  Config->SmoothingAlphaNumSlow);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_SMALL_CONTACT_REJECTION, Config->SmallContactRejectionEnabled);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_SMALL_CONTACT_REJECTION_STRICT, Config->SmallContactRejectionStrict);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_ENABLED, Config->ForceTouchEmulationEnabled);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_ACTION,  Config->ForceTouchEmulationAction);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_HOLD_MS, Config->ForceTouchEmulationHoldMs);
 
     WdfRegistryClose(key);
 }

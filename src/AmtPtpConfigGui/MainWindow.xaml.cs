@@ -747,6 +747,13 @@ namespace AmtPtpConfigGui
 
                 if (cfg.StructVersion < 7)
                     cfg.RequirePressureContinuously = defaults.RequirePressureContinuously;
+
+                if (cfg.StructVersion < 8)
+                {
+                    cfg.ForceTouchEmulationEnabled = defaults.ForceTouchEmulationEnabled;
+                    cfg.ForceTouchEmulationAction = defaults.ForceTouchEmulationAction;
+                    cfg.ForceTouchEmulationHoldMs = defaults.ForceTouchEmulationHoldMs;
+                }
             }
 
             return cfg.Clamped();
@@ -1390,6 +1397,8 @@ namespace AmtPtpConfigGui
 
             if (ForceTouchGroup != null)
                 ForceTouchGroup.Visibility = _forceTouchSupported ? Visibility.Visible : Visibility.Collapsed;
+            if (ForceTouchEmulationGroup != null)
+                ForceTouchEmulationGroup.Visibility = _forceTouchSupported ? Visibility.Collapsed : Visibility.Visible;
             if (SmallContactRejectionGroup != null)
                 SmallContactRejectionGroup.Visibility = _forceTouchSupported ? Visibility.Collapsed : Visibility.Visible;
             if (ChkSmallContactRejectionStrict != null)
@@ -2187,6 +2196,22 @@ namespace AmtPtpConfigGui
                 RbActionContextMenu.IsChecked = ReferenceEquals(selected, RbActionContextMenu);
                 RbActionMiddleClick.IsChecked = ReferenceEquals(selected, RbActionMiddleClick);
                 RbActionDoubleClick.IsChecked = ReferenceEquals(selected, RbActionDoubleClick);
+
+                ChkForceTouchEmulationEnabled.IsChecked = cfg.ForceTouchEmulationEnabled != 0;
+                SlForceTouchEmulationHoldMs.Value = cfg.ForceTouchEmulationHoldMs;
+                RadioButton selectedEmulation = cfg.ForceTouchEmulationAction switch
+                {
+                    PointerConfig.ActionMiddleClick => RbEmulationActionMiddleClick,
+                    PointerConfig.ActionDoubleClick => RbEmulationActionDoubleClick,
+                    _ => RbEmulationActionContextMenu,
+                };
+                RbEmulationActionContextMenu.IsChecked = ReferenceEquals(selectedEmulation, RbEmulationActionContextMenu);
+                RbEmulationActionMiddleClick.IsChecked = ReferenceEquals(selectedEmulation, RbEmulationActionMiddleClick);
+                RbEmulationActionDoubleClick.IsChecked = ReferenceEquals(selectedEmulation, RbEmulationActionDoubleClick);
+                bool emulationEnabled = cfg.ForceTouchEmulationEnabled != 0;
+                ForceTouchEmulationActionPanel.IsEnabled = emulationEnabled;
+                ForceTouchEmulationHoldRow.IsEnabled = emulationEnabled;
+                SlForceTouchEmulationHoldMs.IsEnabled = emulationEnabled;
             }
             finally { _suppressPointerEvents = false; }
             UpdatePointerLabels();
@@ -2217,6 +2242,12 @@ namespace AmtPtpConfigGui
                 RbActionMiddleClick.IsChecked == true ? PointerConfig.ActionMiddleClick :
                 RbActionDoubleClick.IsChecked == true ? PointerConfig.ActionDoubleClick :
                 PointerConfig.ActionContextMenu;
+            c.ForceTouchEmulationEnabled = ChkForceTouchEmulationEnabled.IsChecked == true ? 1u : 0u;
+            c.ForceTouchEmulationHoldMs = (uint)SlForceTouchEmulationHoldMs.Value;
+            c.ForceTouchEmulationAction =
+                RbEmulationActionMiddleClick.IsChecked == true ? PointerConfig.ActionMiddleClick :
+                RbEmulationActionDoubleClick.IsChecked == true ? PointerConfig.ActionDoubleClick :
+                PointerConfig.ActionContextMenu;
             return c.Clamped();
         }
 
@@ -2233,6 +2264,7 @@ namespace AmtPtpConfigGui
             LblCursorFastVelocity.Text = $"{SlCursorFastVelocity.Value:0}";
             LblSmoothingAlphaDen.Text = $"{SlSmoothingAlphaDen.Value:0}";
             LblSmoothingAlphaNumSlow.Text = $"{SlSmoothingAlphaNumSlow.Value:0}";
+            LblForceTouchEmulationHoldMs.Text = $"{SlForceTouchEmulationHoldMs.Value / 1000.0:0.00} s";
         }
 
         private void PointerSlider_Changed(object sender, RoutedEventArgs e)
@@ -2258,6 +2290,20 @@ namespace AmtPtpConfigGui
             ChkRequirePressureContinuously.IsEnabled = enabled;
             ChkRequirePressureContinuously.Visibility =
                 enabled ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void ForceTouchEmulationOption_Changed(object sender, RoutedEventArgs e)
+        {
+            if (ChkForceTouchEmulationEnabled == null ||
+                ForceTouchEmulationActionPanel == null ||
+                ForceTouchEmulationHoldRow == null ||
+                SlForceTouchEmulationHoldMs == null)
+                return;
+
+            bool enabled = ChkForceTouchEmulationEnabled.IsChecked == true;
+            ForceTouchEmulationActionPanel.IsEnabled = enabled;
+            ForceTouchEmulationHoldRow.IsEnabled = enabled;
+            SlForceTouchEmulationHoldMs.IsEnabled = enabled;
         }
 
         private void SmallContactRejectionOption_Changed(object sender, RoutedEventArgs e)

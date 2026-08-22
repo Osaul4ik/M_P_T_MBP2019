@@ -23,13 +23,22 @@ namespace AmtPtpConfigGui.Native
         public uint SmallContactRejectionEnabled;
         public uint SmallContactRejectionStrict;
 
-        public const uint CurrentVersion = 7;
+        // Software Force Touch emulation (non-Force-Touch trackpads only -
+        // see the matching AMT_POINTER_CONFIG fields in Public.h).
+        public uint ForceTouchEmulationEnabled;
+        public uint ForceTouchEmulationAction;
+        public uint ForceTouchEmulationHoldMs;
+
+        public const uint CurrentVersion = 8;
         public const uint ActionContextMenu = 0;
         public const uint ActionMiddleClick = 1;
         public const uint ActionDoubleClick = 2;
         public const uint ThresholdMin = 200;
         public const uint ThresholdMax = 400;
         public const uint ActionMax = 2;
+        public const uint EmulationHoldMsMin = 400;
+        public const uint EmulationHoldMsMax = 2000;
+        public const uint EmulationHoldMsStep = 50;
 
         public static PointerConfig Default => new PointerConfig
         {
@@ -50,6 +59,9 @@ namespace AmtPtpConfigGui.Native
             SmoothingAlphaNumSlow = 3,
             SmallContactRejectionEnabled = 1,
             SmallContactRejectionStrict = 0,
+            ForceTouchEmulationEnabled = 0,
+            ForceTouchEmulationAction = ActionContextMenu,
+            ForceTouchEmulationHoldMs = 700,
         };
 
         public PointerConfig Clamped()
@@ -76,6 +88,15 @@ namespace AmtPtpConfigGui.Native
             c.SmoothingAlphaDen = Clamp(c.SmoothingAlphaDen, 1, 16);
             c.SmoothingAlphaNumSlow = Clamp(c.SmoothingAlphaNumSlow, 1, 16);
             if (c.SmoothingAlphaNumSlow > c.SmoothingAlphaDen) c.SmoothingAlphaNumSlow = c.SmoothingAlphaDen;
+
+            c.ForceTouchEmulationEnabled = c.ForceTouchEmulationEnabled != 0 ? 1u : 0u;
+            if (c.ForceTouchEmulationAction > ActionMax) c.ForceTouchEmulationAction = ActionContextMenu;
+            c.ForceTouchEmulationHoldMs = Clamp(c.ForceTouchEmulationHoldMs, EmulationHoldMsMin, EmulationHoldMsMax);
+            // Re-quantize onto the 50ms grid the slider uses.
+            c.ForceTouchEmulationHoldMs =
+                ((c.ForceTouchEmulationHoldMs + EmulationHoldMsStep / 2) / EmulationHoldMsStep) * EmulationHoldMsStep;
+            c.ForceTouchEmulationHoldMs = Clamp(c.ForceTouchEmulationHoldMs, EmulationHoldMsMin, EmulationHoldMsMax);
+
             return c;
         }
 
