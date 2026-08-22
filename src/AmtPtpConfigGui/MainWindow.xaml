@@ -521,7 +521,7 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="40"/>
                             </Grid.ColumnDefinitions>
-                            <ContentPresenter Grid.Column="0" VerticalAlignment="Center" Margin="0"/>
+                            <ContentPresenter Grid.Column="0" VerticalAlignment="Center" Margin="0,0,6,0"/>
                             <Border x:Name="Track" Grid.Column="1" Width="40" Height="24"
                                     CornerRadius="12" Background="{DynamicResource ControlFillBrush}"
                                     BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"
@@ -568,7 +568,7 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="40"/>
                             </Grid.ColumnDefinitions>
-                            <ContentPresenter Grid.Column="0" VerticalAlignment="Center" Margin="0"/>
+                            <ContentPresenter Grid.Column="0" VerticalAlignment="Center" Margin="0,0,6,0"/>
                             <Border x:Name="Track" Grid.Column="1" Width="40" Height="24"
                                     CornerRadius="12" Background="{DynamicResource ControlFillBrush}"
                                     BorderBrush="{DynamicResource ControlStrokeBrush}" BorderThickness="1"

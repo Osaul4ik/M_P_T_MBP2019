@@ -327,7 +327,7 @@ namespace AmtPtpConfigGui
             behaviorRows.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             behaviorRows.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            var closeToTray = new System.Windows.Controls.CheckBox
+            var closeToTray = new System.Windows.Controls.Primitives.ToggleButton
             {
                 Content = "Minimize to tray when closing",
                 IsChecked = _appSettings.CloseToTray,
@@ -335,11 +335,11 @@ namespace AmtPtpConfigGui
                 VerticalAlignment = System.Windows.VerticalAlignment.Stretch,
                 Margin = new Thickness(0, 0, 8, 0)
             };
-            closeToTray.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidSwitch");
+            closeToTray.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidToggle");
             closeToTray.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TextPrimaryBrush");
             Grid.SetColumn(closeToTray, 0);
 
-            var startup = new System.Windows.Controls.CheckBox
+            var startup = new System.Windows.Controls.Primitives.ToggleButton
             {
                 Content = "Start the GUI with Windows",
                 IsChecked = _appSettings.StartWithWindows,
@@ -347,7 +347,7 @@ namespace AmtPtpConfigGui
                 VerticalAlignment = System.Windows.VerticalAlignment.Stretch,
                 Margin = new Thickness(8, 0, 0, 0)
             };
-            startup.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidSwitch");
+            startup.SetResourceReference(System.Windows.Controls.Control.StyleProperty, "AndroidToggle");
             startup.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TextPrimaryBrush");
             Grid.SetColumn(startup, 1);
 
