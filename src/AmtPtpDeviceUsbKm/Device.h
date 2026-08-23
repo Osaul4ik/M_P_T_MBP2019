@@ -238,6 +238,25 @@ typedef struct _DEVICE_CONTEXT
     // hardware (pressure-based) path.
     BOOLEAN ForceTouchEmulationFired;
 
+    // MICRO-OPT: precomputed by AmtPointerForceTouchTimingRebuild (called at
+    // D0Entry and on every Pointer Config SET/RESET IOCTL) from
+    // PointerConfig.ForceTouchEmulationHoldMs and PerfFrequency, so
+    // PTPCore_ProcessFrame's hot path never does the ms->ticks division (or
+    // touches PointerConfig at all for these three values) on every single
+    // frame while a press is pending - see that function for the compare.
+    // 0 when there's no usable clock yet, same fallback direction as
+    // ClickArbitrationTimeoutTicks below.
+    LONGLONG ForceTouchEmulationHoldTicks;
+
+    // Same precomputation, for the two drag-lockout distances
+    // (AMT_POINTER_CONFIG::ForceTapDragLockoutDistance /
+    // ForceTouchEmulationDragLockoutDistance) - raw sensor units, no
+    // conversion needed, just a config->context copy so the hot path has a
+    // single place to read from regardless of which of the two paths is
+    // active.
+    USHORT ForceTapDragLockoutDistanceCached;
+    USHORT ForceTouchEmulationDragLockoutDistanceCached;
+
     // Force-touch click delivery state - see FORCE_TOUCH_DELIVERY_STATE
     // above for the full rationale.
 #define PENDING_FORCE_TOUCH_CLICK_CAPACITY 8 // queued (not-yet-started) clicks
@@ -857,6 +876,18 @@ VOID AmtPointerRuntimeRebuild(
     _In_ const AMT_POINTER_CONFIG* Config,
     _Out_ AMT_POINTER_RUNTIME* Runtime
 );
+
+// Precomputes the Force Touch hold-timer threshold (ms -> QPC ticks) and
+// copies out the two drag-lockout distances, all from
+// DeviceContext->PointerConfig + DeviceContext->PerfFrequency, into the
+// DEVICE_CONTEXT fields PTPCore_ProcessFrame's hot path reads directly (see
+// those fields' comments). Call after PerfFrequency and/or PointerConfig
+// change: D0Entry (clock becomes known) and every SET/RESET Pointer Config
+// IOCTL (value becomes known) - see call sites in Device.c/ConfigIoctl.c.
+// Safe to call before D0Entry too: PerfFrequency.QuadPart reads 0 then, so
+// ForceTouchEmulationHoldTicks lands on the same "never resolves early"
+// fallback D0Entry's own tick-precompute block already documents.
+VOID AmtPointerForceTouchTimingRebuild(_Inout_ PDEVICE_CONTEXT DeviceContext);
 
 VOID AmtScrollRuntimeRebuild(
     _In_ const AMT_SCROLL_CONFIG* Config,

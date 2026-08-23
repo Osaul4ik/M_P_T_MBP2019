@@ -792,6 +792,14 @@ AmtPtpDeviceUsbKmCreateDevice(_Inout_ PWDFDEVICE_INIT DeviceInit)
     }
     AmtPointerConfigLoadFromRegistry(device, &deviceContext->PointerConfig);
     AmtPointerRuntimeRebuild(&deviceContext->PointerConfig, &deviceContext->PointerRuntime);
+    // PerfFrequency isn't known yet this early (no D0Entry has run), so
+    // ForceTouchEmulationHoldTicks lands on its "no usable clock" fallback
+    // here - harmless, D0Entry recomputes it for real once the clock is
+    // read. Still worth calling here so ForceTapDragLockoutDistanceCached /
+    // ForceTouchEmulationDragLockoutDistanceCached (no clock dependency)
+    // are valid from the start rather than staying zero-initialized until
+    // the device is first started.
+    AmtPointerForceTouchTimingRebuild(deviceContext);
 
     {
         AMT_SCROLL_CONFIG defaultScrollCfg = AMT_SCROLL_CONFIG_DEFAULT_INIT;
@@ -1485,6 +1493,12 @@ AmtPtpEvtDeviceD0Entry(
         pDeviceContext->ScanTimeScaleQ16             = 655;
     }
 
+    // Clock is now known (or definitively unusable) for this power session -
+    // (re)derive the Force Touch emulation hold-timer ticks and refresh the
+    // cached drag-lockout distances from PointerConfig (loaded from registry
+    // back in EvtDeviceAdd, when PerfFrequency wasn't valid yet).
+    AmtPointerForceTouchTimingRebuild(pDeviceContext);
+
     // Reset per-session timing and contact state on D0 entry.
     pDeviceContext->ScanTimeAccumulator = 0;
     pDeviceContext->NextContactId        = 0;
@@ -1492,6 +1506,7 @@ AmtPtpEvtDeviceD0Entry(
     pDeviceContext->PrevButtonClicked    = FALSE;
     pDeviceContext->ForceTouchAnchorValid = FALSE;
     pDeviceContext->ForceTouchDragLockout = FALSE;
+    pDeviceContext->ForceTouchEmulationFired = FALSE;
     // Drop pending/in-flight force-touch clicks from the previous power
     // session - nothing was delivered to a live HID client across a D0
     // transition, so there's no in-flight UP to worry about orphaning.

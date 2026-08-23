@@ -117,9 +117,23 @@ typedef struct _AMT_POINTER_CONFIG
     ULONG ForceTouchEmulationEnabled;
     ULONG ForceTouchEmulationAction;    // one of AMT_POINTER_ACTION_*
     ULONG ForceTouchEmulationHoldMs;    // hold duration to trigger, in ms
+
+    // Drag-cancel distance: how far a press may drift from where it started
+    // before Force Touch is cancelled and the press falls back to an
+    // ordinary click/drag. Raw sensor units (device-dependent, NOT mm/px -
+    // see PTPCore_ProcessFrame's anchor/lockout comments in Ptpcore.c for
+    // why an exact mm figure isn't available at this layer).
+    //
+    // Two independent values because the two paths get here differently:
+    // hardware Force Touch reaches this distance during the ~90ms pressure
+    // ramp-up, while emulation can be waiting on it for up to 2 seconds -
+    // same mechanism, very different dwell time, so worth tuning
+    // separately.
+    ULONG ForceTapDragLockoutDistance;              // hardware (pressure) path
+    ULONG ForceTouchEmulationDragLockoutDistance;   // emulation (hold-timer) path
 } AMT_POINTER_CONFIG, *PAMT_POINTER_CONFIG;
 
-#define AMT_POINTER_CONFIG_VERSION 8
+#define AMT_POINTER_CONFIG_VERSION 9
 
 #define AMT_POINTER_SMOOTH_MIN       0
 #define AMT_POINTER_SMOOTH_MAX       100
@@ -167,7 +181,9 @@ typedef struct _AMT_POINTER_CONFIG
     0,                                                                      \
     0,                                                                      \
     AMT_POINTER_ACTION_CONTEXT_MENU,                                        \
-    700                                                                     \
+    700,                                                                    \
+    160,                                                                    \
+    160                                                                     \
 }
 
 // Sane clamp range - raw pressure realistically spans ~0-300, so keep the
@@ -185,6 +201,16 @@ typedef struct _AMT_POINTER_CONFIG
 #define AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MIN   200
 #define AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MAX  2000
 #define AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_STEP   50
+
+// Drag-cancel distance range/step, in raw sensor units. Same 160 default on
+// both paths as the old hardcoded FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE
+// #define this replaces (see Ptpcore.c), so an upgrade with no registry
+// value yet behaves identically to before. 10-unit grid for the same
+// hand-crafted/corrupt-value re-quantization reason as the hold-ms grid
+// above.
+#define AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MIN    40
+#define AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MAX   400
+#define AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP   10
 
 
 // ============================================================================

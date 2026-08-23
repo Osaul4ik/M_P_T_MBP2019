@@ -94,6 +94,32 @@ AmtPointerRuntimeRebuild(
 }
 
 VOID
+AmtPointerForceTouchTimingRebuild(_Inout_ PDEVICE_CONTEXT DeviceContext)
+{
+    // Same ms->ticks conversion D0Entry already does once for
+    // ClickArbitrationTimeoutTicks (see that field's comment in Device.h) -
+    // this is the equivalent for the user-tunable emulation hold duration,
+    // which additionally needs recomputing here on every config change
+    // (ClickArbitrationTimeoutTicks doesn't, since CLICK_ARBITRATION_TIMEOUT_MS
+    // is a compile-time constant).
+    if (DeviceContext->PerfFrequency.QuadPart > 0) {
+        DeviceContext->ForceTouchEmulationHoldTicks =
+            (DeviceContext->PerfFrequency.QuadPart *
+             (LONGLONG)DeviceContext->PointerConfig.ForceTouchEmulationHoldMs) / 1000;
+    } else {
+        DeviceContext->ForceTouchEmulationHoldTicks = 0;
+    }
+
+    // No conversion needed for the two distances - just moving them out of
+    // PointerConfig so PTPCore_ProcessFrame's hot path has a single,
+    // path-agnostic field to read (see Device.h field comments).
+    DeviceContext->ForceTapDragLockoutDistanceCached =
+        (USHORT)DeviceContext->PointerConfig.ForceTapDragLockoutDistance;
+    DeviceContext->ForceTouchEmulationDragLockoutDistanceCached =
+        (USHORT)DeviceContext->PointerConfig.ForceTouchEmulationDragLockoutDistance;
+}
+
+VOID
 AmtScrollRuntimeRebuild(
     _In_ const AMT_SCROLL_CONFIG* Config,
     _Out_ AMT_SCROLL_RUNTIME* Runtime
@@ -181,6 +207,32 @@ AmtPointerConfigClamp(_Inout_ PAMT_POINTER_CONFIG Config)
         Config->ForceTouchEmulationHoldMs,
         AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MIN,
         AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MAX);
+
+    Config->ForceTapDragLockoutDistance = AmtClampULong(
+        Config->ForceTapDragLockoutDistance,
+        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MIN,
+        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MAX);
+    Config->ForceTapDragLockoutDistance =
+        ((Config->ForceTapDragLockoutDistance + (AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP / 2))
+            / AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP)
+            * AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP;
+    Config->ForceTapDragLockoutDistance = AmtClampULong(
+        Config->ForceTapDragLockoutDistance,
+        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MIN,
+        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MAX);
+
+    Config->ForceTouchEmulationDragLockoutDistance = AmtClampULong(
+        Config->ForceTouchEmulationDragLockoutDistance,
+        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MIN,
+        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MAX);
+    Config->ForceTouchEmulationDragLockoutDistance =
+        ((Config->ForceTouchEmulationDragLockoutDistance + (AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP / 2))
+            / AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP)
+            * AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP;
+    Config->ForceTouchEmulationDragLockoutDistance = AmtClampULong(
+        Config->ForceTouchEmulationDragLockoutDistance,
+        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MIN,
+        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MAX);
 
     Config->CursorSmoothingPercent = AmtClampULong(Config->CursorSmoothingPercent, AMT_POINTER_SMOOTH_MIN, AMT_POINTER_SMOOTH_MAX);
     Config->CursorSpeedPercent = AmtClampULong(Config->CursorSpeedPercent, AMT_POINTER_SPEED_MIN, AMT_POINTER_SPEED_MAX);
@@ -659,6 +711,7 @@ AmtPtpSetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     WdfSpinLockAcquire(pDeviceContext->StateLock);
     pDeviceContext->PointerConfig = clamped;
     AmtPointerRuntimeRebuild(&clamped, &pDeviceContext->PointerRuntime);
+    AmtPointerForceTouchTimingRebuild(pDeviceContext);
     WdfSpinLockRelease(pDeviceContext->StateLock);
 
     AmtPointerConfigSaveToRegistry(Device, &clamped);
@@ -691,6 +744,7 @@ AmtPtpResetPointerConfig(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     WdfSpinLockAcquire(pDeviceContext->StateLock);
     pDeviceContext->PointerConfig = defaults;
     AmtPointerRuntimeRebuild(&defaults, &pDeviceContext->PointerRuntime);
+    AmtPointerForceTouchTimingRebuild(pDeviceContext);
     WdfSpinLockRelease(pDeviceContext->StateLock);
 
     AmtPointerConfigSaveToRegistry(Device, &defaults);

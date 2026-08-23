@@ -29,7 +29,12 @@ namespace AmtPtpConfigGui.Native
         public uint ForceTouchEmulationAction;
         public uint ForceTouchEmulationHoldMs;
 
-        public const uint CurrentVersion = 8;
+        // Drag-cancel distance (raw sensor units) - independent per path,
+        // see the matching AMT_POINTER_CONFIG fields in Public.h for why.
+        public uint ForceTapDragLockoutDistance;
+        public uint ForceTouchEmulationDragLockoutDistance;
+
+        public const uint CurrentVersion = 9;
         public const uint ActionContextMenu = 0;
         public const uint ActionMiddleClick = 1;
         public const uint ActionDoubleClick = 2;
@@ -39,6 +44,9 @@ namespace AmtPtpConfigGui.Native
         public const uint EmulationHoldMsMin = 200;
         public const uint EmulationHoldMsMax = 2000;
         public const uint EmulationHoldMsStep = 50;
+        public const uint DragLockoutDistanceMin = 40;
+        public const uint DragLockoutDistanceMax = 400;
+        public const uint DragLockoutDistanceStep = 10;
 
         public static PointerConfig Default => new PointerConfig
         {
@@ -62,6 +70,8 @@ namespace AmtPtpConfigGui.Native
             ForceTouchEmulationEnabled = 0,
             ForceTouchEmulationAction = ActionContextMenu,
             ForceTouchEmulationHoldMs = 700,
+            ForceTapDragLockoutDistance = 160,
+            ForceTouchEmulationDragLockoutDistance = 160,
         };
 
         public PointerConfig Clamped()
@@ -96,6 +106,16 @@ namespace AmtPtpConfigGui.Native
             c.ForceTouchEmulationHoldMs =
                 ((c.ForceTouchEmulationHoldMs + EmulationHoldMsStep / 2) / EmulationHoldMsStep) * EmulationHoldMsStep;
             c.ForceTouchEmulationHoldMs = Clamp(c.ForceTouchEmulationHoldMs, EmulationHoldMsMin, EmulationHoldMsMax);
+
+            c.ForceTapDragLockoutDistance = Clamp(c.ForceTapDragLockoutDistance, DragLockoutDistanceMin, DragLockoutDistanceMax);
+            c.ForceTapDragLockoutDistance =
+                ((c.ForceTapDragLockoutDistance + DragLockoutDistanceStep / 2) / DragLockoutDistanceStep) * DragLockoutDistanceStep;
+            c.ForceTapDragLockoutDistance = Clamp(c.ForceTapDragLockoutDistance, DragLockoutDistanceMin, DragLockoutDistanceMax);
+
+            c.ForceTouchEmulationDragLockoutDistance = Clamp(c.ForceTouchEmulationDragLockoutDistance, DragLockoutDistanceMin, DragLockoutDistanceMax);
+            c.ForceTouchEmulationDragLockoutDistance =
+                ((c.ForceTouchEmulationDragLockoutDistance + DragLockoutDistanceStep / 2) / DragLockoutDistanceStep) * DragLockoutDistanceStep;
+            c.ForceTouchEmulationDragLockoutDistance = Clamp(c.ForceTouchEmulationDragLockoutDistance, DragLockoutDistanceMin, DragLockoutDistanceMax);
 
             return c;
         }

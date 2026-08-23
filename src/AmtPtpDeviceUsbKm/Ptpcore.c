@@ -5,8 +5,11 @@
 #include "ActiveContact.h"
 #include "Match.h"
 
-// Dragging far from the anchor cancels force-touch arbitration.
-#define FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE 160
+// Dragging far from the anchor cancels force-touch arbitration. Distance
+// itself is now runtime-configurable (AMT_POINTER_CONFIG::
+// ForceTapDragLockoutDistance / ForceTouchEmulationDragLockoutDistance,
+// cached per-path in DEVICE_CONTEXT by AmtPointerForceTouchTimingRebuild) -
+// see the dragLockoutDistance read below.
 
 // Safety cap prevents a press from staying pending indefinitely.
 // CLICK_ARBITRATION_TIMEOUT_MS moved to Ptpcore.h (shared with Device.c).
@@ -693,10 +696,19 @@ PTPCore_ProcessFrame(
         }
 
         if (trackAnchor && bestDistSq != ~0ULL) {
+            // MICRO-OPT: read the precomputed per-path distance instead of a
+            // shared #define - see AmtPointerForceTouchTimingRebuild and
+            // the two *DragLockoutDistanceCached field comments in
+            // Device.h. Exactly one of the two is meaningful here since
+            // forceTouchHardwareActive/forceTouchEmulationActive are
+            // mutually exclusive (checked above).
+            USHORT dragLockoutDistance = forceTouchHardwareActive
+                ? pCtx->ForceTapDragLockoutDistanceCached
+                : pCtx->ForceTouchEmulationDragLockoutDistanceCached;
+
             INT adx = (bestDx < 0) ? -bestDx : bestDx;
             INT ady = (bestDy < 0) ? -bestDy : bestDy;
-            if (adx > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE ||
-                ady > FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE) {
+            if (adx > dragLockoutDistance || ady > dragLockoutDistance) {
                 pCtx->ForceTouchDragLockout = TRUE;
             }
         }
@@ -801,16 +813,17 @@ PTPCore_ProcessFrame(
                 // elapsed - released early, releasedFastClick below
                 // reports it as an ordinary click and nothing further
                 // happens (see AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_*
-                // in Public.h for the configurable 0.4s-2.0s range). There
+                // in Public.h for the configurable 0.2s-2.0s range). There
                 // is no separate safety-net timeout here, unlike the
                 // hardware path's CLICK_ARBITRATION_TIMEOUT_MS: the
                 // configured hold duration already IS the bound, and it is
                 // always >= that 90ms safety net.
                 LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
-                LONGLONG holdTicks = (pCtx->PerfFrequency.QuadPart > 0)
-                    ? (pCtx->PerfFrequency.QuadPart *
-                       (LONGLONG)pCtx->PointerConfig.ForceTouchEmulationHoldMs) / 1000
-                    : 0;
+                // MICRO-OPT: cached by AmtPointerForceTouchTimingRebuild (at
+                // D0Entry and on every Pointer Config SET/RESET) instead of
+                // redoing this ms->ticks division on every single frame a
+                // press is pending - see that field's comment in Device.h.
+                LONGLONG holdTicks = pCtx->ForceTouchEmulationHoldTicks;
 
                 if (holdTicks > 0 && elapsedTicks >= holdTicks) {
                     pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;

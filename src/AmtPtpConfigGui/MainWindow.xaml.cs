@@ -754,6 +754,12 @@ namespace AmtPtpConfigGui
                     cfg.ForceTouchEmulationAction = defaults.ForceTouchEmulationAction;
                     cfg.ForceTouchEmulationHoldMs = defaults.ForceTouchEmulationHoldMs;
                 }
+
+                if (cfg.StructVersion < 9)
+                {
+                    cfg.ForceTapDragLockoutDistance = defaults.ForceTapDragLockoutDistance;
+                    cfg.ForceTouchEmulationDragLockoutDistance = defaults.ForceTouchEmulationDragLockoutDistance;
+                }
             }
 
             return cfg.Clamped();
@@ -2228,6 +2234,7 @@ namespace AmtPtpConfigGui
             {
                 cfg = cfg.Clamped();
                 SlForceTapThreshold.Value = cfg.ForceTapThreshold;
+                SlForceTapDragLockoutDistance.Value = cfg.ForceTapDragLockoutDistance;
                 ChkForceTouchEnabled.IsChecked = cfg.ForceTouchEnabled != 0;
                 ChkRequirePressure.IsChecked = cfg.RequirePressureToActivate != 0;
                 ChkRequirePressureContinuously.IsChecked = cfg.RequirePressureContinuously != 0;
@@ -2262,6 +2269,7 @@ namespace AmtPtpConfigGui
 
                 ChkForceTouchEmulationEnabled.IsChecked = cfg.ForceTouchEmulationEnabled != 0;
                 SlForceTouchEmulationHoldMs.Value = cfg.ForceTouchEmulationHoldMs;
+                SlForceTouchEmulationDragLockoutDistance.Value = cfg.ForceTouchEmulationDragLockoutDistance;
                 RadioButton selectedEmulation = cfg.ForceTouchEmulationAction switch
                 {
                     PointerConfig.ActionMiddleClick => RbEmulationActionMiddleClick,
@@ -2284,6 +2292,7 @@ namespace AmtPtpConfigGui
         {
             var c = PointerConfig.Default;
             c.ForceTapThreshold = (uint)SlForceTapThreshold.Value;
+            c.ForceTapDragLockoutDistance = (uint)SlForceTapDragLockoutDistance.Value;
             c.ForceTouchEnabled = ChkForceTouchEnabled.IsChecked == true ? 1u : 0u;
             c.RequirePressureToActivate = ChkRequirePressure.IsChecked == true ? 1u : 0u;
             c.RequirePressureContinuously =
@@ -2307,6 +2316,7 @@ namespace AmtPtpConfigGui
                 PointerConfig.ActionContextMenu;
             c.ForceTouchEmulationEnabled = ChkForceTouchEmulationEnabled.IsChecked == true ? 1u : 0u;
             c.ForceTouchEmulationHoldMs = (uint)SlForceTouchEmulationHoldMs.Value;
+            c.ForceTouchEmulationDragLockoutDistance = (uint)SlForceTouchEmulationDragLockoutDistance.Value;
             c.ForceTouchEmulationAction =
                 RbEmulationActionMiddleClick.IsChecked == true ? PointerConfig.ActionMiddleClick :
                 RbEmulationActionDoubleClick.IsChecked == true ? PointerConfig.ActionDoubleClick :
@@ -2318,6 +2328,7 @@ namespace AmtPtpConfigGui
         {
             if (LblForceTapThreshold == null) return;
             LblForceTapThreshold.Text = $"{SlForceTapThreshold.Value:0}";
+            LblForceTapDragLockoutDistance.Text = $"{SlForceTapDragLockoutDistance.Value:0}";
             LblCursorSmoothing.Text = $"{SlCursorSmoothing.Value:0}%";
             LblCursorSpeed.Text = $"{SlCursorSpeed.Value:0}%";
             LblCursorDeadzone.Text = $"{SlCursorDeadzone.Value:0}";
@@ -2328,6 +2339,7 @@ namespace AmtPtpConfigGui
             LblSmoothingAlphaDen.Text = $"{SlSmoothingAlphaDen.Value:0}";
             LblSmoothingAlphaNumSlow.Text = $"{SlSmoothingAlphaNumSlow.Value:0}";
             LblForceTouchEmulationHoldMs.Text = $"{SlForceTouchEmulationHoldMs.Value / 1000.0:0.00} s";
+            LblForceTouchEmulationDragLockoutDistance.Text = $"{SlForceTouchEmulationDragLockoutDistance.Value:0}";
         }
 
         private void PointerSlider_Changed(object sender, RoutedEventArgs e)
