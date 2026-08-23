@@ -6,10 +6,9 @@
 #include "Match.h"
 
 // Dragging far from the anchor cancels force-touch arbitration. Distance
-// itself is now runtime-configurable via the GUI (AMT_POINTER_CONFIG::
-// ForceTapDragLockoutDistance / ForceTouchEmulationDragLockoutDistance),
-// cached per-path in DEVICE_CONTEXT by AmtPointerForceTouchTimingRebuild so
-// this hot path never reads PointerConfig or does any conversion per frame -
+// itself is now runtime-configurable (AMT_POINTER_CONFIG::
+// ForceTapDragLockoutDistance / ForceTouchEmulationDragLockoutDistance,
+// cached per-path in DEVICE_CONTEXT by AmtPointerForceTouchTimingRebuild) -
 // see the dragLockoutDistance read below.
 
 // Safety cap prevents a press from staying pending indefinitely.
@@ -634,9 +633,8 @@ PTPCore_ProcessFrame(
         !pCtx->SupportsForceTouch && pCtx->PointerConfig.ForceTouchEmulationEnabled;
 
     if (!forceTouchHardwareActive && !forceTouchEmulationActive) {
-        pCtx->ForceTouchAnchorValid    = FALSE;
-        pCtx->ForceTouchDragLockout    = FALSE;
-        pCtx->ForceTouchEmulationFired = FALSE;
+        pCtx->ForceTouchAnchorValid = FALSE;
+        pCtx->ForceTouchDragLockout = FALSE;
         pCtx->ClickArbitrationState = ButtonDown
             ? CLICK_ARBITRATION_HARD_TAP
             : CLICK_ARBITRATION_IDLE;
@@ -697,11 +695,10 @@ PTPCore_ProcessFrame(
         }
 
         if (trackAnchor && bestDistSq != ~0ULL) {
-            // MICRO-OPT / GUI: read the precomputed per-path distance
-            // instead of a compile-time constant - see
-            // AmtPointerForceTouchTimingRebuild and the two
-            // *DragLockoutDistanceCached field comments in Device.h. Exactly
-            // one of the two is meaningful here since
+            // MICRO-OPT: read the precomputed per-path distance instead of a
+            // shared #define - see AmtPointerForceTouchTimingRebuild and
+            // the two *DragLockoutDistanceCached field comments in
+            // Device.h. Exactly one of the two is meaningful here since
             // forceTouchHardwareActive/forceTouchEmulationActive are
             // mutually exclusive (checked above).
             USHORT dragLockoutDistance = forceTouchHardwareActive
@@ -723,37 +720,38 @@ PTPCore_ProcessFrame(
     //
     // REWORK: drag lockout is checked EVERY frame and applies even to a
     // latched FORCE_TOUCH - move past the lockout distance at any point and
-    // the press is unconditionally HARD_TAP (one-way downgrade).
+    // the press is unconditionally HARD_TAP (one-way downgrade), THIS SAME
+    // FRAME - not deferred to full arbitration timeout. That's what bounds
+    // *OutButtonClickReport's dead zone below to the (small, configurable)
+    // drag-lockout distance instead of the full pressure-ramp/hold-timer
+    // duration: a press that's actually dragging trips the lockout almost
+    // immediately, at which point it's instantly HARD_TAP and the ordinary
+    // click reports right then - it does NOT wait for CLICK_ARBITRATION_
+    // TIMEOUT_MS (hardware) or ForceTouchEmulationHoldMs (emulation).
     //
-    // NOTE (fast-click loss, now moot): press+release shorter than PENDING's
-    // resolution used to vanish entirely under the old "withhold the click
-    // until arbitration resolves" hardware behavior - a press ending while
-    // still PENDING never reached the threshold, so a separate
-    // releasedFastClick flag reported it as an ordinary click on the release
-    // frame. Now that OutButtonClickReport mirrors ButtonDown directly for
-    // both paths (see that assignment below), the click already went out
-    // the instant the finger touched down - there is nothing left to
-    // recover on release, so releasedFastClick is gone.
+    // FIX (fast-click loss): press+release shorter than PENDING's resolution
+    // used to vanish entirely. A press ending while still PENDING never
+    // reached the threshold, so it's not a force touch - report it as an
+    // ordinary click on the release frame via releasedFastClick.
+    BOOLEAN releasedFastClick = FALSE;
 
-    // Set within the ButtonDown branch below, on the exact frame the
-    // emulation hold-timer crosses ForceTouchEmulationHoldMs (edge, not
-    // level) - see the force-touch delivery block near the end.
-    BOOLEAN emulationForceTouchFiredThisFrame = FALSE;
-
-    // Captured BEFORE the !ButtonDown branch below resets
-    // ClickArbitrationState to IDLE - see the force-touch delivery block
-    // near the end for why this is needed. Excludes presses already
-    // delivered mid-hold by the emulation timer edge (ForceTouchEmulationFired)
-    // so a still-held-then-released emulation force touch fires exactly
-    // once, on the timer, never again on release.
-    BOOLEAN releaseWasForceTouch =
-        !ButtonDown &&
-        (pCtx->ClickArbitrationState == CLICK_ARBITRATION_FORCE_TOUCH) &&
-        !pCtx->ForceTouchEmulationFired;
+    // Set within the ButtonDown branch below, on the exact frame either
+    // path resolves PENDING -> FORCE_TOUCH: pressure crossing
+    // ForceTapThreshold (hardware) or the hold-timer crossing
+    // ForceTouchEmulationHoldMs (emulation) - see the force-touch delivery
+    // block near the end. FORCE_TOUCH is only ever entered once per press
+    // (it's a one-way latch to either HARD_TAP via drag lockout or held
+    // until release - see "else: FORCE_TOUCH already latched" below), so
+    // this frame-local edge is the ONLY place either path ever needs to
+    // fire the pulse; no persistent "already delivered" flag is needed to
+    // guard against a second delivery on release.
+    BOOLEAN forceTouchFiredThisFrame = FALSE;
 
     if (!ButtonDown) {
-        pCtx->ClickArbitrationState    = CLICK_ARBITRATION_IDLE;
-        pCtx->ForceTouchEmulationFired = FALSE;
+        if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_PENDING) {
+            releasedFastClick = TRUE;
+        }
+        pCtx->ClickArbitrationState = CLICK_ARBITRATION_IDLE;
     } else {
         if (pCtx->ClickArbitrationState == CLICK_ARBITRATION_IDLE) {
             pCtx->ClickArbitrationState         = CLICK_ARBITRATION_PENDING;
@@ -783,6 +781,21 @@ PTPCore_ProcessFrame(
 
                 if (framePeakPressure > pCtx->PointerConfig.ForceTapThreshold) {
                     pCtx->ClickArbitrationState = CLICK_ARBITRATION_FORCE_TOUCH;
+
+                    // FIRE NOW, not on release: the click at this position
+                    // matters (see the emulation edge below for the full
+                    // reasoning) - and since this only happens while still
+                    // PENDING, i.e. still within the drag-lockout radius
+                    // (any real drag would already have tripped it and
+                    // resolved to HARD_TAP instead - see the REWORK note
+                    // above), *OutButtonClickReport below has never
+                    // reported the ordinary click for this press at all.
+                    // That's deliberate: force touch replaces the ordinary
+                    // click for a press that resolves this way, it doesn't
+                    // run alongside it - firing both meant an existing text
+                    // selection got clobbered by the ordinary click's
+                    // down+up right before the context-menu pulse.
+                    forceTouchFiredThisFrame = TRUE;
                 } else if (dropFromPeak >= CLICK_ARBITRATION_PRESSURE_HYSTERESIS) {
                     pCtx->ClickArbitrationState = CLICK_ARBITRATION_HARD_TAP;
                 } else if (pCtx->ClickArbitrationStallFrames >= CLICK_ARBITRATION_STALL_FRAMES_FAST_RESOLVE) {
@@ -813,19 +826,19 @@ PTPCore_ProcessFrame(
                 //
                 // PENDING is simply held for as long as the press
                 // continues and ForceTouchEmulationHoldMs has not yet
-                // elapsed - released early, the press was already reported
-                // as an ordinary click from frame one via the direct
-                // ButtonDown mirror below, so nothing further happens (see
-                // AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_*
+                // elapsed - released early, the press is simply an
+                // ordinary click (OutButtonClickReport already reported it
+                // as one in real time - see below) and nothing further
+                // happens (see AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_*
                 // in Public.h for the configurable 0.2s-2.0s range). There
                 // is no separate safety-net timeout here, unlike the
                 // hardware path's CLICK_ARBITRATION_TIMEOUT_MS: the
                 // configured hold duration already IS the bound, and it is
                 // always >= that 90ms safety net.
                 LONGLONG elapsedTicks = NowQpc - pCtx->ClickArbitrationStartQpc;
-                // MICRO-OPT / GUI: cached by AmtPointerForceTouchTimingRebuild
-                // (at D0Entry and on every Pointer Config SET/RESET) instead
-                // of redoing this ms->ticks division on every single frame a
+                // MICRO-OPT: cached by AmtPointerForceTouchTimingRebuild (at
+                // D0Entry and on every Pointer Config SET/RESET) instead of
+                // redoing this ms->ticks division on every single frame a
                 // press is pending - see that field's comment in Device.h.
                 LONGLONG holdTicks = pCtx->ForceTouchEmulationHoldTicks;
 
@@ -834,22 +847,13 @@ PTPCore_ProcessFrame(
 
                     // FIRE NOW, not on release: this is the emulation
                     // equivalent of the hardware path's pressure-threshold
-                    // cross above. Waiting for physical release here would
-                    // mean a held-and-then-dragged press only ever finds
-                    // out it was a force touch long after the moment that
-                    // earned it, at whatever position the finger happens
-                    // to be at release - wrong per spec, and it's also what
-                    // let the drag-lockout distance below silently swallow
-                    // motion while resolution was pending. Firing on this
-                    // exact frame instead: the click lands at the position
-                    // this frame reports, and every later frame's motion is
-                    // free to affect only the *next* press (or downgrade
-                    // this one to a plain hard tap via drag lockout below -
-                    // that's a display-only detail at this point since the
-                    // click already fired and OutForceTouchClick never
-                    // re-fires it - see ForceTouchEmulationFired above).
-                    pCtx->ForceTouchEmulationFired  = TRUE;
-                    emulationForceTouchFiredThisFrame = TRUE;
+                    // cross above - same reasoning, see that site. Also
+                    // still within the drag-lockout radius here for the
+                    // same reason (a real drag would have tripped it and
+                    // resolved to HARD_TAP already), so the ordinary click
+                    // has never fired for this press either - see
+                    // *OutButtonClickReport below.
+                    forceTouchFiredThisFrame = TRUE;
                 }
                 // else: keep waiting - PerfFrequency unavailable (holdTicks
                 // == 0) degrades to "never resolves early", i.e. always an
@@ -861,55 +865,39 @@ PTPCore_ProcessFrame(
         // (checked above) - hold it. HARD_TAP is likewise held.
     }
 
-    // FIX (real Force Touch teleport): never withhold the ordinary
-    // click/drag while arbitration is PENDING - on EITHER path. This used
-    // to be emulation-only (see the removed comment this replaces): the
-    // hardware (pressure) path still gated OutButtonClickReport on
-    // arbitration having resolved to HARD_TAP, so Windows saw no button
-    // down at all for as long as PENDING lasted (up to
-    // CLICK_ARBITRATION_TIMEOUT_MS, or the whole pressure ramp if it
-    // resolved sooner) while the finger - and the reported X/Y - kept
-    // moving. The moment arbitration finally landed on HARD_TAP, the
-    // button snapped on at wherever the finger happened to be by then,
-    // not where it originally touched down - the reported "teleport".
+    // Ordinary click: report it only once we KNOW it's not going to be
+    // (or already isn't) a force touch - i.e. once the press has resolved
+    // to CLICK_ARBITRATION_HARD_TAP, or (releasedFastClick) ended before
+    // resolving at all. A press that DOES become FORCE_TOUCH never sets
+    // *OutButtonClickReport at any point: force touch replaces the
+    // ordinary click for that press, it does not run alongside it - firing
+    // both used to mean an existing text selection got clobbered by the
+    // ordinary click's own down+up landing right before the context-menu
+    // pulse.
     //
-    // Reporting the raw ButtonDown state directly, every frame, on both
-    // paths applies the same fix hardware already benefited from on the
-    // emulation side: a press starts tracking/dragging from frame one,
-    // and there is nothing left to "catch up" once arbitration resolves.
-    // Arbitration keeps running exactly as before in the background - it
-    // now decides ONLY whether the eventual release also fires a Force
-    // Touch (right-click), never whether/when the ordinary click itself is
-    // reported.
-    *OutButtonClickReport = ButtonDown;
+    // Crucially, "resolved to HARD_TAP" no longer means "waited out the
+    // full CLICK_ARBITRATION_TIMEOUT_MS / ForceTouchEmulationHoldMs" - the
+    // REWORK note above made drag-lockout tripping an immediate, same-frame
+    // resolution to HARD_TAP. So a press that's actually being dragged
+    // resolves (and starts reporting the click) as soon as it crosses the
+    // (small, configurable) drag-lockout distance, not after the full
+    // pressure-ramp/hold-timer duration - that's what bounds the "distance
+    // before drag/selection starts" dead zone to a few mm instead of up to
+    // ForceTouchEmulationHoldMs (0.2-2.0s) of held-still time.
+    *OutButtonClickReport = releasedFastClick ||
+        (pCtx->ClickArbitrationState == CLICK_ARBITRATION_HARD_TAP);
 
-    // Force-touch delivery, two different edges depending on path:
+    // Force-touch delivery: a single edge-triggered pulse, fired the exact
+    // frame either path resolves PENDING -> FORCE_TOUCH
+    // (forceTouchFiredThisFrame, set above) - real pressure crossing
+    // ForceTapThreshold, or the emulation hold-timer crossing
+    // ForceTouchEmulationHoldMs. Never on release: release delivers
+    // nothing further for this press, by construction (FORCE_TOUCH is a
+    // one-way latch per press - see forceTouchFiredThisFrame's comment
+    // above), so there's nothing to guard against re-firing.
     //
-    // - Hardware (pressure): fires on RELEASE, exactly as before this fix -
-    //   arbitration's real-pressure/drag-distance decision (threshold,
-    //   hysteresis, stall fast-resolve, drag lockout, safety-net timeout -
-    //   all unchanged above) is untouched, only WHEN that decision is
-    //   allowed to gate the ordinary click changed (see above). Only a
-    //   press STILL FORCE_TOUCH at the exact moment of release fires the
-    //   context menu, as a single down+up pulse on that release frame. This
-    //   trades away "right-click-drag", which Windows has no use for
-    //   anyway, and means a fast press-and-drag can never deliver a
-    //   complete Button2 pulse before the drag lockout (checked every frame
-    //   above, including retroactively downgrading an already-latched
-    //   FORCE_TOUCH to HARD_TAP) has a chance to catch it - so there is no
-    //   context-menu flash to guard against separately.
-    //
-    // - Emulation (hold-duration): unchanged - fires the instant the
-    //   hold-timer crosses ForceTouchEmulationHoldMs
-    //   (emulationForceTouchFiredThisFrame, set above), not on release -
-    //   see that site for why (there is no pressure signal to wait for a
-    //   release to confirm). Release itself delivers nothing further for
-    //   this press: releaseWasForceTouch is unconditionally FALSE once
-    //   ForceTouchEmulationFired is set, so the click that already fired
-    //   mid-hold is never re-sent.
-    //
-    // Both paths still go through the same single down+up pulse, delivered
-    // by Interrupt.c's AmtForceTouchClickEnqueue / ForceTouchDeliveryState
-    // over the next couple of mouse reports.
-    *OutForceTouchClick = releaseWasForceTouch || emulationForceTouchFiredThisFrame;
+    // Delivered by Interrupt.c's AmtForceTouchClickEnqueue /
+    // ForceTouchDeliveryState as a single down+up pulse over the next
+    // couple of mouse reports.
+    *OutForceTouchClick = forceTouchFiredThisFrame;
 }
