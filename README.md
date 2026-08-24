@@ -36,34 +36,22 @@ The GUI exposes:
 * minimum contact dimensions.
 The configuration is shared through a stable public configuration structure and IOCTL interface.
 
-## Force Touch
+## Force Touch / Emu Force Touch
 
 For trackpads with a real pressure channel, the driver supports configurable Force Touch click arbitration.
+For trackpads without a hardware pressure channel, the driver can emulate Force Touch from a mechanical hard tap.
 
 Available controls include:
-* Force Touch enable/disable;
+* Force Touch / Emu Force Touch enable/disable;
 * pressure threshold;
 * optional pressure gate;
 * optional continuous-pressure requirement;
-
-## Force Touch emulation
-
-For trackpads without a hardware pressure channel, the driver can emulate Force Touch from a mechanical hard tap.
-
-The emulation path:
-* detects a hard tap;
-* starts a pending click arbitration state;
-* waits for the configured hold duration while the press remains active;
-* converts the press into the configured Force Touch action when the hold time expires.
-
-The emulation hold duration is configurable from 200 ms to 2000 ms in 50 ms steps.
-The emulation path also has its own drag-cancel distance so that movement can cancel the pending Force Touch operation.
 
 Force Touch/Emu action:
 * context menu;
 * middle mouse button;
 * double click;
-* independent drag-cancel distance.
+* drag-cancel distance.
 ---
 
 # Wellspring Control Center
@@ -161,11 +149,13 @@ MacBook 12" (2015-2017)
 2. Under **HID**, find **Wellspring Precision Touchpad**, right-click it, and select **Uninstall device**.
 3. Check **Delete the driver software for this device**, then click **Uninstall**.
 4. Extract the archive, then right-click **AmtPtpDeviceUsbKm.inf** and select **Install**.
+5. Reboot
 > Use keys (Arrows, Tab, Alt or mouse), when touchpad driver not installed.
 
 ### Normal Update
 
 1. Extract the archive, then right-click **AmtPtpDeviceUsbKm.inf** and select **Install**.
+2. Reboot
 ---
 
 # Driver Removal
