@@ -180,7 +180,7 @@ This step is important before installing another Apple touchpad driver (Trackpad
 
 ### ⚠️ Known Issues
 
-- Fast Force Touch → Hard Tap: may occasionally be missed before reaching the input queue.
+- Very fast Force Touch → Hard Tap: may occasionally be missed before reaching the input queue.
  
 ---
 
