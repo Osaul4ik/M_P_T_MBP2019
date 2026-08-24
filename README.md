@@ -12,7 +12,9 @@ The driver has been tested on Apple MacBook hardware, including:
 * MacBook Pro 16,1 (2019, T2)
 * MacBook Air 2015
 
-> **Recommended:** Set the Windows pointer speed to **6**.
+> **Recommended:**
+> Set the Windows pointer speed to **6**.
+> Drag cancel distance > 80
 
 ---
 
