@@ -59,6 +59,8 @@ EXTERN_C_START
 #define AMT_REG_VALUE_FORCETOUCH_EMULATION_ENABLED L"PointerForceTouchEmulationEnabled"
 #define AMT_REG_VALUE_FORCETOUCH_EMULATION_ACTION  L"PointerForceTouchEmulationAction"
 #define AMT_REG_VALUE_FORCETOUCH_EMULATION_HOLD_MS L"PointerForceTouchEmulationHoldMs"
+#define AMT_REG_VALUE_FORCE_TAP_DRAG_LOCKOUT_DISTANCE           L"PointerForceTapDragLockoutDistance"
+#define AMT_REG_VALUE_FORCETOUCH_EMULATION_DRAG_LOCKOUT_DISTANCE L"PointerForceTouchEmulationDragLockoutDistance"
 
 #define AMT_REG_VALUE_SCROLL_SPEED       L"ScrollSpeed"
 #define AMT_REG_VALUE_SCROLL_FAST_SPEED  L"ScrollFastSpeed"

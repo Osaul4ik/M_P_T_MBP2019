@@ -179,11 +179,11 @@ typedef struct _AMT_POINTER_CONFIG
     3,                                                                      \
     1,                                                                      \
     0,                                                                      \
-    0,                                                                      \
+    1,                                                                      \
     AMT_POINTER_ACTION_CONTEXT_MENU,                                        \
-    700,                                                                    \
-    160,                                                                    \
-    160                                                                     \
+    300,                                                                    \
+    60,                                                                     \
+    60                                                                      \
 }
 
 // Sane clamp range - raw pressure realistically spans ~0-300, so keep the
@@ -202,10 +202,9 @@ typedef struct _AMT_POINTER_CONFIG
 #define AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MAX  2000
 #define AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_STEP   50
 
-// Drag-cancel distance range/step, in raw sensor units. Same 160 default on
-// both paths as the old hardcoded FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE
-// #define this replaces (see Ptpcore.c), so an upgrade with no registry
-// value yet behaves identically to before. 10-unit grid for the same
+// Drag-cancel distance range/step, in raw sensor units. Default is 60 on
+// both paths (tighter than the old hardcoded 160 FORCE_TOUCH_DRAG_LOCKOUT_
+// DISTANCE #define this replaces - see Ptpcore.c). 10-unit grid for the
 // hand-crafted/corrupt-value re-quantization reason as the hold-ms grid
 // above.
 #define AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MIN    40

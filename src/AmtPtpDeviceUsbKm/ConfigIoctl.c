@@ -33,6 +33,22 @@ AmtClampULong(_In_ ULONG Value, _In_ ULONG Min, _In_ ULONG Max)
     return Value;
 }
 
+// Clamp, then re-quantize onto a Step grid (round to nearest, not
+// truncate), then clamp again - the second clamp only matters when
+// rounding pushes an edge value one step past Min/Max. Shared by every
+// GUI-slider-backed field that must land on the same grid the slider
+// itself steps in, so a hand-crafted IOCTL or a hand-edited registry
+// value can't land between steps. Replaces three near-identical
+// clamp/round/clamp blocks below (hold-ms, and the two drag-lockout
+// distances).
+static ULONG
+AmtClampToStepGrid(_In_ ULONG Value, _In_ ULONG Min, _In_ ULONG Max, _In_ ULONG Step)
+{
+    Value = AmtClampULong(Value, Min, Max);
+    Value = ((Value + (Step / 2)) / Step) * Step;
+    return AmtClampULong(Value, Min, Max);
+}
+
 static LONGLONG
 AmtPercentToQ32(_In_ ULONG Percent)
 {
@@ -191,48 +207,23 @@ AmtPointerConfigClamp(_Inout_ PAMT_POINTER_CONFIG Config)
     Config->ForceTouchEmulationEnabled = Config->ForceTouchEmulationEnabled ? 1u : 0u;
     if (Config->ForceTouchEmulationAction > AMT_POINTER_ACTION_MAX)
         Config->ForceTouchEmulationAction = AMT_POINTER_ACTION_CONTEXT_MENU;
-    Config->ForceTouchEmulationHoldMs = AmtClampULong(
+    Config->ForceTouchEmulationHoldMs = AmtClampToStepGrid(
         Config->ForceTouchEmulationHoldMs,
         AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MIN,
-        AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MAX);
-    // Re-quantize onto the 50ms grid the GUI slider uses - protects against
-    // an odd value arriving via a hand-crafted IOCTL or a hand-edited
-    // registry value, same rationale as every other clamp in this
-    // function. Round to nearest step rather than truncate.
-    Config->ForceTouchEmulationHoldMs =
-        ((Config->ForceTouchEmulationHoldMs + (AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_STEP / 2))
-            / AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_STEP)
-            * AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_STEP;
-    Config->ForceTouchEmulationHoldMs = AmtClampULong(
-        Config->ForceTouchEmulationHoldMs,
-        AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MIN,
-        AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MAX);
+        AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_MAX,
+        AMT_POINTER_FORCE_TOUCH_EMULATION_HOLD_MS_STEP);
 
-    Config->ForceTapDragLockoutDistance = AmtClampULong(
+    Config->ForceTapDragLockoutDistance = AmtClampToStepGrid(
         Config->ForceTapDragLockoutDistance,
         AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MIN,
-        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MAX);
-    Config->ForceTapDragLockoutDistance =
-        ((Config->ForceTapDragLockoutDistance + (AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP / 2))
-            / AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP)
-            * AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP;
-    Config->ForceTapDragLockoutDistance = AmtClampULong(
-        Config->ForceTapDragLockoutDistance,
-        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MIN,
-        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MAX);
+        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MAX,
+        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP);
 
-    Config->ForceTouchEmulationDragLockoutDistance = AmtClampULong(
+    Config->ForceTouchEmulationDragLockoutDistance = AmtClampToStepGrid(
         Config->ForceTouchEmulationDragLockoutDistance,
         AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MIN,
-        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MAX);
-    Config->ForceTouchEmulationDragLockoutDistance =
-        ((Config->ForceTouchEmulationDragLockoutDistance + (AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP / 2))
-            / AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP)
-            * AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP;
-    Config->ForceTouchEmulationDragLockoutDistance = AmtClampULong(
-        Config->ForceTouchEmulationDragLockoutDistance,
-        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MIN,
-        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MAX);
+        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_MAX,
+        AMT_POINTER_FORCE_TOUCH_DRAG_LOCKOUT_DISTANCE_STEP);
 
     Config->CursorSmoothingPercent = AmtClampULong(Config->CursorSmoothingPercent, AMT_POINTER_SMOOTH_MIN, AMT_POINTER_SMOOTH_MAX);
     Config->CursorSpeedPercent = AmtClampULong(Config->CursorSpeedPercent, AMT_POINTER_SPEED_MIN, AMT_POINTER_SPEED_MAX);
@@ -413,6 +404,11 @@ AmtPointerConfigLoadFromRegistry(
     AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_ENABLED, &Config->ForceTouchEmulationEnabled);
     AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_ACTION,  &Config->ForceTouchEmulationAction);
     AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_HOLD_MS, &Config->ForceTouchEmulationHoldMs);
+    // BUGFIX: these two were introduced alongside the three above but never
+    // wired into Load/Save, so a user-tuned drag-lockout distance silently
+    // reverted to default on every D0Entry/reboot instead of persisting.
+    AmtRegistryReadDword(key, AMT_REG_VALUE_FORCE_TAP_DRAG_LOCKOUT_DISTANCE, &Config->ForceTapDragLockoutDistance);
+    AmtRegistryReadDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_DRAG_LOCKOUT_DISTANCE, &Config->ForceTouchEmulationDragLockoutDistance);
 
     WdfRegistryClose(key);
 
@@ -458,6 +454,8 @@ AmtPointerConfigSaveToRegistry(
     AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_ENABLED, Config->ForceTouchEmulationEnabled);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_ACTION,  Config->ForceTouchEmulationAction);
     AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_HOLD_MS, Config->ForceTouchEmulationHoldMs);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCE_TAP_DRAG_LOCKOUT_DISTANCE, Config->ForceTapDragLockoutDistance);
+    AmtRegistryWriteDword(key, AMT_REG_VALUE_FORCETOUCH_EMULATION_DRAG_LOCKOUT_DISTANCE, Config->ForceTouchEmulationDragLockoutDistance);
 
     WdfRegistryClose(key);
 }

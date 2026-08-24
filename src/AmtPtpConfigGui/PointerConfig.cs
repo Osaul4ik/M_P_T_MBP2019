@@ -67,11 +67,11 @@ namespace AmtPtpConfigGui.Native
             SmoothingAlphaNumSlow = 3,
             SmallContactRejectionEnabled = 1,
             SmallContactRejectionStrict = 0,
-            ForceTouchEmulationEnabled = 0,
+            ForceTouchEmulationEnabled = 1,
             ForceTouchEmulationAction = ActionContextMenu,
-            ForceTouchEmulationHoldMs = 700,
-            ForceTapDragLockoutDistance = 160,
-            ForceTouchEmulationDragLockoutDistance = 160,
+            ForceTouchEmulationHoldMs = 300,
+            ForceTapDragLockoutDistance = 60,
+            ForceTouchEmulationDragLockoutDistance = 60,
         };
 
         public PointerConfig Clamped()
@@ -101,25 +101,28 @@ namespace AmtPtpConfigGui.Native
 
             c.ForceTouchEmulationEnabled = c.ForceTouchEmulationEnabled != 0 ? 1u : 0u;
             if (c.ForceTouchEmulationAction > ActionMax) c.ForceTouchEmulationAction = ActionContextMenu;
-            c.ForceTouchEmulationHoldMs = Clamp(c.ForceTouchEmulationHoldMs, EmulationHoldMsMin, EmulationHoldMsMax);
-            // Re-quantize onto the 50ms grid the slider uses.
-            c.ForceTouchEmulationHoldMs =
-                ((c.ForceTouchEmulationHoldMs + EmulationHoldMsStep / 2) / EmulationHoldMsStep) * EmulationHoldMsStep;
-            c.ForceTouchEmulationHoldMs = Clamp(c.ForceTouchEmulationHoldMs, EmulationHoldMsMin, EmulationHoldMsMax);
+            c.ForceTouchEmulationHoldMs = ClampToGrid(c.ForceTouchEmulationHoldMs, EmulationHoldMsMin, EmulationHoldMsMax, EmulationHoldMsStep);
 
-            c.ForceTapDragLockoutDistance = Clamp(c.ForceTapDragLockoutDistance, DragLockoutDistanceMin, DragLockoutDistanceMax);
-            c.ForceTapDragLockoutDistance =
-                ((c.ForceTapDragLockoutDistance + DragLockoutDistanceStep / 2) / DragLockoutDistanceStep) * DragLockoutDistanceStep;
-            c.ForceTapDragLockoutDistance = Clamp(c.ForceTapDragLockoutDistance, DragLockoutDistanceMin, DragLockoutDistanceMax);
+            c.ForceTapDragLockoutDistance = ClampToGrid(c.ForceTapDragLockoutDistance, DragLockoutDistanceMin, DragLockoutDistanceMax, DragLockoutDistanceStep);
 
-            c.ForceTouchEmulationDragLockoutDistance = Clamp(c.ForceTouchEmulationDragLockoutDistance, DragLockoutDistanceMin, DragLockoutDistanceMax);
-            c.ForceTouchEmulationDragLockoutDistance =
-                ((c.ForceTouchEmulationDragLockoutDistance + DragLockoutDistanceStep / 2) / DragLockoutDistanceStep) * DragLockoutDistanceStep;
-            c.ForceTouchEmulationDragLockoutDistance = Clamp(c.ForceTouchEmulationDragLockoutDistance, DragLockoutDistanceMin, DragLockoutDistanceMax);
+            c.ForceTouchEmulationDragLockoutDistance = ClampToGrid(c.ForceTouchEmulationDragLockoutDistance, DragLockoutDistanceMin, DragLockoutDistanceMax, DragLockoutDistanceStep);
 
             return c;
         }
 
         private static uint Clamp(uint v, uint min, uint max) => v < min ? min : (v > max ? max : v);
+
+        // Clamp, then re-quantize onto the Step grid the corresponding GUI
+        // slider steps in (round to nearest, then clamp again in case
+        // rounding pushed an edge value one step out of range). Mirrors
+        // AmtClampToStepGrid in the driver's ConfigIoctl.c - replaces three
+        // near-identical clamp/round/clamp blocks that used to live inline
+        // here.
+        private static uint ClampToGrid(uint v, uint min, uint max, uint step)
+        {
+            v = Clamp(v, min, max);
+            v = ((v + step / 2) / step) * step;
+            return Clamp(v, min, max);
+        }
     }
 }

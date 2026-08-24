@@ -98,6 +98,25 @@ AmtSerializeCoreFrameToReport(
 // while one is already in flight (or queued) just waits its turn. Only
 // clicks that haven't started delivering anything are ever dropped on
 // overflow, so a delivered DOWN can never be left without its UP.
+// PTPCore_ProcessFrame only ever latches CLICK_ARBITRATION_FORCE_TOUCH via
+// the emulation (hold-duration) path when SupportsForceTouch is FALSE -
+// real pressure-based hardware always takes the other branch (see
+// PTPCore_ProcessFrame). So SupportsForceTouch alone is enough to tell
+// which action config a given click was arbitrated under, without
+// PTPCore_ProcessFrame having to plumb an extra "which path fired" output
+// just for this. Shared by the enqueue site and the delivery site below,
+// which may run on different interrupts for the same click and so each
+// re-derive the choice rather than carrying it through
+// PendingForceTouchClickCount - SupportsForceTouch doesn't change at
+// runtime, so both call sites always agree.
+static ULONG
+AmtPointerResolveForceTapAction(_In_ PDEVICE_CONTEXT pCtx)
+{
+    return pCtx->SupportsForceTouch
+        ? pCtx->PointerConfig.ForceTapAction
+        : pCtx->PointerConfig.ForceTouchEmulationAction;
+}
+
 static VOID
 AmtForceTouchClickEnqueue(
     _Inout_ PDEVICE_CONTEXT pCtx,
@@ -346,16 +365,7 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // under StateLock, matching every other ForceTouchDeliveryState/
     // PendingForceTouchClickCount mutation in this file.
     if (forceTouchClick) {
-        // PTPCore_ProcessFrame only ever latches CLICK_ARBITRATION_FORCE_TOUCH
-        // via the emulation (hold-duration) path when SupportsForceTouch is
-        // FALSE - real pressure-based hardware always takes the other branch
-        // (see PTPCore_ProcessFrame). So SupportsForceTouch alone is enough
-        // to tell which action config this particular click was arbitrated
-        // under, without PTPCore_ProcessFrame having to plumb an extra
-        // "which path fired" output just for this.
-        ULONG forceTapAction = pCtx->SupportsForceTouch
-            ? pCtx->PointerConfig.ForceTapAction
-            : pCtx->PointerConfig.ForceTouchEmulationAction;
+        ULONG forceTapAction = AmtPointerResolveForceTapAction(pCtx);
         UCHAR clickCount =
             (forceTapAction == AMT_POINTER_ACTION_DOUBLE_CLICK)
                 ? 2 : 1;
@@ -390,146 +400,161 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         STATUS_SUCCESS);
 
     // Optional live monitor snapshot.
-    WdfSpinLockAcquire(pCtx->LiveLock);
+    // MICRO-OPT: unlocked peek before taking LiveLock. LiveEnabled is
+    // FALSE the overwhelming majority of the time - the live overlay is
+    // opt-in and only the GUI's optional live-monitor view turns it on
+    // (see the field's comment in Device.h) - so unconditionally acquiring
+    // LiveLock here paid for a spinlock acquire/release on every single
+    // USB interrupt just to find nothing to do. LiveEnabled is a volatile
+    // LONG always written via Interlocked* while LiveLock is held (see
+    // AmtPtpSetLiveEnabled / the reader-gone safety net in ConfigIoctl.c),
+    // so this unlocked read can't tear; worst case it's stale by one frame
+    // right at the enable/disable edge, which only skips or includes one
+    // extra live-frame snapshot - never a race on LiveFrame/LiveSequence
+    // themselves, since those are only ever touched below, still under
+    // the real lock, with LiveEnabled re-checked there.
+    if (InterlockedCompareExchange(&pCtx->LiveEnabled, 0, 0) != 0) {
+        WdfSpinLockAcquire(pCtx->LiveLock);
 
-    if (pCtx->LiveEnabled) {
-        ULONG i;
+        if (pCtx->LiveEnabled) {
+            ULONG i;
 
-        ULONG liveIndex =
-            ((ULONG)InterlockedCompareExchange(
-                &pCtx->LiveFrameIndex,
-                0,
-                0)) ^ 1u;
+            ULONG liveIndex =
+                ((ULONG)InterlockedCompareExchange(
+                    &pCtx->LiveFrameIndex,
+                    0,
+                    0)) ^ 1u;
 
-        PAMT_LIVE_FRAME liveFrame =
-            &pCtx->LiveFrame[liveIndex & 1u];
+            PAMT_LIVE_FRAME liveFrame =
+                &pCtx->LiveFrame[liveIndex & 1u];
 
-        pCtx->LiveSequence++;
+            pCtx->LiveSequence++;
 
-        RtlZeroMemory(
-            liveFrame,
-            sizeof(*liveFrame));
+            RtlZeroMemory(
+                liveFrame,
+                sizeof(*liveFrame));
 
-        liveFrame->StructVersion =
-            AMT_LIVE_FRAME_VERSION;
+            liveFrame->StructVersion =
+                AMT_LIVE_FRAME_VERSION;
 
-        liveFrame->Sequence =
-            pCtx->LiveSequence;
+            liveFrame->Sequence =
+                pCtx->LiveSequence;
 
-        liveFrame->TimestampQpc =
-            Now.QuadPart;
+            liveFrame->TimestampQpc =
+                Now.QuadPart;
 
-        liveFrame->ContactCount =
-            coreFrame.ContactCount;
+            liveFrame->ContactCount =
+                coreFrame.ContactCount;
 
-        liveFrame->RawContactCount =
-            rawFrame.ContactCount;
+            liveFrame->RawContactCount =
+                rawFrame.ContactCount;
 
-        liveFrame->LargePalmBlanked =
-            coreFrame.LargePalmBlanked ? 1 : 0;
+            liveFrame->LargePalmBlanked =
+                coreFrame.LargePalmBlanked ? 1 : 0;
 
-        liveFrame->ButtonDown =
-            buttonSnapshot ? 1 : 0;
+            liveFrame->ButtonDown =
+                buttonSnapshot ? 1 : 0;
 
-        liveFrame->ForceTouchClick =
-            forceTouchClick ? 1 : 0;
+            liveFrame->ForceTouchClick =
+                forceTouchClick ? 1 : 0;
 
-        liveFrame->ButtonClickReport =
-            buttonClickReport ? 1 : 0;
+            liveFrame->ButtonClickReport =
+                buttonClickReport ? 1 : 0;
 
-        for (i = 0;
-             i < coreFrame.ContactCount &&
-             i < AMT_LIVE_MAX_CONTACTS;
-             ++i) {
+            for (i = 0;
+                 i < coreFrame.ContactCount &&
+                 i < AMT_LIVE_MAX_CONTACTS;
+                 ++i) {
 
-            ULONG j;
-            ULONG bestRawIndex = 0;
-            ULONGLONG bestDistance = ~0ULL;
-            BOOLEAN haveRawMatch = FALSE;
+                ULONG j;
+                ULONG bestRawIndex = 0;
+                ULONGLONG bestDistance = ~0ULL;
+                BOOLEAN haveRawMatch = FALSE;
 
-            liveFrame->Contacts[i].ContactID =
-                coreFrame.Contacts[i].ContactID;
+                liveFrame->Contacts[i].ContactID =
+                    coreFrame.Contacts[i].ContactID;
 
-            liveFrame->Contacts[i].X =
-                coreFrame.Contacts[i].X;
+                liveFrame->Contacts[i].X =
+                    coreFrame.Contacts[i].X;
 
-            liveFrame->Contacts[i].Y =
-                coreFrame.Contacts[i].Y;
+                liveFrame->Contacts[i].Y =
+                    coreFrame.Contacts[i].Y;
 
-            liveFrame->Contacts[i].Phase =
-                (ULONG)coreFrame.Contacts[i].Phase;
+                liveFrame->Contacts[i].Phase =
+                    (ULONG)coreFrame.Contacts[i].Phase;
 
-            liveFrame->Contacts[i].Confident =
-                coreFrame.Contacts[i].Confident ? 1 : 0;
+                liveFrame->Contacts[i].Confident =
+                    coreFrame.Contacts[i].Confident ? 1 : 0;
 
-            liveFrame->Contacts[i].PalmSuspect =
-                coreFrame.Contacts[i].PalmSuspect ? 1 : 0;
+                liveFrame->Contacts[i].PalmSuspect =
+                    coreFrame.Contacts[i].PalmSuspect ? 1 : 0;
 
-            for (j = 0;
-                 j < rawFrame.ContactCount;
-                 ++j) {
+                for (j = 0;
+                     j < rawFrame.ContactCount;
+                     ++j) {
 
-                LONGLONG dx =
-                    (LONGLONG)coreFrame.Contacts[i].X -
-                    (LONGLONG)rawFrame.Contacts[j].X;
+                    LONGLONG dx =
+                        (LONGLONG)coreFrame.Contacts[i].X -
+                        (LONGLONG)rawFrame.Contacts[j].X;
 
-                LONGLONG dy =
-                    (LONGLONG)coreFrame.Contacts[i].Y -
-                    (LONGLONG)rawFrame.Contacts[j].Y;
+                    LONGLONG dy =
+                        (LONGLONG)coreFrame.Contacts[i].Y -
+                        (LONGLONG)rawFrame.Contacts[j].Y;
 
-                ULONGLONG distance =
-                    (ULONGLONG)(dx * dx + dy * dy);
+                    ULONGLONG distance =
+                        (ULONGLONG)(dx * dx + dy * dy);
 
-                if (!haveRawMatch ||
-                    distance < bestDistance) {
+                    if (!haveRawMatch ||
+                        distance < bestDistance) {
 
-                    haveRawMatch = TRUE;
-                    bestDistance = distance;
-                    bestRawIndex = j;
+                        haveRawMatch = TRUE;
+                        bestDistance = distance;
+                        bestRawIndex = j;
+                    }
+                }
+
+                if (haveRawMatch) {
+                    liveFrame->Contacts[i].RawX =
+                        rawFrame.Contacts[bestRawIndex].RawX;
+
+                    liveFrame->Contacts[i].RawY =
+                        rawFrame.Contacts[bestRawIndex].RawY;
+
+                    liveFrame->Contacts[i].Major =
+                        rawFrame.Contacts[bestRawIndex].Major;
+
+                    liveFrame->Contacts[i].Minor =
+                        rawFrame.Contacts[bestRawIndex].Minor;
+
+                    liveFrame->Contacts[i].Pressure =
+                        rawFrame.Contacts[bestRawIndex].Pressure;
+
+                    liveFrame->Contacts[i].Orientation =
+                        rawFrame.Contacts[bestRawIndex].Orientation;
+                } else {
+                    liveFrame->Contacts[i].RawX =
+                        (SHORT)((LONG)coreFrame.Contacts[i].X +
+                                pCtx->DeviceInfo->x.min);
+
+                    liveFrame->Contacts[i].RawY =
+                        (SHORT)(pCtx->DeviceInfo->y.max -
+                                (LONG)coreFrame.Contacts[i].Y);
+
+                    liveFrame->Contacts[i].Major = 0;
+                    liveFrame->Contacts[i].Minor = 0;
                 }
             }
 
-            if (haveRawMatch) {
-                liveFrame->Contacts[i].RawX =
-                    rawFrame.Contacts[bestRawIndex].RawX;
+            // Publish only after the inactive buffer is fully populated.
+            KeMemoryBarrier();
 
-                liveFrame->Contacts[i].RawY =
-                    rawFrame.Contacts[bestRawIndex].RawY;
-
-                liveFrame->Contacts[i].Major =
-                    rawFrame.Contacts[bestRawIndex].Major;
-
-                liveFrame->Contacts[i].Minor =
-                    rawFrame.Contacts[bestRawIndex].Minor;
-
-                liveFrame->Contacts[i].Pressure =
-                    rawFrame.Contacts[bestRawIndex].Pressure;
-
-                liveFrame->Contacts[i].Orientation =
-                    rawFrame.Contacts[bestRawIndex].Orientation;
-            } else {
-                liveFrame->Contacts[i].RawX =
-                    (SHORT)((LONG)coreFrame.Contacts[i].X +
-                            pCtx->DeviceInfo->x.min);
-
-                liveFrame->Contacts[i].RawY =
-                    (SHORT)(pCtx->DeviceInfo->y.max -
-                            (LONG)coreFrame.Contacts[i].Y);
-
-                liveFrame->Contacts[i].Major = 0;
-                liveFrame->Contacts[i].Minor = 0;
-            }
+            InterlockedExchange(
+                &pCtx->LiveFrameIndex,
+                (LONG)(liveIndex & 1u));
         }
 
-        // Publish only after the inactive buffer is fully populated.
-        KeMemoryBarrier();
-
-        InterlockedExchange(
-            &pCtx->LiveFrameIndex,
-            (LONG)(liveIndex & 1u));
+        WdfSpinLockRelease(pCtx->LiveLock);
     }
-
-    WdfSpinLockRelease(pCtx->LiveLock);
 
     // Mouse delivery is a separate critical section around the force-touch
     // delivery state machine.
@@ -572,18 +597,7 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
                 mouseReport.ReportID =
                     REPORTID_STANDARDMOUSE;
 
-                // Same SupportsForceTouch-based action-config selection as
-                // the enqueue site above - this delivery pulse may be
-                // completing on a later interrupt than the one that
-                // enqueued it, so it re-derives the choice rather than
-                // trying to carry it through PendingForceTouchClickCount.
-                // SupportsForceTouch doesn't change at runtime, so both
-                // sites always agree on the same action for a given click.
-                ULONG deliveryForceTapAction = pCtx->SupportsForceTouch
-                    ? pCtx->PointerConfig.ForceTapAction
-                    : pCtx->PointerConfig.ForceTouchEmulationAction;
-
-                switch (deliveryForceTapAction) {
+                switch (AmtPointerResolveForceTapAction(pCtx)) {
                 case AMT_POINTER_ACTION_MIDDLE_CLICK:
                     mouseReport.Button3 =
                         edgeButtonState ? 1 : 0;
