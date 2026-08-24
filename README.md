@@ -186,6 +186,14 @@ This step is important before installing another Apple touchpad driver (Trackpad
  
 ---
 
+## ☕ Support
+
+If you find this project useful, consider buying me a coffee!
+
+[![Ko-fi](https://img.shields.io/badge/Support%20me%20on-Ko--fi-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/osaul4ik)
+
+---
+
 # Credits
 
 This project is based on the excellent work of the original **mac-precision-touchpad** project by imbushuo.
