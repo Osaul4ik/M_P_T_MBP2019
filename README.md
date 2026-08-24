@@ -85,7 +85,7 @@ Two GUI versions are included:
 ---
 # Known Limitations
 
-- Only USB Apple touchpads are supported.
+- Only built-in Apple MacBook touchpads using a USB interface are currently supported. SPI-based touchpads are not currently supported. This refers to the touchpad's internal interface, not an external USB connection.
 ---
 
 # Supported Devices
