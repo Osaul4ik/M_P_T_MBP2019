@@ -1,10 +1,6 @@
 # WellspringPTP
 
-**Windows Precision Touchpad kernel driver for Apple MacBooks**
-
-WellspringPTP is a Windows Precision Touchpad driver focused on delivering a native, responsive, and reliable experience on Apple MacBooks.
-
-The project started as a fork of **mac-precision-touchpad** and has since evolved into a significantly reworked implementation.
+WellspringPTP is a reworked Windows Precision Touchpad driver for Apple MacBook trackpads. The project originated from mac-precision-touchpad and has been redesigned and have a dedicated configuration GUI.
 
 ---
 
@@ -12,33 +8,92 @@ The project started as a fork of **mac-precision-touchpad** and has since evolve
 
 Stable 
 
-The driver has been extensively tested on **MacBook Pro 16,1 (2019) and Air 2015**
+The driver has been tested on Apple MacBook hardware, including:
+* MacBook Pro 16,1 (2019, T2)
+* MacBook Air 2015
 
-**Haptic feedback is not currently implemented. The Force Touch trackpad's actuator requires a calibration sequence to drive properly, and that process hasn't been reverse-engineered yet — so this feature is blocked until that's figured out.**
-
-> **Recommended:** Set the Windows pointer speed to **8**.
+> **Recommended:** Set the Windows pointer speed to **6**.
 
 ---
 
-# Features
+# Main features
 
-* Windows Precision Touchpad support
+## Windows Precision Touchpad
+
+* Native Windows Precision Touchpad input.
 * Native multi-touch gestures (pinch, zoom, scroll, swipe)
-* Smoother, more accurate finger tracking — fewer dropped or mismatched contacts
-* No more cursor jumps or "ghost" touches
-* Palm rejection
-* Fixed handling of malformed/overflow USB packets
-* Force Touch triggers the right-click context menu
-* Low-latency input processing
+* Improved contact matching and lifecycle.
 
+## Palm rejection
+
+Palm rejection is runtime configurable instead of being limited to compile-time constants.
+
+The GUI exposes:
+* edge rejection zones;
+* major/minor contact thresholds;
+* palm shape ratio;
+* palm score threshold;
+* minimum contact dimensions.
+The configuration is shared through a stable public configuration structure and IOCTL interface.
+
+## Force Touch
+
+For trackpads with a real pressure channel, the driver supports configurable Force Touch click arbitration.
+
+Available controls include:
+* Force Touch enable/disable;
+* pressure threshold;
+* optional pressure gate;
+* optional continuous-pressure requirement;
+
+## Force Touch emulation
+
+For trackpads without a hardware pressure channel, the driver can emulate Force Touch from a mechanical hard tap.
+
+The emulation path:
+* detects a hard tap;
+* starts a pending click arbitration state;
+* waits for the configured hold duration while the press remains active;
+* converts the press into the configured Force Touch action when the hold time expires.
+
+The emulation hold duration is configurable from 200 ms to 2000 ms in 50 ms steps.
+The emulation path also has its own drag-cancel distance so that movement can cancel the pending Force Touch operation.
+
+Force Touch/Emu action:
+* context menu;
+* middle mouse button;
+* double click;
+* independent drag-cancel distance.
 ---
 
+# Wellspring Control Center
+
+The application is a .NET 8 WPF desktop application with Windows Forms support for the tray UI.
+
+The GUI provides:
+* Device connection/status information;
+* Palm settings;
+* Pointer settings;
+* Scroll settings;
+* Force Touch controls;
+* Force Touch emulation controls;
+* User profiles;
+* Live touch/contact monitoring;
+* Touchpad geometry information;
+* Driver debug logging control;
+* Tray controls for commonly used settings;
+
+Force Touch controls are exposed only when the connected device reports actual Force Touch support. On non-Force-Touch devices, the GUI can expose the software emulation controls instead.
+
+Two GUI versions are included:
+
+- **Min** — requires **.NET 8 Desktop Runtime (x64)** to be installed separately.
+- **Full** — includes the required .NET Runtime and does not require a separate .NET installation.
+
+---
 # Known Limitations
 
-- Requires Windows Test Mode.
-- Haptic feedback is not implemented.
 - Only USB Apple touchpads are supported.
-
 ---
 
 # Supported Devices
@@ -86,21 +141,22 @@ MacBook 12" (2015-2017)
 ---
 
 # 📦 Installation
+
+> **Note**
+> The driver requires Windows Test Mode;
+
 0. Extract the archive.
 1. Run **TestMode.bat**, enter 1, and press Enter to enable Test Mode.
 2. **Restart your computer.** (Really)
 3. Run **InstallSert.bat** to install the certificate.
 4. Right-click **AmtPtpDeviceUsbKm.inf** and select **Install**.
-
-> **Note**
-> The driver currently requires Windows Test Mode because it is not digitally signed.
-
+5. Reboot
 ---
-
 
 # 🚀 Update
 
 ### Clean Update
+
 1. Open Device Manager.
 2. Under **HID**, find **Wellspring Precision Touchpad**, right-click it, and select **Uninstall device**.
 3. Check **Delete the driver software for this device**, then click **Uninstall**.
@@ -108,10 +164,12 @@ MacBook 12" (2015-2017)
 > Use keys (Arrows, Tab, Alt or mouse), when touchpad driver not installed.
 
 ### Normal Update
+
 1. Extract the archive, then right-click **AmtPtpDeviceUsbKm.inf** and select **Install**.
 ---
 
 # Driver Removal
+
 This step is important before installing another Apple touchpad driver (Trackpad++, Magic Utilities, etc.).
 
 1. Open **Device Manager**.
@@ -121,57 +179,19 @@ This step is important before installing another Apple touchpad driver (Trackpad
 
 ---
 
-# Development Status
+# Tested with:
 
-* ✅ Contact lifecycle redesign
-* ✅ Stable contact matching
-* ✅ Palm rejection
-* ✅ Gesture stability improvements
-* ✅ Scroll improvements
-* ✅ Cursor jump fixes
-* ✅ Force Touch implementation
-* ✅ Driver optimization
-* ✅ Code audit
-* ✅ Micro optimization & tuning
+* Driver Verifier
+* PREfast
+* CodeQL
+* Static Analysis
 
 ---
 
-## 🧪 BETA RELEASE NOTES
-
-### What's New
-
-- 🔄 **Driver Lifecycle Rework** — redesigned driver lifecycle, initialization, and reinitialization handling.
-- 🖥️ **New GUI** — detailed driver configuration and diagnostic tools.
-- 🔧 **Pro Mode** — additional advanced configuration options for detailed driver tuning.
-- ⚡ **Live Mode** — displays the actual number of active contacts and their current positions in real time.
-- 👆 **Contact Preview** — active contacts and their positions are visualized directly in the GUI Preview.
-- 🐛 **Debug Mode** — additional diagnostic output for troubleshooting and development.
-- ⚙️ **Extended Configuration** — significantly more driver parameters can be configured directly through the GUI.
-
 ### ⚠️ Known Issues
 
-- Launching the GUI multiple times can open multiple application instances.
-- If **Live Mode** is enabled before entering Sleep, it may become stuck after Resume. Disable and re-enable Live Mode to restore it.
-- The GUI context menu may have incorrect scaling when Windows Display Scaling is enabled.
-- **Live Mode consumes additional system resources** and should not be enabled unless real-time contact visualization or testing is required.
-
-### 📝 Bug Reports
-
-For useful bug reports:
-
-1. Open **GUI → Settings**.
-2. Enable **Debug Mode**.
-3. Reproduce the issue.
-4. Capture the driver log using **DbgView**.
-5. Include the captured log and the configuration used when reporting the issue.
-
-### 📦 GUI Versions
-
-Two GUI versions are included:
-
-- **Min** — requires **.NET 8 Desktop Runtime (x64)** to be installed separately.
-- **Full** — includes the required .NET Runtime and does not require a separate .NET installation.
-  
+- Fast Force Touch → Hard Tap: may occasionally be missed before reaching the input queue.
+ 
 ---
 
 # Credits
