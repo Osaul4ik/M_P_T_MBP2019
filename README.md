@@ -56,6 +56,8 @@ Force Touch/Emu action:
 
 # Wellspring Control Center
 
+<img width="1438" height="858" alt="Screenshot_2" src="https://github.com/user-attachments/assets/4a33bdd7-38ca-47bd-9b4e-68d926ba3eab" />
+
 The application is a .NET 8 WPF desktop application with Windows Forms support for the tray UI.
 
 The GUI provides:
