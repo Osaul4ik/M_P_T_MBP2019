@@ -86,7 +86,6 @@ Two GUI versions are included:
 # Known Limitations
 
 - Only built-in Apple MacBook touchpads using a USB interface are currently supported. SPI-based touchpads are not currently supported. This refers to the touchpad's internal interface, not an external USB connection.
-
 ---
 
 # Supported Devices
@@ -187,6 +186,16 @@ This step is important before installing another Apple touchpad driver (Trackpad
 
 - Very fast Force Touch → Hard Tap: may occasionally be missed before reaching the input queue.
  
+---
+
+### YouTube
+
+I quickly recorded two short videos to demonstrate how Wellspring works:
+
+[![MBP 2019 Demo](https://img.youtube.com/vi/bl8J5mgvfkI/0.jpg)](https://www.youtube.com/shorts/bl8J5mgvfkI) 
+[![MBA 2015 Demo](https://img.youtube.com/vi/R6ZcmY1rli4/0.jpg)](https://www.youtube.com/shorts/R6ZcmY1rli4)
+
+
 ---
 
 ## ☕ Support
