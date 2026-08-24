@@ -1262,6 +1262,18 @@ namespace AmtPtpConfigGui
                     _device.SetLiveEnabled(false);
                 }
 
+                // Stopping the live poll/render loop above only stops the
+                // process from doing more work while parked in tray - it
+                // does not give back memory the process already touched
+                // (window chrome, live overlay, config/profile data built up
+                // while the window was open). Ask the OS to page that back
+                // out now so "Memory" in Task Manager for the tray-parked
+                // process reads close to the CLR/WPF baseline instead of
+                // whatever peak the visible window reached. See
+                // TrayMemoryTrimmer for why this is safe (fully reversible,
+                // no behavior change - just what's resident vs paged out).
+                TrayMemoryTrimmer.TrimAfterHide();
+
                 SetBottomStatus("Wellspring Control Center is running in the system tray.");
                 return;
             }

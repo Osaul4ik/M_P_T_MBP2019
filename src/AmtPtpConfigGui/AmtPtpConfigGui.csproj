@@ -18,6 +18,20 @@
     <DebugType>none</DebugType>
     <PublishReadyToRun>false</PublishReadyToRun>
     <SelfContained>false</SelfContained>
+
+    <!--
+      Workstation, non-concurrent GC instead of the WinExe-default
+      background-concurrent mode: background GC keeps an extra dedicated
+      thread and heap segment resident for the whole process lifetime to
+      shave collection pauses the user would notice while interacting with
+      the window. For a small utility that spends most of its life sitting
+      idle in the tray, that standing cost isn't worth it - TrayMemoryTrimmer
+      already does a blocking, compacting collect right before it asks the
+      OS to page the working set out, so foreground pause time here is a
+      one-off on hide, not a per-frame concern.
+    -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
