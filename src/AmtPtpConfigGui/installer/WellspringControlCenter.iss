@@ -521,6 +521,31 @@ begin
 end;
 #endif
 
+// BUG FIX: this is the real fix for "Finished page still shows instead of
+// an immediate close+reboot". The earlier approach (WizardForm.Tag := 1;
+// WizardForm.Close; inside CurStepChanged(ssDone) above) tried to close
+// the wizard AFTER Inno had already decided to navigate to wpFinished -
+// by then the page (with the [Run] section's "Launch Wellspring Control
+// Center" checkbox) was already being displayed, so closing it just meant
+// the user had to dismiss/click through what they were already looking
+// at. ShouldSkipPage runs BEFORE Inno ever tries to display a given page,
+// so returning True here for wpFinished means that page - and its Launch
+// checkbox - is never rendered in the first place whenever a reboot is
+// pending. Launching the GUI before the reboot would do nothing useful
+// anyway, since the driver isn't actually bound to the device until the
+// machine restarts. Once the last page is skipped, Setup has nothing
+// left to navigate to and closes itself automatically - combined with
+// the scheduled `shutdown /r /t 15` in CurStepChanged, this is what
+// makes "driver installed -> Setup closes -> PC reboots" happen with no
+// intermediate screen at all. RebootNeeded is declared unconditionally
+// (see the `var` block above), so this stays a safe no-op - and the
+// normal Finished page keeps showing as before - in a GUI-only build
+// where RebootNeeded is never set.
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := (PageID = wpFinished) and RebootNeeded;
+end;
+
 function InitializeSetup(): Boolean;
 begin
   Result := True;
