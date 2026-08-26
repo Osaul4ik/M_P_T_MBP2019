@@ -163,7 +163,7 @@ typedef struct _AMT_POINTER_CONFIG
 #define AMT_POINTER_CONFIG_DEFAULT_INIT                                    \
 {                                                                            \
     AMT_POINTER_CONFIG_VERSION,                                             \
-    250,                                                                    \
+    265,                                                                    \
     AMT_POINTER_ACTION_CONTEXT_MENU,                                        \
     1,                                                                      \
     1,                                                                      \
@@ -182,8 +182,8 @@ typedef struct _AMT_POINTER_CONFIG
     1,                                                                      \
     AMT_POINTER_ACTION_CONTEXT_MENU,                                        \
     300,                                                                    \
-    60,                                                                     \
-    60                                                                      \
+    110,                                                                    \
+    110                                                                      \
 }
 
 // Sane clamp range - raw pressure realistically spans ~0-300, so keep the

@@ -51,7 +51,7 @@ namespace AmtPtpConfigGui.Native
         public static PointerConfig Default => new PointerConfig
         {
             StructVersion = CurrentVersion,
-            ForceTapThreshold = 250,
+            ForceTapThreshold = 265,
             ForceTapAction = ActionContextMenu,
             ForceTouchEnabled = 1,
             RequirePressureToActivate = 1,
@@ -70,8 +70,8 @@ namespace AmtPtpConfigGui.Native
             ForceTouchEmulationEnabled = 1,
             ForceTouchEmulationAction = ActionContextMenu,
             ForceTouchEmulationHoldMs = 300,
-            ForceTapDragLockoutDistance = 60,
-            ForceTouchEmulationDragLockoutDistance = 60,
+            ForceTapDragLockoutDistance = 110,
+            ForceTouchEmulationDragLockoutDistance = 110,
         };
 
         public PointerConfig Clamped()
