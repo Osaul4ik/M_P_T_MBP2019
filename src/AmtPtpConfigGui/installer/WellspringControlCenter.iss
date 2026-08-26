@@ -195,9 +195,7 @@ const
 var
   #ifdef IncludeDriver
   InstallChoicePage: TInputOptionWizardPage;
-  // 0 = Driver + GUI, 1 = GUI only, 2 = Driver only - set by
-  // AskUninstallChoice() in InitializeUninstall, consumed by
-  // CurUninstallStepChanged.
+  // UninstallChoice is used only by the uninstall flow.
   UninstallChoice: Integer;
   #endif
   RebootNeeded: Boolean;
@@ -250,20 +248,18 @@ begin
     'Select one option, then click Next to continue.',
     True, False);
   InstallChoicePage.Add('GUI + Driver (recommended)');
-  InstallChoicePage.Add('GUI only');
   InstallChoicePage.Add('Driver only');
   InstallChoicePage.SelectedValueIndex := 0;
 end;
 
-// Warns about the upcoming reboot the moment the user commits to a
-// driver-inclusive choice (index 0 = GUI + Driver, index 2 = Driver only)
+// Warns about the upcoming reboot the moment the user commits to an
+// installation choice. Both available choices include the driver.
 // on the selection page, before any files are copied - not just later,
 // buried in the driver-install confirmation dialog.
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  if (CurPageID = InstallChoicePage.ID) and
-     (InstallChoicePage.SelectedValueIndex <> 1) then
+  if (CurPageID = InstallChoicePage.ID) then
   begin
     MsgBox(
       'Installing the driver requires a restart to finish.' + #13#10#13#10 +
@@ -277,12 +273,16 @@ end;
 
 function InstallGui(): Boolean;
 begin
-  Result := InstallChoicePage.SelectedValueIndex <> 2;
+  // Installation choices:
+  //   0 = GUI + Driver
+  //   1 = Driver only
+  Result := InstallChoicePage.SelectedValueIndex = 0;
 end;
 
 function InstallDriver(): Boolean;
 begin
-  Result := InstallChoicePage.SelectedValueIndex <> 1;
+  // Both available installation choices install the driver.
+  Result := True;
 end;
 
 // Finds every OLD published Driver Store package that originated from
@@ -789,7 +789,7 @@ begin
     SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
-// "GUI only" path: deletes every file directly under {app} except
+// GUI-only uninstall path: deletes every file directly under {app} except
 // Inno's own unins*.exe/.dat (so the uninstaller keeps working) and any
 // subfolders in full, plus the Start Menu shortcut and the autostart
 // key. Deliberately does NOT touch the "Programs and Features" registry
