@@ -133,30 +133,6 @@ AmtPtpDeviceUsbKmQueueInitialize(
         return status;
     }
 
-    // Force-touch mouse click delivery (Interrupt.c) opportunistically
-    // claims a request off this same queue whenever a click is in flight
-    // (ForceTouchDeliveryState != IDLE). That delivery is normally retried
-    // on every touch interrupt, but if the finger already lifted - no more
-    // interrupts to retry on - and mouhid.sys's read wasn't queued at that
-    // exact moment, nothing would ever wake the pending click back up.
-    // WdfIoQueueReadyNotify closes that gap: it fires the moment a new
-    // request lands on InputQueue while it was empty, which is exactly the
-    // "a request just became available" event delivery was waiting on.
-    // AmtPtpEvtInputQueueReady no-ops immediately (via the IDLE check in
-    // AmtPtpTryDeliverForceTouchClick) for every ordinary read that has
-    // nothing to do with force touch, so this costs nothing outside that
-    // one edge case.
-    status = WdfIoQueueReadyNotify(
-        pDeviceContext->InputQueue,
-        AmtPtpEvtInputQueueReady,
-        pDeviceContext);
-    if (!NT_SUCCESS(status)) {
-        AmtTrace(pDeviceContext,
-            "QueueInitialize: WdfIoQueueReadyNotify(InputQueue) failed, status=0x%08X",
-            status);
-        return status;
-    }
-
     // NOTE: a separate manual "MouseInputQueue" for the force-touch mouse
     // top-level collection existed here between the "Fullfix" commit and
     // this revert. It has been removed - the mouse collection's reads are
@@ -196,11 +172,14 @@ AmtPtpDeviceUsbKmEvtIoDeviceControl(
     if (IoControlCode != IOCTL_HID_READ_REPORT) {
         BOOLEAN lifecycleBlocked;
 
+        BOOLEAN t2RestartPending;
+
         WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
         lifecycleBlocked =
             pDeviceContext->D0ExitInProgress ||
             pDeviceContext->T2RestartPending ||
             pDeviceContext->T2ResumeActive;
+        t2RestartPending = pDeviceContext->T2RestartPending;
         WdfSpinLockRelease(pDeviceContext->D0ExitLock);
 
         AmtTrace(pDeviceContext,
@@ -214,11 +193,34 @@ AmtPtpDeviceUsbKmEvtIoDeviceControl(
         // pending reads belong to the FDO lifetime; PnP purge owns their
         // cancellation when the old stack is removed.
         if (lifecycleBlocked) {
-            AmtTrace(pDeviceContext,
-                "EvtIoDeviceControl: lifecycle transition/restart pending, "
-                "rejecting IoControlCode=0x%08X", IoControlCode);
-            WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
-            return;
+            // Once T2 recovery has explicitly latched T2RestartPending, the
+            // current FDO is already on the path to PnP re-enumeration.
+            // MTConfig's Windows Device Mode SET_FEATURE is the one control
+            // request we can safely complete without touching the old
+            // hardware: the replacement device will run the normal HID
+            // configuration sequence after re-enumeration.
+            //
+            // Do NOT do this for ordinary D0Exit/T2ResumeActive states: a
+            // restart has not necessarily been committed there, so lying
+            // about successful Device Mode configuration could leave the
+            // current device in an incorrect mode.
+            if (t2RestartPending &&
+                IoControlCode == IOCTL_HID_SET_FEATURE) {
+                // Let AmtPtpSetFeatures() inspect and validate the HID
+                // report itself. It has the existing report-size validation
+                // and will fake-success ONLY for the Windows Device Mode
+                // report; other SET_FEATURE reports still get rejected or
+                // handled normally there.
+                AmtTrace(pDeviceContext,
+                    "EvtIoDeviceControl: T2 restart pending, allowing "
+                    "SET_FEATURE to reach the HID handler for Device Mode filtering");
+            } else {
+                AmtTrace(pDeviceContext,
+                    "EvtIoDeviceControl: lifecycle transition/restart pending, "
+                    "rejecting IoControlCode=0x%08X", IoControlCode);
+                WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
+                return;
+            }
         }
     }
 

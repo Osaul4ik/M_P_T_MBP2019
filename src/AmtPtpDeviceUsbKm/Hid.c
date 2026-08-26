@@ -430,6 +430,8 @@ AmtPtpSetFeatures(
 	PHID_XFER_PACKET pHidPacket;
 	WDF_REQUEST_PARAMETERS RequestParameters;
 	PDEVICE_CONTEXT pDeviceContext;
+	BOOLEAN lifecycleBlocked;
+	BOOLEAN t2RestartPending;
 
 	status = STATUS_SUCCESS;
 	// NULL until the UserBuffer assignment below succeeds - the EXIT trace
@@ -466,6 +468,19 @@ AmtPtpSetFeatures(
 	}
 
 	AmtTrace(pDeviceContext, "SetFeatures: ENTER, reportId=0x%02X", pHidPacket->reportId);
+
+	// Queue.c lets SET_FEATURE reach this handler only when T2 restart has
+	// already been latched. Re-snapshot the lifecycle state here as well so
+	// a race with the restart transition cannot accidentally let another
+	// SET_FEATURE report through to hardware.
+	WdfSpinLockAcquire(pDeviceContext->D0ExitLock);
+	t2RestartPending = pDeviceContext->T2RestartPending;
+	lifecycleBlocked =
+		pDeviceContext->D0ExitInProgress ||
+		pDeviceContext->T2RestartPending ||
+		pDeviceContext->T2ResumeActive;
+	WdfSpinLockRelease(pDeviceContext->D0ExitLock);
+
 	// AmtTrace()'s internal NULL check on its own local copy of this
 	// argument (see Trace.h) re-taints pDeviceContext as "possibly NULL"
 	// for PREfast from this point on, even though the earlier
@@ -501,6 +516,21 @@ AmtPtpSetFeatures(
 				}
 				case PTP_COLLECTION_WINDOWS:
 				{
+					if (t2RestartPending) {
+						AmtTrace(pDeviceContext,
+							"SetFeatures: T2 restart pending, suppressing MTConfig "
+							"Device Mode hardware write and completing SET_FEATURE successfully");
+						status = STATUS_SUCCESS;
+						goto exit;
+					}
+
+					if (lifecycleBlocked) {
+						AmtTrace(pDeviceContext,
+							"SetFeatures: lifecycle blocked without T2 restart, "
+							"rejecting Device Mode SET_FEATURE");
+						status = STATUS_DEVICE_NOT_READY;
+						goto exit;
+					}
 
 					if (!bWellspringMode) {
 						// This is the exact request Windows' own
@@ -655,6 +685,13 @@ AmtPtpSetFeatures(
 		}
 		case REPORTID_FUNCSWITCH:
 		{
+			if (lifecycleBlocked) {
+				AmtTrace(pDeviceContext,
+					"SetFeatures: lifecycle blocked, rejecting non-Device-Mode "
+					"SET_FEATURE reportId=0x%02X", pHidPacket->reportId);
+				status = STATUS_DEVICE_NOT_READY;
+				goto exit;
+			}
 
 			// AUDIT FIX: same missing-length-check class of bug as
 			// REPORTID_REPORTMODE above - validate before dereferencing.
@@ -670,6 +707,14 @@ AmtPtpSetFeatures(
 		}
 		default:
 		{
+			if (lifecycleBlocked) {
+				AmtTrace(pDeviceContext,
+					"SetFeatures: lifecycle blocked, rejecting non-Device-Mode "
+					"SET_FEATURE reportId=0x%02X", pHidPacket->reportId);
+				status = STATUS_DEVICE_NOT_READY;
+				goto exit;
+			}
+
 			AmtTrace(pDeviceContext, "SetFeatures: unsupported reportId=0x%02X", pHidPacket->reportId);
 			status = STATUS_NOT_SUPPORTED;
 			goto exit;
