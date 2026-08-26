@@ -1,9 +1,16 @@
 ; ============================================================================
 ;  WellspringControlCenter.iss
-;  Installer for Wellspring Control Center (AmtPtpConfigGui).
+;  Installer for Wellspring Control Center (AmtPtpConfigGui) + optional
+;  AmtPtpDeviceUsbKm driver.
 ;
 ;  What it does:
-;   - Installs to {autopf}\WellspringControlCenter (Program Files)
+;   - At the very start (right after the Welcome page) asks what to install:
+;       1) GUI + Driver (default)
+;       2) GUI only
+;       3) Driver only
+;     Only shown when the build actually embeds a driver (see IncludeDriver
+;     below) - a GUI-only build behaves exactly like before, no page shown.
+;   - Installs the GUI to {autopf}\WellspringControlCenter (Program Files)
 ;   - Registers an entry in "Programs and Features" (Inno Setup does this
 ;     automatically: HKLM\...\Uninstall\{AppId}_is1)
 ;   - Before copying files (fresh install OR upgrade), force-closes
@@ -15,6 +22,20 @@
 ;     with write permissions for BUILTIN\Users - the GUI stores
 ;     settings.json/profiles.json there, SHARED across all users on the
 ;     machine
+;   - Driver install (when chosen) runs in-process, right inside setup.exe,
+;     NOT via a separate .bat/.vbs. Setup.exe itself already requires admin
+;     (PrivilegesRequired=admin below), so it is already elevated by the
+;     time it reaches this code - every Exec() call it makes (bcdedit,
+;     Import-Certificate, pnputil) inherits that same admin token
+;     automatically. There is no second UAC prompt, no self-relaunch, and
+;     therefore nothing that can fail the way the old VBS
+;     "ShellExecute ... runas" relaunch used to (it would print "Requesting
+;     administrator privileges..." and then the console window would just
+;     close/crash if the relaunch didn't take).
+;   - After a successful driver install, Setup asks to reboot using its own
+;     built-in Finished-page mechanism (NeedsRestart) instead of a raw
+;     "shutdown /r /t 30" - the user gets the normal Inno "restart now /
+;     later" choice.
 ;   - On uninstall: closes the process, removes the shortcut
 ;     (automatically), and asks whether to delete settings/profiles
 ;     (%ProgramData%\WellspringPTP) and the autostart key
@@ -46,16 +67,13 @@
 ; stage\min\WellspringPTP\Driver from the package-installer job there via
 ; /DDriverSourceDir=... . Left undefined by BuildGui.yml (GUI-only build has
 ; no driver to package), in which case the installer behaves exactly as
-; before - GUI only, "WellspringControlCenter-Setup-*".
+; before - GUI only, no choice page, "WellspringControlCenter-Setup-*".
 ;
-; When it IS defined, the installer is named "WellspringPTP-Setup-*" and the
-; four driver files are embedded (Flags: dontcopy - NOT installed under
-; {app}), extracted to Setup's own {tmp} folder only for the duration of the
-; install. On the Finished page a checkbox ("Install driver now") lets the
-; user launch a visible console (DriverInstallPrompt.bat) that asks for
-; explicit YES/NO confirmation (re-asking on anything else), then enables
-; Test Mode, imports the certificate, installs the driver, and reboots.
-; Whether the checkbox is used or not, Inno Setup deletes everything it
+; When it IS defined, the installer is named "WellspringPTP-Setup-*", shows
+; the "what to install" page described above, and the four driver files are
+; embedded (Flags: dontcopy - NOT installed under {app}), extracted to
+; Setup's own {tmp} folder only for the duration of the install. Whether the
+; driver is installed or skipped, Inno Setup deletes everything it
 ; extracted to {tmp} once Setup exits - nothing driver-related is left
 ; behind outside of what was actually installed into Windows.
 #ifdef DriverSourceDir
@@ -110,19 +128,19 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 ; Published GUI (Min - framework-dependent single file from CI, or
-; publish\win-x64 for a local build via build-gui.ps1).
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; publish\win-x64 for a local build via build-gui.ps1). Skipped entirely
+; when the user picked "Driver only".
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: InstallGui
 #ifdef IncludeDriver
 ; Signed driver package - embedded in setup.exe but NOT copied under {app}.
 ; dontcopy means these are only extracted (to {tmp}) on demand, via
 ; ExtractTemporaryFile in [Code]; see CurStepChanged below. DestDir is
-; required syntax here but unused for dontcopy entries.
-Source: "{#DriverSourceDir}\{#DriverName}.sys"; DestDir: "{tmp}"; Flags: dontcopy
-Source: "{#DriverSourceDir}\{#DriverName}.inf"; DestDir: "{tmp}"; Flags: dontcopy
-Source: "{#DriverSourceDir}\{#DriverName}.cat"; DestDir: "{tmp}"; Flags: dontcopy
-Source: "{#DriverSourceDir}\{#DriverName}.cer"; DestDir: "{tmp}"; Flags: dontcopy
-; Interactive install/reboot prompt (lives alongside this .iss).
-Source: "DriverInstallPrompt.bat"; DestDir: "{tmp}"; Flags: dontcopy
+; required syntax here but unused for dontcopy entries. Check: InstallDriver
+; means these are simply never extracted when the user picked "GUI only".
+Source: "{#DriverSourceDir}\{#DriverName}.sys"; DestDir: "{tmp}"; Flags: dontcopy; Check: InstallDriver
+Source: "{#DriverSourceDir}\{#DriverName}.inf"; DestDir: "{tmp}"; Flags: dontcopy; Check: InstallDriver
+Source: "{#DriverSourceDir}\{#DriverName}.cat"; DestDir: "{tmp}"; Flags: dontcopy; Check: InstallDriver
+Source: "{#DriverSourceDir}\{#DriverName}.cer"; DestDir: "{tmp}"; Flags: dontcopy; Check: InstallDriver
 #endif
 
 [Dirs]
@@ -130,27 +148,16 @@ Source: "DriverInstallPrompt.bat"; DestDir: "{tmp}"; Flags: dontcopy
 ; without elevation, so grant BUILTIN\Users modify rights upfront -
 ; otherwise a non-admin user couldn't write there. uninsneveruninstall:
 ; deletion is handled by hand in [Code] (asked for and only on consent),
-; not silently by Inno's own automation.
-Name: "{commonappdata}\WellspringPTP"; Permissions: users-modify; Flags: uninsneveruninstall
+; not silently by Inno's own automation. Only needed when the GUI is
+; actually being installed.
+Name: "{commonappdata}\WellspringPTP"; Permissions: users-modify; Flags: uninsneveruninstall; Check: InstallGui
 
 [Icons]
 ; Shortcut only, NO subfolder in Start Menu, for all users.
-Name: "{commonprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
+Name: "{commonprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Check: InstallGui
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
-#ifdef IncludeDriver
-; Unchecked by default (a reboot is a big enough action that it should be an
-; opt-in click, not a surprise). shellexec launches the .bat through its own
-; file association (cmd.exe) instead of us building a "cmd /c ""..."" ""..."""
-; command line by hand - manually nesting two quoted arguments after /c hits
-; a classic cmd.exe parsing bug (it strips the first and last quote of the
-; WHOLE string when both exist, not per-token, corrupting the path when a
-; second quoted argument follows). shellexec sidesteps that entirely.
-; No nowait, so Setup still waits for the console to close before exiting
-; (which is also when it cleans up everything extracted to {tmp}).
-Filename: "{tmp}\DriverInstallPrompt.bat"; Parameters: "{#DriverName}"; WorkingDir: "{tmp}"; Description: "Install Wellspring PTP driver now (opens a console; may reboot)"; Flags: postinstall unchecked shellexec
-#endif
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent; Check: InstallGui
 
 [Code]
 
@@ -159,6 +166,12 @@ const
   SettingsDirName = 'WellspringPTP';
   RunKeyPath = 'Software\Microsoft\Windows\CurrentVersion\Run';
   RunValueName = 'WellspringPTP';
+
+var
+  #ifdef IncludeDriver
+  InstallChoicePage: TInputOptionWizardPage;
+  #endif
+  RebootNeeded: Boolean;
 
 // Min build - framework-dependent (no bundled CLR), so .NET 8 Desktop
 // Runtime must be installed on the machine. Check the shared-runtime
@@ -182,24 +195,174 @@ begin
   Result := Found;
 end;
 
+procedure WarnIfDotNet8Missing;
+begin
+  if not IsDotNet8DesktopRuntimeInstalled() then
+  begin
+    MsgBox('.NET 8 Desktop Runtime was not found.' + #13#10 +
+      'This build of Wellspring Control Center requires it to run.' + #13#10 +
+      'Install it from https://dotnet.microsoft.com/download/dotnet/8.0 ' +
+      '("Desktop Runtime" section), then run the installer again, or ' +
+      'install the runtime later - setup will continue.',
+      mbInformation, MB_OK);
+  end;
+end;
+
 #ifdef IncludeDriver
+// "What to install" page, shown right after the Welcome page - only
+// present in builds that actually embed a driver. Exclusive radio-button
+// style list (True = exclusive): 0 = GUI + Driver, 1 = GUI only,
+// 2 = Driver only.
+procedure InitializeWizard();
+begin
+  InstallChoicePage := CreateInputOptionPage(wpWelcome,
+    'Select Installation Type',
+    'What would you like to install?',
+    'Select one option, then click Next to continue.',
+    True, False);
+  InstallChoicePage.Add('GUI + Driver (recommended)');
+  InstallChoicePage.Add('GUI only');
+  InstallChoicePage.Add('Driver only');
+  InstallChoicePage.SelectedValueIndex := 0;
+end;
+
+function InstallGui(): Boolean;
+begin
+  Result := InstallChoicePage.SelectedValueIndex <> 2;
+end;
+
+function InstallDriver(): Boolean;
+begin
+  Result := InstallChoicePage.SelectedValueIndex <> 1;
+end;
+
+// Runs the driver install steps directly inside this (already-elevated)
+// setup.exe process - no separate script, no self-relaunch, no VBS.
+// bcdedit / Import-Certificate / pnputil all just need SOME admin process
+// to run them; since PrivilegesRequired=admin above already guarantees
+// setup.exe itself is elevated, every Exec() call here inherits that same
+// token automatically.
+procedure InstallDriverNow;
+var
+  ResultCode: Integer;
+  Inf, Cer: String;
+  Ok: Boolean;
+begin
+  Inf := ExpandConstant('{tmp}\{#DriverName}.inf');
+  Cer := ExpandConstant('{tmp}\{#DriverName}.cer');
+  Ok := True;
+
+  WizardForm.StatusLabel.Caption := 'Enabling Windows Test Mode...';
+  if (not Exec(ExpandConstant('{sys}\bcdedit.exe'), '/set testsigning on', '',
+       SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+  begin
+    MsgBox('Could not enable Test Mode (bcdedit).' + #13#10 +
+      'If Secure Boot is on in the BIOS/UEFI, it must be disabled first.' + #13#10 +
+      'Driver installation was NOT completed.', mbError, MB_OK);
+    Ok := False;
+  end;
+
+  if Ok and (not FileExists(Cer)) then
+  begin
+    MsgBox('Certificate not found: ' + Cer, mbError, MB_OK);
+    Ok := False;
+  end;
+
+  if Ok then
+  begin
+    WizardForm.StatusLabel.Caption := 'Importing certificate (Trusted Root)...';
+    if (not Exec('powershell.exe',
+         '-NoProfile -ExecutionPolicy Bypass -Command "Import-Certificate -FilePath ''' +
+         Cer + ''' -CertStoreLocation Cert:\LocalMachine\Root | Out-Null"',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+    begin
+      MsgBox('Failed to import the certificate into Trusted Root.', mbError, MB_OK);
+      Ok := False;
+    end;
+  end;
+
+  if Ok then
+  begin
+    WizardForm.StatusLabel.Caption := 'Importing certificate (Trusted Publishers)...';
+    if (not Exec('powershell.exe',
+         '-NoProfile -ExecutionPolicy Bypass -Command "Import-Certificate -FilePath ''' +
+         Cer + ''' -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null"',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+    begin
+      MsgBox('Failed to import the certificate into Trusted Publishers.', mbError, MB_OK);
+      Ok := False;
+    end;
+  end;
+
+  if Ok and (not FileExists(Inf)) then
+  begin
+    MsgBox('Driver .inf not found: ' + Inf, mbError, MB_OK);
+    Ok := False;
+  end;
+
+  if Ok then
+  begin
+    WizardForm.StatusLabel.Caption := 'Installing driver (pnputil)...';
+    if (not Exec(ExpandConstant('{sys}\pnputil.exe'), '/add-driver "' + Inf + '" /install',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+    begin
+      MsgBox('pnputil reported an error installing the driver.', mbError, MB_OK);
+      Ok := False;
+    end;
+  end;
+
+  if Ok then
+  begin
+    RebootNeeded := True;
+    MsgBox('The driver was installed successfully.' + #13#10 +
+      'A reboot is required to finish - you will be offered one on the next page.',
+      mbInformation, MB_OK);
+  end;
+end;
+
 // Driver files were embedded with Flags: dontcopy, so they don't exist on
 // disk until explicitly extracted. Do that right after the app itself is
-// installed, so they're ready by the time the Finished page's [Run] entry
-// (if the user checks it) tries to launch DriverInstallPrompt.bat. Inno
-// Setup deletes everything it extracts to {tmp} when Setup exits, whether
-// the user installs the driver, skips it, or cancels - no manual cleanup
-// needed here.
+// installed, then (if the user chose to install the driver) ask for
+// confirmation and run the steps in-process. Inno Setup deletes everything
+// it extracted to {tmp} when Setup exits, whether the driver install
+// succeeds, is declined, or fails - no manual cleanup needed here.
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssPostInstall then
+  if (CurStep = ssPostInstall) and InstallDriver() then
   begin
     ExtractTemporaryFile('{#DriverName}.sys');
     ExtractTemporaryFile('{#DriverName}.inf');
     ExtractTemporaryFile('{#DriverName}.cat');
     ExtractTemporaryFile('{#DriverName}.cer');
-    ExtractTemporaryFile('DriverInstallPrompt.bat');
+
+    if MsgBox(
+      'Install the Wellspring PTP driver now?' + #13#10#13#10 +
+      'This will:' + #13#10 +
+      '  1. Enable Windows Test Mode (testsigning) so the driver''s test' + #13#10 +
+      '     certificate is trusted.' + #13#10 +
+      '  2. Import that certificate into Trusted Root and Trusted Publishers.' + #13#10 +
+      '  3. Install the {#DriverName} driver (pnputil).' + #13#10 +
+      '  4. Require a reboot afterwards to finish.' + #13#10#13#10 +
+      'Save any open work before continuing.',
+      mbConfirmation, MB_YESNO) = IDYES then
+      InstallDriverNow;
   end;
+end;
+
+function NeedsRestart(): Boolean;
+begin
+  Result := RebootNeeded;
+end;
+
+#else
+function InstallGui(): Boolean;
+begin
+  Result := True;
+end;
+
+function InstallDriver(): Boolean;
+begin
+  Result := False;
 end;
 #endif
 
