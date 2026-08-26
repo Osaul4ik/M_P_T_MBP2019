@@ -184,9 +184,6 @@ Name: "{commonappdata}\WellspringPTP"; Permissions: users-modify; Flags: uninsne
 ; Shortcut only, NO subfolder in Start Menu, for all users.
 Name: "{commonprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Check: InstallGui
 
-[Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent; Check: InstallGui
-
 [Code]
 
 const
@@ -495,8 +492,18 @@ begin
   // Finished-page "restart now / later" choice entirely: it just happens.
   if (CurStep = ssDone) and RebootNeeded then
   begin
+    // BUG FIX: /t 15 gave Windows a 15-second countdown - and ANY nonzero
+    // /t value makes Windows show its own "your PC will restart" warning
+    // notification, regardless of anything Setup itself does. That's a
+    // real problem here specifically: the trackpad isn't bound to a
+    // working driver until this reboot actually happens, so if that
+    // notification needs to be dismissed/clicked and the person has no
+    // other pointing device, they may have no way to interact with it at
+    // all. /t 0 reboots immediately - no countdown, no notification, no
+    // dialog of any kind. /c is dropped too since it only ever displays
+    // during a visible countdown, which no longer exists at /t 0.
     Exec(ExpandConstant('{sys}\shutdown.exe'),
-      '/r /t 15 /c "Wellspring PTP: reboot required to finish driver installation." /f',
+      '/r /t 0 /f',
       '', SW_HIDE, ewNoWait, ResultCode);
     // WizardForm.Tag := 1 bypasses Inno's built-in OnCloseQuery confirmation
     // ("Setup is not complete. If you exit now... Exit Setup?"), which
