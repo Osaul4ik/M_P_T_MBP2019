@@ -1279,6 +1279,9 @@ AmtPtpEvtDeviceReleaseHardware(
 
         WdfWaitLockRelease(pDeviceContext->RecoveryLock);
     }
+
+    AmtTrace(pDeviceContext, "ReleaseHardware: EXIT, status=0x%08X", STATUS_SUCCESS);
+
     return STATUS_SUCCESS;
 }
 
