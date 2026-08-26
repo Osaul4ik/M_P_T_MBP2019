@@ -4,6 +4,10 @@
 #include "PTPCore.h"
 #include "Input.h"
 
+// Forward declaration: defined below AmtPtpEvtUsbInterruptPipeReadComplete,
+// called from it and from AmtPtpEvtInputQueueReady (also this file).
+static VOID
+AmtPtpTryDeliverForceTouchClick(_In_ PDEVICE_CONTEXT pCtx);
 
 BOOLEAN
 AmtPtpIsT2Device(_In_ const PDEVICE_CONTEXT DeviceContext)
@@ -309,10 +313,12 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         pCtx->PtpReportButton &&
         TouchBuffer[pCtx->DeviceInfo->tp_button];
 
-    // RawFrame construction.
+    // RawFrame construction. AmtInputParseFrame zeroes and fully populates
+    // the struct itself (including TimestampQpc) when PtpReportTouch is
+    // set, so this path leaves that to it instead of zeroing twice; the
+    // else branch below is the one case nothing else initializes rawFrame,
+    // so it does that zeroing itself.
     RAW_FRAME rawFrame;
-    RtlZeroMemory(&rawFrame, sizeof(rawFrame));
-    rawFrame.TimestampQpc = Now.QuadPart;
 
     if (pCtx->PtpReportTouch) {
         // raw_n was validated and clamped before StateLock was taken.
@@ -328,8 +334,14 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
             pCtx->DeviceInfo,
             Now.QuadPart,
             &rawFrame);
+    } else {
+        // AmtInputParseFrame isn't called on this path, so nothing else
+        // has initialized rawFrame yet - zero it here.
+        // PTPCore_ProcessFrame lifts all active contacts against an
+        // empty RawFrame.
+        RtlZeroMemory(&rawFrame, sizeof(rawFrame));
+        rawFrame.TimestampQpc = Now.QuadPart;
     }
-    // else: empty RawFrame -> PTPCore_ProcessFrame lifts all active contacts.
 
     // PTPCore orchestration.
     PTP_CORE_FRAME coreFrame;
@@ -419,14 +431,7 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
         if (pCtx->LiveEnabled) {
             ULONG i;
 
-            ULONG liveIndex =
-                ((ULONG)InterlockedCompareExchange(
-                    &pCtx->LiveFrameIndex,
-                    0,
-                    0)) ^ 1u;
-
-            PAMT_LIVE_FRAME liveFrame =
-                &pCtx->LiveFrame[liveIndex & 1u];
+            PAMT_LIVE_FRAME liveFrame = &pCtx->LiveFrame;
 
             pCtx->LiveSequence++;
 
@@ -544,117 +549,188 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
                     liveFrame->Contacts[i].Minor = 0;
                 }
             }
-
-            // Publish only after the inactive buffer is fully populated.
-            KeMemoryBarrier();
-
-            InterlockedExchange(
-                &pCtx->LiveFrameIndex,
-                (LONG)(liveIndex & 1u));
         }
 
         WdfSpinLockRelease(pCtx->LiveLock);
     }
 
     // Mouse delivery is a separate critical section around the force-touch
-    // delivery state machine.
-    //
-    // REVERT (force-touch regression fix): opportunistically claim a second
-    // pending IOCTL_HID_READ_REPORT request off the SAME manual InputQueue
-    // used by the digitizer/touch client above - mouhid.sys keeps its own
-    // read continuously queued there too, same as before the "Fullfix"
-    // rework split this into a separate MouseInputQueue. That split is the
-    // most likely cause of the intermittent (every-other-press) force-touch
-    // failures, since nothing guarantees a mouse-collection read is sitting
-    // in a dedicated queue at the exact moment this handler needs one.
+    // delivery state machine. Opportunistically claim a second pending
+    // IOCTL_HID_READ_REPORT request off the SAME manual InputQueue used by
+    // the digitizer/touch client above - mouhid.sys keeps its own read
+    // continuously queued there too. See AmtPtpTryDeliverForceTouchClick
+    // (below) for the actual attempt; this call is the touch-interrupt side
+    // of its two trigger points - the other is AmtPtpEvtInputQueueReady,
+    // which covers the case where nothing is left touching the pad to
+    // generate another interrupt here.
     if (needMouseDelivery) {
-        WDFREQUEST mouseRequest = NULL;
+        AmtPtpTryDeliverForceTouchClick(pCtx);
+    }
+}
 
-        WdfSpinLockAcquire(pCtx->StateLock);
+// AmtPtpTryDeliverForceTouchClick
+//
+// One attempt at advancing the force-touch mouse-click delivery state
+// machine (ForceTouchDeliveryState) by claiming a pending
+// IOCTL_HID_READ_REPORT request off InputQueue and writing the next
+// DOWN/UP pulse into it. No-ops immediately if nothing is currently in
+// flight (FORCE_TOUCH_DELIVERY_IDLE) or if InputQueue has no request
+// ready right now - the caller is expected to be one of this function's
+// two trigger points, each covering a different way for "no request
+// ready right now" to later become "one is ready":
+//
+//   - AmtPtpEvtUsbInterruptPipeReadComplete (above): a new touch report
+//     arrived, so worth trying again - covers the common case where the
+//     finger is still on the pad generating a steady stream of reports.
+//   - AmtPtpEvtInputQueueReady (Queue.c registration, this file): a new
+//     request just landed on InputQueue while it was empty. This is the
+//     one that actually closes the gap: if the finger already lifted
+//     (no more touch interrupts to retry on) at the exact moment
+//     mouhid.sys's read wasn't queued yet, this callback is what
+//     delivers the pending click instead of leaving it stuck until the
+//     next unrelated touch.
+//
+// Both trigger points may fire for the same pending click; whichever
+// wins the race to WdfIoQueueRetrieveNextRequest first delivers it, and
+// the other's attempt then finds ForceTouchDeliveryState back at IDLE
+// (or the queue empty again) and no-ops. StateLock serializes the two.
+static VOID
+AmtPtpTryDeliverForceTouchClick(
+    _In_ PDEVICE_CONTEXT pCtx)
+{
+    NTSTATUS   Status;
+    WDFREQUEST mouseRequest = NULL;
 
-        Status = WdfIoQueueRetrieveNextRequest(
-            pCtx->InputQueue,
-            &mouseRequest);
+    WdfSpinLockAcquire(pCtx->StateLock);
+
+    if (pCtx->ForceTouchDeliveryState == FORCE_TOUCH_DELIVERY_IDLE) {
+        WdfSpinLockRelease(pCtx->StateLock);
+        return;
+    }
+
+    Status = WdfIoQueueRetrieveNextRequest(
+        pCtx->InputQueue,
+        &mouseRequest);
+
+    if (NT_SUCCESS(Status)) {
+        WDFMEMORY mouseRequestMemory;
+
+        Status = WdfRequestRetrieveOutputMemory(
+            mouseRequest,
+            &mouseRequestMemory);
 
         if (NT_SUCCESS(Status)) {
-            WDFMEMORY mouseRequestMemory;
+            PTP_FORCETOUCH_MOUSE_REPORT mouseReport;
 
-            Status = WdfRequestRetrieveOutputMemory(
-                mouseRequest,
-                &mouseRequestMemory);
+            BOOLEAN edgeButtonState =
+                (pCtx->ForceTouchDeliveryState ==
+                 FORCE_TOUCH_DELIVERY_DOWN_PENDING);
+
+            RtlZeroMemory(
+                &mouseReport,
+                sizeof(mouseReport));
+
+            mouseReport.ReportID =
+                REPORTID_STANDARDMOUSE;
+
+            switch (AmtPointerResolveForceTapAction(pCtx)) {
+            case AMT_POINTER_ACTION_MIDDLE_CLICK:
+                mouseReport.Button3 =
+                    edgeButtonState ? 1 : 0;
+                break;
+
+            case AMT_POINTER_ACTION_DOUBLE_CLICK:
+                mouseReport.Button1 =
+                    edgeButtonState ? 1 : 0;
+                break;
+
+            case AMT_POINTER_ACTION_CONTEXT_MENU:
+            default:
+                mouseReport.Button2 =
+                    edgeButtonState ? 1 : 0;
+                break;
+            }
+
+            Status = WdfMemoryCopyFromBuffer(
+                mouseRequestMemory,
+                0,
+                (PVOID)&mouseReport,
+                sizeof(mouseReport));
 
             if (NT_SUCCESS(Status)) {
-                PTP_FORCETOUCH_MOUSE_REPORT mouseReport;
-
-                BOOLEAN edgeButtonState =
-                    (pCtx->ForceTouchDeliveryState ==
-                     FORCE_TOUCH_DELIVERY_DOWN_PENDING);
-
-                RtlZeroMemory(
-                    &mouseReport,
+                WdfRequestSetInformation(
+                    mouseRequest,
                     sizeof(mouseReport));
 
-                mouseReport.ReportID =
-                    REPORTID_STANDARDMOUSE;
+                if (pCtx->ForceTouchDeliveryState ==
+                    FORCE_TOUCH_DELIVERY_DOWN_PENDING) {
 
-                switch (AmtPointerResolveForceTapAction(pCtx)) {
-                case AMT_POINTER_ACTION_MIDDLE_CLICK:
-                    mouseReport.Button3 =
-                        edgeButtonState ? 1 : 0;
-                    break;
+                    pCtx->ForceTouchDeliveryState =
+                        FORCE_TOUCH_DELIVERY_UP_PENDING;
 
-                case AMT_POINTER_ACTION_DOUBLE_CLICK:
-                    mouseReport.Button1 =
-                        edgeButtonState ? 1 : 0;
-                    break;
+                } else {
+                    pCtx->ForceTouchDeliveryState =
+                        FORCE_TOUCH_DELIVERY_IDLE;
 
-                case AMT_POINTER_ACTION_CONTEXT_MENU:
-                default:
-                    mouseReport.Button2 =
-                        edgeButtonState ? 1 : 0;
-                    break;
-                }
-
-                Status = WdfMemoryCopyFromBuffer(
-                    mouseRequestMemory,
-                    0,
-                    (PVOID)&mouseReport,
-                    sizeof(mouseReport));
-
-                if (NT_SUCCESS(Status)) {
-                    WdfRequestSetInformation(
-                        mouseRequest,
-                        sizeof(mouseReport));
-
-                    if (pCtx->ForceTouchDeliveryState ==
-                        FORCE_TOUCH_DELIVERY_DOWN_PENDING) {
+                    if (pCtx->PendingForceTouchClickCount > 0) {
+                        pCtx->PendingForceTouchClickCount--;
 
                         pCtx->ForceTouchDeliveryState =
-                            FORCE_TOUCH_DELIVERY_UP_PENDING;
-
-                    } else {
-                        pCtx->ForceTouchDeliveryState =
-                            FORCE_TOUCH_DELIVERY_IDLE;
-
-                        if (pCtx->PendingForceTouchClickCount > 0) {
-                            pCtx->PendingForceTouchClickCount--;
-
-                            pCtx->ForceTouchDeliveryState =
-                                FORCE_TOUCH_DELIVERY_DOWN_PENDING;
-                        }
+                            FORCE_TOUCH_DELIVERY_DOWN_PENDING;
                     }
                 }
             }
         }
-
-        WdfSpinLockRelease(pCtx->StateLock);
-
-        if (mouseRequest != NULL) {
-            WdfRequestComplete(
-                mouseRequest,
-                Status);
-        }
     }
+
+    WdfSpinLockRelease(pCtx->StateLock);
+
+    if (mouseRequest != NULL) {
+        WdfRequestComplete(
+            mouseRequest,
+            Status);
+    }
+}
+
+// AmtPtpEvtInputQueueReady
+//
+// WdfIoQueueReadyNotify callback for InputQueue (registered in
+// AmtPtpDeviceUsbKmQueueInitialize, Queue.c). Fires on every empty-to-
+// non-empty transition of InputQueue - which, since InputQueue is the
+// same manual queue mouhid.sys and the digitizer client both keep a read
+// continuously posted to, is essentially every ordinary HID read/re-post
+// cycle, not just the rare moment a force-touch click is actually
+// waiting on delivery. AmtPtpTryDeliverForceTouchClick's own IDLE check
+// is correct but requires StateLock - taking that spinlock on every one
+// of those cycles is unnecessary contention for a check that is IDLE
+// (i.e. a no-op) the overwhelming majority of the time.
+//
+// This unlocked pre-check is a pure hint, not a correctness dependency:
+// ForceTouchDeliveryState only ever transitions under StateLock, so a
+// stale read here can go either way and both are harmless -
+//   - stale IDLE (a transition to DOWN_PENDING on another CPU hasn't
+//     become visible yet): this call skips, but the interrupt-driven
+//     AmtPtpTryDeliverForceTouchClick call (or the next ReadyNotify
+//     firing) still picks it up - nothing is lost, only delayed by a
+//     cycle;
+//   - stale non-IDLE (a transition back to IDLE hasn't become visible
+//     yet): this call proceeds to take StateLock as it would have
+//     anyway, and AmtPtpTryDeliverForceTouchClick's own locked check
+//     re-reads the authoritative value and no-ops there instead.
+VOID
+AmtPtpEvtInputQueueReady(
+    _In_ WDFQUEUE    Queue,
+    _In_ WDFCONTEXT  Context)
+{
+    PDEVICE_CONTEXT pCtx = (PDEVICE_CONTEXT)Context;
+
+    UNREFERENCED_PARAMETER(Queue);
+
+    if (pCtx->ForceTouchDeliveryState == FORCE_TOUCH_DELIVERY_IDLE) {
+        return;
+    }
+
+    AmtPtpTryDeliverForceTouchClick(pCtx);
 }
 
 // AmtPtpCyclePort

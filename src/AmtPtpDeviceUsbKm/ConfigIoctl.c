@@ -1123,9 +1123,8 @@ AmtPtpSetLiveEnabled(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
         fileContext->LiveOwner = TRUE;
         InterlockedExchange(&targetContext->LiveEnabled, 1);
         targetContext->LiveSequence = 0;
-        InterlockedExchange(&targetContext->LiveFrameIndex, 0);
-        RtlZeroMemory(targetContext->LiveFrame, sizeof(targetContext->LiveFrame));
-        targetContext->LiveFrame[0].StructVersion = AMT_LIVE_FRAME_VERSION;
+        RtlZeroMemory(&targetContext->LiveFrame, sizeof(targetContext->LiveFrame));
+        targetContext->LiveFrame.StructVersion = AMT_LIVE_FRAME_VERSION;
     } else {
         if (targetContext->LiveOwnerFileObject != fileObject) {
             WdfSpinLockRelease(targetContext->LiveLock);
@@ -1157,7 +1156,6 @@ AmtPtpGetLiveFrame(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
     PAMT_LIVE_FRAME output;
     size_t outputLength = 0;
     NTSTATUS status;
-    ULONG index;
 
     WDFFILEOBJECT fileObject = WdfRequestGetFileObject(Request);
     fileContext = fileObject != NULL
@@ -1210,9 +1208,7 @@ AmtPtpGetLiveFrame(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request)
         goto exit;
     }
 
-    index = (ULONG)InterlockedCompareExchange(
-        &targetContext->LiveFrameIndex, 0, 0);
-    *output = targetContext->LiveFrame[index & 1u];
+    *output = targetContext->LiveFrame;
 
     WdfSpinLockRelease(targetContext->LiveLock);
 

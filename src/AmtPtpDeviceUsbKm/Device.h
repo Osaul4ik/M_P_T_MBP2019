@@ -167,8 +167,16 @@ typedef struct _DEVICE_CONTEXT
     volatile LONG   LiveEnabled;
     WDFFILEOBJECT   LiveOwnerFileObject;
     ULONG           LiveSequence;
-    AMT_LIVE_FRAME  LiveFrame[2];
-    volatile LONG    LiveFrameIndex;
+
+    // Single buffer - both the writer (Interrupt.c) and every reader
+    // (ConfigIoctl.c: SET_LIVE_ENABLED's reset, GET_LIVE_FRAME) hold
+    // LiveLock across their entire access, so the lock alone already
+    // gives full exclusion and cross-CPU visibility. Do NOT remove that
+    // locking (e.g. to make GET_LIVE_FRAME lock-free for latency) without
+    // first reintroducing double-buffering or another synchronization
+    // scheme here - without it, a reader could observe a partially-
+    // written frame.
+    AMT_LIVE_FRAME  LiveFrame;
 
     // Device config
     const struct BCM5974_CONFIG* DeviceInfo;
@@ -755,6 +763,13 @@ AmtPtpIsT2Device(_In_ const PDEVICE_CONTEXT DeviceContext);
 EVT_WDF_USB_READER_COMPLETION_ROUTINE AmtPtpEvtUsbInterruptPipeReadComplete;
 EVT_WDF_USB_READERS_FAILED            AmtPtpEvtUsbInterruptReadersFailed;
 EVT_WDF_TIMER                         AmtPtpEvtReaderRestartTimer;
+
+// WdfIoQueueReadyNotify callback for InputQueue (registered in
+// AmtPtpDeviceUsbKmQueueInitialize, Queue.c). Closes the gap where a
+// pending force-touch mouse click (ForceTouchDeliveryState != IDLE) has
+// no touch interrupt left to retry delivery on - see the comment above
+// AmtPtpTryDeliverForceTouchClick in Interrupt.c for the full rationale.
+EVT_WDF_IO_QUEUE_STATE AmtPtpEvtInputQueueReady;
 
 // Last rung of the reader-recovery escalation ladder - see
 // READER_RECOVERY_STAGE. Power-cycles the device's USB port, the moral

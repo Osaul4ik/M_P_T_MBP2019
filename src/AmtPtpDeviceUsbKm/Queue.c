@@ -133,6 +133,30 @@ AmtPtpDeviceUsbKmQueueInitialize(
         return status;
     }
 
+    // Force-touch mouse click delivery (Interrupt.c) opportunistically
+    // claims a request off this same queue whenever a click is in flight
+    // (ForceTouchDeliveryState != IDLE). That delivery is normally retried
+    // on every touch interrupt, but if the finger already lifted - no more
+    // interrupts to retry on - and mouhid.sys's read wasn't queued at that
+    // exact moment, nothing would ever wake the pending click back up.
+    // WdfIoQueueReadyNotify closes that gap: it fires the moment a new
+    // request lands on InputQueue while it was empty, which is exactly the
+    // "a request just became available" event delivery was waiting on.
+    // AmtPtpEvtInputQueueReady no-ops immediately (via the IDLE check in
+    // AmtPtpTryDeliverForceTouchClick) for every ordinary read that has
+    // nothing to do with force touch, so this costs nothing outside that
+    // one edge case.
+    status = WdfIoQueueReadyNotify(
+        pDeviceContext->InputQueue,
+        AmtPtpEvtInputQueueReady,
+        pDeviceContext);
+    if (!NT_SUCCESS(status)) {
+        AmtTrace(pDeviceContext,
+            "QueueInitialize: WdfIoQueueReadyNotify(InputQueue) failed, status=0x%08X",
+            status);
+        return status;
+    }
+
     // NOTE: a separate manual "MouseInputQueue" for the force-touch mouse
     // top-level collection existed here between the "Fullfix" commit and
     // this revert. It has been removed - the mouse collection's reads are
