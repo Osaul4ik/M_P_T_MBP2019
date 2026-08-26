@@ -24,9 +24,9 @@ namespace AmtPtpConfigGui
 
     internal static class AppSettingsStore
     {
-        private static readonly string DirectoryPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WellspringPTP");
-        private static readonly string FilePath = Path.Combine(DirectoryPath, "settings.json");
+        private const string FileName = "settings.json";
+        private static readonly string DirectoryPath = SettingsPaths.DirectoryPath;
+        private static readonly string FilePath = Path.Combine(DirectoryPath, FileName);
         private static readonly string TempFilePath = FilePath + ".tmp";
         private static readonly string BackupFilePath = FilePath + ".bak";
         private static readonly string CorruptBackupFilePath = FilePath + ".corrupt";
@@ -37,6 +37,8 @@ namespace AmtPtpConfigGui
 
         public static AppSettings Load()
         {
+            SettingsPaths.MigrateLegacyFile(FileName);
+
             foreach (string candidate in new[] { FilePath, BackupFilePath })
             {
                 try

@@ -30,6 +30,8 @@ jobs:
     name: Build GUI, package archives
     runs-on: windows-2022
     timeout-minutes: 60
+    outputs:
+      version: ${{ steps.setver.outputs.version }}
 
     steps:
     - uses: actions/checkout@v4
@@ -39,6 +41,7 @@ jobs:
     # узгодженого нейминга артефактів.
     # =====================================================================
     - name: Compute build version and date
+      id: setver
       run: |
         $ErrorActionPreference = "Stop"
         $now = Get-Date
@@ -51,6 +54,7 @@ jobs:
 
         Add-Content -Path $env:GITHUB_ENV -Value "BUILD_DATE=$buildDate"
         Add-Content -Path $env:GITHUB_ENV -Value "BUILD_VERSION=$buildVersion"
+        Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$buildVersion"
       shell: pwsh
 
     # =====================================================================
@@ -125,4 +129,47 @@ jobs:
       with:
         name: WellspringPTP-Gui-Full-${{ env.BUILD_VERSION }}
         path: stage/full
+        if-no-files-found: error
+
+  # =============================================================================
+  # Третій артефакт: інсталятор (Inno Setup), зібраний поверх Min-архіву
+  # (framework-dependent - легший, не тягне self-contained рантайм у
+  # setup.exe). Окремий job, залежить від build-and-package через
+  # download-artifact, а не через локальний стейдж, щоб перевірити, що
+  # Min-архів дійсно валідний як завантажений артефакт.
+  # =============================================================================
+  package-installer:
+    name: Build installer (Inno Setup, from Min)
+    runs-on: windows-2022
+    needs: build-and-package
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download Min GUI artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: WellspringPTP-Gui-Min-${{ needs.build-and-package.outputs.version }}
+        path: stage/min
+
+    - name: Install Inno Setup
+      run: choco install innosetup -y --no-progress
+      shell: pwsh
+
+    - name: Compile installer
+      run: |
+        $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+        & $iscc `
+          src\AmtPtpConfigGui\installer\WellspringControlCenter.iss `
+          "/DMyAppVersion=${{ needs.build-and-package.outputs.version }}" `
+          "/DSourceDir=$PWD\stage\min\WellspringPTP\Gui"
+        if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+      shell: pwsh
+
+    - name: Upload installer artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: WellspringPTP-Installer-${{ needs.build-and-package.outputs.version }}
+        path: src/AmtPtpConfigGui/installer/output/*.exe
         if-no-files-found: error

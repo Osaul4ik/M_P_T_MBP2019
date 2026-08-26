@@ -19,9 +19,9 @@ namespace AmtPtpConfigGui
     internal static class ProfileStore
     {
         private const int DefaultProfileCount = 3;
-        private static readonly string DirectoryPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WellspringPTP");
-        private static readonly string FilePath = Path.Combine(DirectoryPath, "profiles.json");
+        private const string FileName = "profiles.json";
+        private static readonly string DirectoryPath = SettingsPaths.DirectoryPath;
+        private static readonly string FilePath = Path.Combine(DirectoryPath, FileName);
         private static readonly string TempFilePath = FilePath + ".tmp";
         private static readonly string BackupFilePath = FilePath + ".bak";
         private static readonly string CorruptBackupFilePath = FilePath + ".corrupt";
@@ -33,6 +33,8 @@ namespace AmtPtpConfigGui
 
         public static List<GuiProfile> Load()
         {
+            SettingsPaths.MigrateLegacyFile(FileName);
+
             foreach (string candidate in new[] { FilePath, BackupFilePath })
             {
                 try
