@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 title Wellspring PTP - Driver Installation
 
 rem %1 = driver base name (no extension), passed in from the .iss [Run] line.
@@ -22,11 +22,11 @@ net session >nul 2>&1
 if errorlevel 1 (
     echo Requesting administrator privileges...
     set "ELEVATE_VBS=%TEMP%\wsp_elevate_%RANDOM%.vbs"
-    > "%ELEVATE_VBS%" echo On Error Resume Next
-    >> "%ELEVATE_VBS%" echo Set UAC = CreateObject("Shell.Application")
-    >> "%ELEVATE_VBS%" echo UAC.ShellExecute "%~f0", "%DRVNAME%", "%HERE%", "runas", 1
-    cscript //nologo "%ELEVATE_VBS%"
-    del "%ELEVATE_VBS%" >nul 2>&1
+    > "!ELEVATE_VBS!" echo On Error Resume Next
+    >> "!ELEVATE_VBS!" echo Set UAC = CreateObject("Shell.Application")
+    >> "!ELEVATE_VBS!" echo UAC.ShellExecute "%~f0", "%DRVNAME%", "%HERE%", "runas", 1
+    cscript //nologo "!ELEVATE_VBS!"
+    del "!ELEVATE_VBS!" >nul 2>&1
     goto END
 )
 
