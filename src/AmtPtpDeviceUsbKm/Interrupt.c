@@ -251,14 +251,31 @@ AmtPtpEvtUsbInterruptPipeReadComplete(
     // Validate packet shape before dequeuing a HID request and before taking
     // StateLock. This ensures malformed/short USB packets cannot leave an
     // already-dequeued request pending or abandon StateLock.
+    //
+    // MICRO-OPT: quotient is computed once here (used for the shape check
+    // below via a multiply instead of a second division/modulo, and reused
+    // as raw_n when PtpReportTouch is set) instead of separately computing
+    // "% fingerSize" for validation and "/ fingerSize" for raw_n further
+    // down - fingerSize is a runtime value (from the latched device config,
+    // not a compile-time constant), so the compiler cannot fold those into
+    // a single hardware divide the way it could for a constant divisor;
+    // this guarantees exactly one integer division per interrupt instead
+    // of up to two, regardless of compiler CSE behavior across the
+    // WdfMemoryGetBuffer call between the old two call sites.
     if (NumBytesTransferred < headerSize ||
-        pCtx->DeviceInfo->tp_button >= NumBytesTransferred ||
-        (NumBytesTransferred - headerSize) % fingerSize != 0) {
+        pCtx->DeviceInfo->tp_button >= NumBytesTransferred) {
+        return;
+    }
+
+    size_t remainingBytes = NumBytesTransferred - headerSize;
+    size_t quotient       = remainingBytes / fingerSize;
+
+    if (quotient * fingerSize != remainingBytes) {
         return;
     }
 
     if (pCtx->PtpReportTouch) {
-        raw_n = (NumBytesTransferred - headerSize) / fingerSize;
+        raw_n = quotient;
 
         if (raw_n > PTP_MAX_CONTACT_POINTS)
             raw_n = PTP_MAX_CONTACT_POINTS;
