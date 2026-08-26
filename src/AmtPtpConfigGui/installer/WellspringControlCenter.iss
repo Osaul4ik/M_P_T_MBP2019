@@ -32,14 +32,42 @@
 ;     "ShellExecute ... runas" relaunch used to (it would print "Requesting
 ;     administrator privileges..." and then the console window would just
 ;     close/crash if the relaunch didn't take).
-;   - After a successful driver install, Setup asks to reboot using its own
-;     built-in Finished-page mechanism (NeedsRestart) instead of a raw
-;     "shutdown /r /t 30" - the user gets the normal Inno "restart now /
-;     later" choice.
-;   - On uninstall: closes the process, removes the shortcut
-;     (automatically), and asks whether to delete settings/profiles
-;     (%ProgramData%\WellspringPTP) and the autostart key
-;     HKCU\...\Run\WellspringPTP for the current user
+;   - If the user's choice on the page above includes the driver ("GUI +
+;     Driver" or "Driver only"), a warning is shown right after clicking
+;     Next on that page explaining that a restart will be required and
+;     that Setup will close and reboot the machine automatically once the
+;     driver install finishes - no "restart now / later" choice is offered
+;     later on, it just happens.
+;   - After a successful driver install, Setup no longer waits for the
+;     Finished page: it schedules the restart itself (shutdown /r) and
+;     closes its own window as soon as the installation step completes.
+;   - On uninstall (only when the build embeds a driver - see IncludeDriver):
+;     asks what to remove - "Driver + GUI", "GUI only", or "Driver only".
+;       * Driver + GUI: driver is removed (with the Test Mode / rescan
+;         steps below), then Inno's normal full uninstall proceeds and
+;         removes everything, including the uninstaller itself.
+;       * GUI only: only the GUI's files/shortcut are removed; the driver
+;         is left untouched. The Programs-and-Features entry AND
+;         unins000.exe/.dat are deliberately kept, since the driver still
+;         needs a way to be uninstalled later.
+;       * Driver only: only the driver is removed; the GUI is left
+;         untouched, and likewise the uninstaller entry is kept.
+;     In short: the uninstaller only fully removes/deletes itself once
+;     BOTH the GUI and the driver have been removed - if either one still
+;     remains, "Wellspring Control Center" stays listed in Programs and
+;     Features so it can be run again later.
+;     Whenever the driver itself is being removed (Driver + GUI, or Driver
+;     only), the user is also asked whether to disable Windows Test Mode
+;     (testsigning); if they say yes, it's turned off. After the driver
+;     package is removed, a device rescan (pnputil /scan-devices) is run
+;     so the touchpad gets rebound to a working driver right away instead
+;     of being left dead until next boot.
+;     A GUI-only build (no IncludeDriver) keeps the old, simpler behavior:
+;     no choice page, plain full removal.
+;   - On any uninstall path that removes the GUI, the user is also asked
+;     whether to delete settings/profiles (%ProgramData%\WellspringPTP)
+;     and the autostart key HKCU\...\Run\WellspringPTP for the current
+;     user.
 ;
 ;  Lives at src/AmtPtpConfigGui/installer/WellspringControlCenter.iss.
 ;
@@ -170,6 +198,10 @@ const
 var
   #ifdef IncludeDriver
   InstallChoicePage: TInputOptionWizardPage;
+  // 0 = Driver + GUI, 1 = GUI only, 2 = Driver only - set by
+  // AskUninstallChoice() in InitializeUninstall, consumed by
+  // CurUninstallStepChanged.
+  UninstallChoice: Integer;
   #endif
   RebootNeeded: Boolean;
 
@@ -224,6 +256,26 @@ begin
   InstallChoicePage.Add('GUI only');
   InstallChoicePage.Add('Driver only');
   InstallChoicePage.SelectedValueIndex := 0;
+end;
+
+// Warns about the upcoming reboot the moment the user commits to a
+// driver-inclusive choice (index 0 = GUI + Driver, index 2 = Driver only)
+// on the selection page, before any files are copied - not just later,
+// buried in the driver-install confirmation dialog.
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (CurPageID = InstallChoicePage.ID) and
+     (InstallChoicePage.SelectedValueIndex <> 1) then
+  begin
+    MsgBox(
+      'Installing the driver requires a restart to finish.' + #13#10#13#10 +
+      'Once the driver has been installed, Setup will close automatically ' +
+      'and your computer will restart - no further confirmation will be ' +
+      'asked at that point.' + #13#10#13#10 +
+      'Please save any open work before continuing.',
+      mbInformation, MB_OK);
+  end;
 end;
 
 function InstallGui(): Boolean;
@@ -391,10 +443,13 @@ begin
     Exec(ExpandConstant('{sys}\pnputil.exe'), '/scan-devices', '',
       SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
+    // No confirmation dialog here on purpose - the user was already
+    // warned about the restart on the selection page. Setup closes and
+    // the machine reboots automatically once CurStepChanged reaches
+    // ssDone below.
+    WizardForm.StatusLabel.Caption :=
+      'Driver installed. Setup will close and the computer will restart shortly...';
     RebootNeeded := True;
-    MsgBox('The driver was installed successfully.' + #13#10 +
-      'A reboot is required to finish - you will be offered one on the next page.',
-      mbInformation, MB_OK);
   end;
 end;
 
@@ -405,6 +460,8 @@ end;
 // it extracted to {tmp} when Setup exits, whether the driver install
 // succeeds, is declined, or fails - no manual cleanup needed here.
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
 begin
   if (CurStep = ssPostInstall) and InstallDriver() then
   begin
@@ -420,16 +477,24 @@ begin
       '     certificate is trusted.' + #13#10 +
       '  2. Import that certificate into Trusted Root and Trusted Publishers.' + #13#10 +
       '  3. Install the {#DriverName} driver (pnputil).' + #13#10 +
-      '  4. Require a reboot afterwards to finish.' + #13#10#13#10 +
+      '  4. Automatically close Setup and restart the computer to finish.' + #13#10#13#10 +
       'Save any open work before continuing.',
       mbConfirmation, MB_YESNO) = IDYES then
       InstallDriverNow;
   end;
-end;
 
-function NeedsRestart(): Boolean;
-begin
-  Result := RebootNeeded;
+  // Installation is fully done at this point (files copied, driver step
+  // already ran above) - safe to schedule the restart and close our own
+  // window without Inno treating it as an aborted/incomplete Setup and
+  // asking "Setup is not complete, exit anyway?". This replaces the old
+  // Finished-page "restart now / later" choice entirely: it just happens.
+  if (CurStep = ssDone) and RebootNeeded then
+  begin
+    Exec(ExpandConstant('{sys}\shutdown.exe'),
+      '/r /t 15 /c "Wellspring PTP: reboot required to finish driver installation." /f',
+      '', SW_HIDE, ewNoWait, ResultCode);
+    WizardForm.Close;
+  end;
 end;
 
 #else
@@ -478,38 +543,283 @@ begin
   Result := '';
 end;
 
+// Shared by every uninstall path that removes the GUI (both the normal
+// "Driver + GUI" flow and the manual "GUI only" flow below). Asks once,
+// deletes the shared ProgramData settings folder and the per-user
+// autostart key if the user agrees.
+procedure MaybeDeleteSettings;
+var
+  SettingsDir: String;
+begin
+  // Shared folder for all users - unlike the former {userappdata},
+  // deleting this affects ALL accounts on the machine, not just the one
+  // that ran the uninstall.
+  SettingsDir := ExpandConstant('{commonappdata}\') + SettingsDirName;
+
+  if MsgBox(
+    'Delete Wellspring Control Center settings and profiles?' + #13#10 +
+    SettingsDir + #13#10 +
+    '(shared across all users on this machine)',
+    mbConfirmation, MB_YESNO) = IDYES then
+  begin
+    DelTree(SettingsDir, True, True, True);
+    // The autostart key is a per-user Windows mechanism (HKCU), so it's
+    // only removed for the account that ran the uninstall; if other
+    // users enabled autostart under their own accounts, their entries
+    // will remain.
+    RegDeleteValue(HKEY_CURRENT_USER, RunKeyPath, RunValueName);
+  end;
+end;
+
+#ifdef IncludeDriver
+
+// Small custom dialog (there is no wizard during uninstall, so this is
+// built by hand with CreateCustomForm) letting the user pick exactly
+// what to remove. Returns 0 = Driver + GUI, 1 = GUI only, 2 = Driver
+// only, or -1 if the user cancelled.
+function AskUninstallChoice(): Integer;
+var
+  UninstallForm: TSetupForm;
+  Lbl: TNewStaticText;
+  RadioBoth, RadioGuiOnly, RadioDriverOnly: TNewRadioButton;
+  OKButton, CancelButton: TNewButton;
+begin
+  Result := -1;
+  UninstallForm := CreateCustomForm();
+  try
+    UninstallForm.ClientWidth := ScaleX(420);
+    UninstallForm.ClientHeight := ScaleY(210);
+    UninstallForm.Caption := 'Uninstall Wellspring PTP';
+    UninstallForm.Position := poScreenCenter;
+
+    Lbl := TNewStaticText.Create(UninstallForm);
+    Lbl.Parent := UninstallForm;
+    Lbl.Left := ScaleX(16);
+    Lbl.Top := ScaleY(16);
+    Lbl.Width := UninstallForm.ClientWidth - ScaleX(32);
+    Lbl.AutoSize := False;
+    Lbl.WordWrap := True;
+    Lbl.Caption := 'What would you like to remove?';
+
+    RadioBoth := TNewRadioButton.Create(UninstallForm);
+    RadioBoth.Parent := UninstallForm;
+    RadioBoth.Left := ScaleX(16);
+    RadioBoth.Top := ScaleY(48);
+    RadioBoth.Width := UninstallForm.ClientWidth - ScaleX(32);
+    RadioBoth.Caption := 'Driver and GUI (remove everything)';
+    RadioBoth.Checked := True;
+
+    RadioGuiOnly := TNewRadioButton.Create(UninstallForm);
+    RadioGuiOnly.Parent := UninstallForm;
+    RadioGuiOnly.Left := ScaleX(16);
+    RadioGuiOnly.Top := ScaleY(76);
+    RadioGuiOnly.Width := UninstallForm.ClientWidth - ScaleX(32);
+    RadioGuiOnly.Caption := 'GUI only (keep the driver installed)';
+
+    RadioDriverOnly := TNewRadioButton.Create(UninstallForm);
+    RadioDriverOnly.Parent := UninstallForm;
+    RadioDriverOnly.Left := ScaleX(16);
+    RadioDriverOnly.Top := ScaleY(104);
+    RadioDriverOnly.Width := UninstallForm.ClientWidth - ScaleX(32);
+    RadioDriverOnly.Caption := 'Driver only (keep the GUI installed)';
+
+    Lbl := TNewStaticText.Create(UninstallForm);
+    Lbl.Parent := UninstallForm;
+    Lbl.Left := ScaleX(16);
+    Lbl.Top := ScaleY(136);
+    Lbl.Width := UninstallForm.ClientWidth - ScaleX(32);
+    Lbl.AutoSize := False;
+    Lbl.WordWrap := True;
+    Lbl.Caption :=
+      'As long as either the driver or the GUI remains installed, this ' +
+      'uninstaller stays available in Programs and Features.';
+
+    OKButton := TNewButton.Create(UninstallForm);
+    OKButton.Parent := UninstallForm;
+    OKButton.Width := ScaleX(75);
+    OKButton.Height := ScaleY(23);
+    OKButton.Left := UninstallForm.ClientWidth - ScaleX(16) - OKButton.Width - ScaleX(85);
+    OKButton.Top := UninstallForm.ClientHeight - ScaleY(16) - OKButton.Height;
+    OKButton.Caption := 'OK';
+    OKButton.ModalResult := mrOk;
+    OKButton.Default := True;
+
+    CancelButton := TNewButton.Create(UninstallForm);
+    CancelButton.Parent := UninstallForm;
+    CancelButton.Width := ScaleX(75);
+    CancelButton.Height := ScaleY(23);
+    CancelButton.Left := UninstallForm.ClientWidth - ScaleX(16) - CancelButton.Width;
+    CancelButton.Top := UninstallForm.ClientHeight - ScaleY(16) - CancelButton.Height;
+    CancelButton.Caption := 'Cancel';
+    CancelButton.ModalResult := mrCancel;
+    CancelButton.Cancel := True;
+
+    if UninstallForm.ShowModal() = mrOk then
+    begin
+      if RadioBoth.Checked then
+        Result := 0
+      else if RadioGuiOnly.Checked then
+        Result := 1
+      else if RadioDriverOnly.Checked then
+        Result := 2;
+    end;
+  finally
+    UninstallForm.Free;
+  end;
+end;
+
+// Removes every installed package originating from our own INF
+// (regardless of what "oemNN.inf" number Windows assigned it - same
+// Get-WindowsDriver matching approach used on install, see
+// RemoveOldDriverVersions above), then asks about Test Mode and rescans
+// devices so the touchpad doesn't sit dead until next boot.
+procedure RemoveDriverNow;
+var
+  ResultCode: Integer;
+  ListFile, PsCmd, Name: String;
+  OldDrivers: TArrayOfString;
+  I: Integer;
+begin
+  ListFile := ExpandConstant('{tmp}\wellspring_uninstall_drivers.txt');
+  if FileExists(ListFile) then
+    DeleteFile(ListFile);
+
+  PsCmd := '-NoProfile -ExecutionPolicy Bypass -Command ' +
+    '"Get-WindowsDriver -Online -All | ' +
+    'Where-Object { $_.OriginalFileName -like ''*{#DriverName}.inf'' } | ' +
+    'Select-Object -ExpandProperty Driver | ' +
+    'Set-Content -Path ''' + ListFile + ''' -Encoding ascii"';
+
+  // Best-effort: if this fails for any reason, fall through to the
+  // rescan anyway rather than leaving the touchpad in limbo.
+  if Exec('powershell.exe', PsCmd, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)
+     and (ResultCode = 0) and FileExists(ListFile)
+     and LoadStringsFromFile(ListFile, OldDrivers) then
+  begin
+    for I := 0 to GetArrayLength(OldDrivers) - 1 do
+    begin
+      Name := Trim(OldDrivers[I]);
+      if Name <> '' then
+        // /uninstall also detaches it from any device still using it;
+        // /force suppresses the "in use" confirmation prompt.
+        Exec(ExpandConstant('{sys}\pnputil.exe'), '/delete-driver ' + Name + ' /uninstall /force',
+          '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    end;
+  end;
+
+  // Relevant whenever the driver itself is being removed - ask whether
+  // to also turn Test Mode back off.
+  if MsgBox(
+    'Disable Windows Test Mode (testsigning)?' + #13#10 +
+    'Only say No if some other test-signed driver on this machine still ' +
+    'needs it.',
+    mbConfirmation, MB_YESNO) = IDYES then
+    Exec(ExpandConstant('{sys}\bcdedit.exe'), '/set testsigning off', '',
+      SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  // Without this, the touchpad is left with no bound driver at all until
+  // the next reboot - rescanning lets Windows re-bind it (to its default
+  // HID driver, or back to ours if something went wrong above) right away.
+  Exec(ExpandConstant('{sys}\pnputil.exe'), '/scan-devices', '',
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+// "GUI only" path: deletes every file directly under {app} except
+// Inno's own unins*.exe/.dat (so the uninstaller keeps working) and any
+// subfolders in full, plus the Start Menu shortcut and the autostart
+// key. Deliberately does NOT touch the "Programs and Features" registry
+// entry - that's what keeps the uninstaller listed and runnable.
+procedure RemoveGuiFilesKeepUninstaller;
+var
+  AppDir, Shortcut, EntryPath: String;
+  FindRec: TFindRec;
+begin
+  AppDir := ExpandConstant('{app}');
+  Shortcut := ExpandConstant('{commonprograms}\{#MyAppName}.lnk');
+  if FileExists(Shortcut) then
+    DeleteFile(Shortcut);
+
+  if FindFirst(AppDir + '\*', FindRec) then
+  begin
+    try
+      repeat
+        if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+        begin
+          EntryPath := AppDir + '\' + FindRec.Name;
+          if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
+            DelTree(EntryPath, True, True, True)
+          else if Pos('unins', Lowercase(FindRec.Name)) <> 1 then
+            DeleteFile(EntryPath);
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+#endif
+
 function InitializeUninstall(): Boolean;
+#ifdef IncludeDriver
+var
+  Choice: Integer;
+#endif
 begin
   KillRunningApp;
   Result := True;
+
+  #ifdef IncludeDriver
+  Choice := AskUninstallChoice();
+  if Choice = -1 then
+  begin
+    Result := False;
+    Exit;
+  end;
+  UninstallChoice := Choice;
+
+  if Choice = 1 then
+  begin
+    // GUI only: handled entirely here, since returning False below skips
+    // Inno's normal file/registry removal (and its self-delete) - that's
+    // exactly what keeps the driver-uninstall option available later.
+    RemoveGuiFilesKeepUninstaller;
+    MaybeDeleteSettings;
+    MsgBox(
+      'Wellspring Control Center has been removed.' + #13#10 +
+      'The driver is still installed - run this uninstaller again if you ' +
+      'want to remove it too.',
+      mbInformation, MB_OK);
+    Result := False;
+    Exit;
+  end
+  else if Choice = 2 then
+  begin
+    // Driver only: same idea, but nothing under {app} is touched.
+    RemoveDriverNow;
+    MsgBox(
+      'The driver has been removed.' + #13#10 +
+      'Wellspring Control Center is still installed - run this ' +
+      'uninstaller again if you want to remove it too.',
+      mbInformation, MB_OK);
+    Result := False;
+    Exit;
+  end;
+  // Choice = 0 (Driver + GUI): fall through with Result = True and let
+  // Inno's normal uninstall proceed - CurUninstallStepChanged below
+  // removes the driver first, then Inno removes the GUI's files,
+  // shortcut, registry entry, and finally itself.
+  #endif
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var
-  SettingsDir: String;
-  DeleteSettings: Boolean;
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    // Shared folder for all users - unlike the former {userappdata},
-    // deleting this affects ALL accounts on the machine, not just the
-    // one that ran the uninstall.
-    SettingsDir := ExpandConstant('{commonappdata}\') + SettingsDirName;
-
-    DeleteSettings := (MsgBox(
-      'Delete Wellspring Control Center settings and profiles?' + #13#10 +
-      SettingsDir + #13#10 +
-      '(shared across all users on this machine)',
-      mbConfirmation, MB_YESNO) = IDYES);
-
-    if DeleteSettings then
-    begin
-      DelTree(SettingsDir, True, True, True);
-      // The autostart key is a per-user Windows mechanism (HKCU), so
-      // it's only removed for the account that ran the uninstall; if
-      // other users enabled autostart under their own accounts, their
-      // entries will remain.
-      RegDeleteValue(HKEY_CURRENT_USER, RunKeyPath, RunValueName);
-    end;
+    #ifdef IncludeDriver
+    if UninstallChoice = 0 then
+      RemoveDriverNow;
+    #endif
+    MaybeDeleteSettings;
   end;
 end;
