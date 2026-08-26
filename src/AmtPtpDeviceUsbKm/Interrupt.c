@@ -862,24 +862,13 @@ AmtPtpEvtReaderRestartTimer(
     localInterruptPipe = pCtx->InterruptPipe;
     WdfSpinLockRelease(pCtx->D0ExitLock);
 
-    // T2 recovery policy: once the interrupt reader fails after a normal
-    // D3 -> D0 resume, do not try to repair the stale Wellspring endpoint
-    // in-place.  The known-good path is a full PnP re-enumeration so that
-    // ReleaseHardware/PrepareHardware creates a fresh USB topology.
-    if (AmtPtpIsT2Device(pCtx)) {
-        WdfSpinLockAcquire(pCtx->D0ExitLock);
-        pCtx->T2RestartPending = TRUE;
-        pCtx->T2ResumeActive = FALSE;
-        WdfSpinLockRelease(pCtx->D0ExitLock);
-
-        AmtTrace(pCtx,
-            "ReaderRestartTimer: T2 failure after D3->D0, requesting PnP "
-            "re-enumeration via WdfDeviceSetFailed; new IOCTLs are now gated");
-        WdfWaitLockRelease(pCtx->RecoveryLock);
-        WdfDeviceSetFailed(device, WdfDeviceFailedAttemptRestart);
-        return;
-    }
-
+    // T2 reader failures no longer route through this timer at all:
+    // AmtPtpEvtUsbInterruptReadersFailed calls WdfDeviceSetFailed directly
+    // as soon as it observes a T2 post-resume failure, instead of arming
+    // this timer as a 1ms execution bridge. This timer is now reachable
+    // only by non-T2 devices (the bounded reset ladder below) and by the
+    // RecoveryLock-timeout retry above, so no T2 branch remains here.
+    //
     // Non-T2 devices retain the existing bounded reset ladder.
     if (stage >= READER_RECOVERY_EXHAUSTED) {
         AmtTrace(pCtx,
@@ -1032,19 +1021,58 @@ AmtPtpEvtUsbInterruptReadersFailed(
         // T2 does not recover the Wellspring endpoint in-place across the
         // ordinary D3 -> D0 transition.  The known-good path is a complete
         // PnP re-enumeration: ReleaseHardware -> PrepareHardware -> D0Entry.
-        // Use the passive timer as the execution bridge before calling
-        // WdfDeviceSetFailed; the reader-failed callback can run at DISPATCH_LEVEL.
-        AmtTrace(pCtx,
-            "ReadersFailed: T2 post-resume reader failure, scheduling PnP "
-            "re-enumeration (resumeActive=%u)",
-            t2ResumeActive ? 1u : 0u);
+        //
+        // Call WdfDeviceSetFailed directly from this callback instead of
+        // bouncing through the PASSIVE_LEVEL ReaderRestartTimer as a 1ms
+        // execution bridge. WdfDeviceSetFailed is documented IRQL <=
+        // DISPATCH_LEVEL, and this callback itself runs at up to
+        // DISPATCH_LEVEL, so no bridge is required for IRQL correctness.
+        // WdfDeviceSetFailed only latches failed state and schedules PnP
+        // teardown asynchronously - it does not block and does not touch
+        // RecoveryLock, so it is also safe to call from the rare case where
+        // this callback fires synchronously out of WdfIoTargetStart while
+        // AmtPtpEvtDeviceD0Entry is still on the stack holding RecoveryLock
+        // (see the D0Entry comment on synchronous T2 reader failure).
+        //
+        // Removing the timer hop removes the extra scheduling + RecoveryLock
+        // round-trip that used to sit between "failure observed" and
+        // "WdfDeviceSetFailed called" - that gap was time during which the
+        // stale T2 HID stack could still accept an IOCTL (rejected with
+        // STATUS_DEVICE_NOT_READY via the T2RestartPending gate in Queue.c)
+        // and surface as MTConfig Event ID 1 before PnP actually tore the
+        // old stack down.
+        // Idempotency guard: if a prior ReadersFailed callback in this same
+        // power session already latched T2RestartPending, WdfDeviceSetFailed
+        // has already been called once for this failure episode and PnP
+        // teardown may already be in flight. Multiple queued/cancelled reads
+        // completing close together can drive this callback more than once
+        // before that teardown actually removes the old stack, so do not
+        // call WdfDeviceSetFailed a second time - that used to be implicitly
+        // guarded by ReaderRestartTimer's RecoveryGeneration re-check, which
+        // this direct-call path has no equivalent of otherwise.
+        BOOLEAN alreadyPending;
         WdfSpinLockAcquire(pCtx->D0ExitLock);
+        alreadyPending = pCtx->T2RestartPending;
         pCtx->T2RestartPending = TRUE;
         pCtx->T2ResumeActive = FALSE;
         WdfSpinLockRelease(pCtx->D0ExitLock);
-        WdfTimerStart(
-            pCtx->ReaderRestartTimer,
-            WDF_REL_TIMEOUT_IN_MS(1));
+
+        if (alreadyPending) {
+            AmtTrace(pCtx,
+                "ReadersFailed: T2 failure (Status=0x%08X) already pending, "
+                "WdfDeviceSetFailed already called, skipping duplicate call",
+                Status);
+            return FALSE;
+        }
+
+        AmtTrace(pCtx,
+            "ReadersFailed: T2 post-resume reader failure (Status=0x%08X), "
+            "calling WdfDeviceSetFailed directly (resumeActive=%u)",
+            Status, t2ResumeActive ? 1u : 0u);
+
+        // WdfDeviceSetFailed can set the old device stack's teardown in
+        // motion. Do not touch device/pCtx after this call.
+        WdfDeviceSetFailed(device, WdfDeviceFailedAttemptRestart);
         return FALSE;
     }
 
