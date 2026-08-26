@@ -315,14 +315,19 @@ begin
     DeleteFile(ListFile);
 
   PsCmd := '-NoProfile -ExecutionPolicy Bypass -Command ' +
-    '"Get-WindowsDriver -Online -All | ' +
+    // BUG FIX: -All made Get-WindowsDriver enumerate every inbox
+    // Microsoft driver package too (thousands, on a machine with years
+    // of hardware history), on top of the third-party OEM packages -
+    // this is what made "checking for previous driver versions" take so
+    // long. Without -All, Get-WindowsDriver -Online only lists published
+    // third-party (oemNN.inf) packages, which is exactly the superset
+    // our own driver could ever appear in - the OriginalFileName filter
+    // below can never match an inbox driver anyway, so -All was pure
+    // wasted enumeration.
+    '"Get-WindowsDriver -Online | ' +
     'Where-Object { $_.OriginalFileName -like ''*{#DriverName}.inf'' } | ' +
     'Select-Object -ExpandProperty Driver | ' +
     'Set-Content -Path ''' + ListFile + ''' -Encoding ascii"';
-
-  // Best-effort: if Get-WindowsDriver isn't available/fails for any
-  // reason, just skip cleanup rather than blocking the install - the new
-  // driver still gets added either way.
   if (not Exec('powershell.exe', PsCmd, '', SW_HIDE, ewWaitUntilTerminated, ResultCode))
      or (ResultCode <> 0) or (not FileExists(ListFile)) then
     Exit;
@@ -720,7 +725,11 @@ begin
     DeleteFile(ListFile);
 
   PsCmd := '-NoProfile -ExecutionPolicy Bypass -Command ' +
-    '"Get-WindowsDriver -Online -All | ' +
+    // Same fix as RemoveOldDriverVersions above: -All pulls in every
+    // inbox Microsoft driver package too, which the OriginalFileName
+    // filter can never match - dropping it is a pure speed win with no
+    // change in what actually gets matched/removed.
+    '"Get-WindowsDriver -Online | ' +
     'Where-Object { $_.OriginalFileName -like ''*{#DriverName}.inf'' } | ' +
     'Select-Object -ExpandProperty Driver | ' +
     'Set-Content -Path ''' + ListFile + ''' -Encoding ascii"';
