@@ -585,10 +585,11 @@ var
   OKButton, CancelButton: TNewButton;
 begin
   Result := -1;
-  UninstallForm := CreateCustomForm();
+  // As of Inno Setup 6.6.0, CreateCustomForm takes the size upfront
+  // (ClientWidth/ClientHeight became read-only properties afterward) -
+  // False/False here means the form doesn't grow with WizardSizePercent.
+  UninstallForm := CreateCustomForm(ScaleX(420), ScaleY(210), False, False);
   try
-    UninstallForm.ClientWidth := ScaleX(420);
-    UninstallForm.ClientHeight := ScaleY(210);
     UninstallForm.Caption := 'Uninstall Wellspring PTP';
     UninstallForm.Position := poScreenCenter;
 
