@@ -236,6 +236,63 @@ begin
   Result := InstallChoicePage.SelectedValueIndex <> 1;
 end;
 
+// Finds every OLD published Driver Store package that originated from
+// our own AmtPtpDeviceUsbKm.inf (regardless of what "oemNN.inf" number
+// Windows assigned it) and removes it - both from the Driver Store and
+// from any device currently bound to it - before the new version is
+// installed. Without this, repeated installs just keep piling up
+// oemNN.inf copies of the same driver, and Windows is sometimes left
+// pointed at a stale one.
+//
+// We deliberately do NOT parse `pnputil /enum-drivers` text output - it
+// is localized (headers like "Original Name:" change with Windows'
+// display language), so matching against it is unreliable on non-English
+// systems. Get-WindowsDriver (DISM PowerShell module) exposes the same
+// data through the OriginalFileName .NET property, which is always in
+// English no matter the UI language.
+procedure RemoveOldDriverVersions;
+var
+  ResultCode: Integer;
+  ListFile, PsCmd, Name: String;
+  OldDrivers: TArrayOfString;
+  I: Integer;
+begin
+  WizardForm.StatusLabel.Caption := 'Checking for previous driver versions...';
+  ListFile := ExpandConstant('{tmp}\wellspring_old_drivers.txt');
+  if FileExists(ListFile) then
+    DeleteFile(ListFile);
+
+  PsCmd := '-NoProfile -ExecutionPolicy Bypass -Command ' +
+    '"Get-WindowsDriver -Online -All | ' +
+    'Where-Object { $_.OriginalFileName -like ''*{#DriverName}.inf'' } | ' +
+    'Select-Object -ExpandProperty Driver | ' +
+    'Set-Content -Path ''' + ListFile + ''' -Encoding ascii"';
+
+  // Best-effort: if Get-WindowsDriver isn't available/fails for any
+  // reason, just skip cleanup rather than blocking the install - the new
+  // driver still gets added either way.
+  if (not Exec('powershell.exe', PsCmd, '', SW_HIDE, ewWaitUntilTerminated, ResultCode))
+     or (ResultCode <> 0) or (not FileExists(ListFile)) then
+    Exit;
+
+  if not LoadStringsFromFile(ListFile, OldDrivers) then
+    Exit;
+
+  for I := 0 to GetArrayLength(OldDrivers) - 1 do
+  begin
+    Name := Trim(OldDrivers[I]);
+    if Name = '' then
+      Continue;
+    WizardForm.StatusLabel.Caption := 'Removing previous driver (' + Name + ')...';
+    // /uninstall also detaches it from any device still using it;
+    // /force suppresses the "in use" confirmation prompt. Ignore the
+    // result - if one old package can't be removed, move on and let the
+    // new /add-driver /install below take over anyway.
+    Exec(ExpandConstant('{sys}\pnputil.exe'), '/delete-driver ' + Name + ' /uninstall /force',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+end;
+
 // Runs the driver install steps directly inside this (already-elevated)
 // setup.exe process - no separate script, no self-relaunch, no VBS.
 // bcdedit / Import-Certificate / pnputil all just need SOME admin process
@@ -251,6 +308,8 @@ begin
   Inf := ExpandConstant('{tmp}\{#DriverName}.inf');
   Cer := ExpandConstant('{tmp}\{#DriverName}.cer');
   Ok := True;
+
+  RemoveOldDriverVersions;
 
   WizardForm.StatusLabel.Caption := 'Enabling Windows Test Mode...';
   if (not Exec(ExpandConstant('{sys}\bcdedit.exe'), '/set testsigning on', '',
@@ -303,16 +362,35 @@ begin
   if Ok then
   begin
     WizardForm.StatusLabel.Caption := 'Installing driver (pnputil)...';
-    if (not Exec(ExpandConstant('{sys}\pnputil.exe'), '/add-driver "' + Inf + '" /install',
-         '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+    // pnputil legitimately returns 3010 (ERROR_SUCCESS_REBOOT_REQUIRED)
+    // when the driver installed fine but a reboot is needed to finish
+    // binding it to the device - that is NOT a failure. Only treat the
+    // Exec() call itself failing, or a genuinely unknown/error code, as
+    // a real problem.
+    if not Exec(ExpandConstant('{sys}\pnputil.exe'), '/add-driver "' + Inf + '" /install',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     begin
-      MsgBox('pnputil reported an error installing the driver.', mbError, MB_OK);
+      MsgBox('Could not launch pnputil.exe.', mbError, MB_OK);
       Ok := False;
-    end;
+    end
+    else if (ResultCode <> 0) and (ResultCode <> 3010) then
+    begin
+      MsgBox('pnputil reported an error installing the driver (code ' +
+        IntToStr(ResultCode) + ').', mbError, MB_OK);
+      Ok := False;
+    end
+    else if ResultCode = 3010 then
+      RebootNeeded := True;
   end;
 
   if Ok then
   begin
+    // Best-effort nudge so PnP re-evaluates the device against the
+    // freshly-installed package right away; harmless either way since a
+    // reboot is required regardless (result intentionally ignored).
+    Exec(ExpandConstant('{sys}\pnputil.exe'), '/scan-devices', '',
+      SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
     RebootNeeded := True;
     MsgBox('The driver was installed successfully.' + #13#10 +
       'A reboot is required to finish - you will be offered one on the next page.',
