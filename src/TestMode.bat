@@ -3,13 +3,18 @@ setlocal
 chcp 65001 >nul
 title Windows Test Mode Manager
 
-:: Check for Administrator privileges
+:: Check for Administrator privileges. If not elevated yet, relaunch
+:: this same script with a UAC prompt, preserving the working folder,
+:: then exit this non-elevated instance.
 net session >nul 2>&1
 if errorlevel 1 (
-    echo.
-    echo This script must be run as Administrator.
-    echo.
-    pause
+    echo Requesting administrator privileges...
+    set "ELEVATE_VBS=%TEMP%\wsp_elevate_%RANDOM%.vbs"
+    > "%ELEVATE_VBS%" echo On Error Resume Next
+    >> "%ELEVATE_VBS%" echo Set UAC = CreateObject("Shell.Application")
+    >> "%ELEVATE_VBS%" echo UAC.ShellExecute "%~f0", "", "%~dp0", "runas", 1
+    cscript //nologo "%ELEVATE_VBS%"
+    del "%ELEVATE_VBS%" >nul 2>&1
     exit /b
 )
 

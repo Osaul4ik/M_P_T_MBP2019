@@ -15,12 +15,18 @@ set "CER=%HERE%%DRVNAME%.cer"
 
 rem Must run elevated: bcdedit, pnputil and Import-Certificate into
 rem Cert:\LocalMachine\* all require Administrator privileges.
+rem If not elevated yet, relaunch this same script with a UAC prompt,
+rem preserving the driver-name argument and working folder, then exit
+rem this non-elevated instance.
 net session >nul 2>&1
 if errorlevel 1 (
-    echo.
-    echo [ERROR] This script must be run as Administrator.
-    echo.
-    pause
+    echo Requesting administrator privileges...
+    set "ELEVATE_VBS=%TEMP%\wsp_elevate_%RANDOM%.vbs"
+    > "%ELEVATE_VBS%" echo On Error Resume Next
+    >> "%ELEVATE_VBS%" echo Set UAC = CreateObject("Shell.Application")
+    >> "%ELEVATE_VBS%" echo UAC.ShellExecute "%~f0", "%DRVNAME%", "%HERE%", "runas", 1
+    cscript //nologo "%ELEVATE_VBS%"
+    del "%ELEVATE_VBS%" >nul 2>&1
     goto END
 )
 

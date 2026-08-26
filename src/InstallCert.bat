@@ -7,14 +7,22 @@ set "DRVNAME=%~1"
 if "%DRVNAME%"=="" set "DRVNAME=AmtPtpDeviceUsbKm"
 
 set "CERT=%~dp0%DRVNAME%.cer"
+set "HERE=%~dp0"
 
 rem Import-Certificate into Cert:\LocalMachine\* requires Administrator
-rem privileges.
+rem privileges. If not elevated yet, relaunch this same script with a
+rem UAC prompt, preserving the driver-name argument, then exit this
+rem non-elevated instance.
 net session >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] This script must be run as Administrator.
-    pause
-    exit /b 1
+    echo Requesting administrator privileges...
+    set "ELEVATE_VBS=%TEMP%\wsp_elevate_%RANDOM%.vbs"
+    > "%ELEVATE_VBS%" echo On Error Resume Next
+    >> "%ELEVATE_VBS%" echo Set UAC = CreateObject("Shell.Application")
+    >> "%ELEVATE_VBS%" echo UAC.ShellExecute "%~f0", "%DRVNAME%", "%HERE%", "runas", 1
+    cscript //nologo "%ELEVATE_VBS%"
+    del "%ELEVATE_VBS%" >nul 2>&1
+    exit /b 0
 )
 
 if not exist "%CERT%" (
