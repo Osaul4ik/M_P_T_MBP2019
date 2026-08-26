@@ -41,6 +41,30 @@
   #define SourceDir "publish\win-x64"
 #endif
 
+; Optional: folder with the built + signed driver package (.sys/.inf/.cat/
+; .cer) - artifacts\driver in BuildAll.yml, passed as
+; stage\min\WellspringPTP\Driver from the package-installer job there via
+; /DDriverSourceDir=... . Left undefined by BuildGui.yml (GUI-only build has
+; no driver to package), in which case the installer behaves exactly as
+; before - GUI only, "WellspringControlCenter-Setup-*".
+;
+; When it IS defined, the installer is named "WellspringPTP-Setup-*" and the
+; four driver files are embedded (Flags: dontcopy - NOT installed under
+; {app}), extracted to Setup's own {tmp} folder only for the duration of the
+; install. On the Finished page a checkbox ("Install driver now") lets the
+; user launch a visible console (DriverInstallPrompt.bat) that asks for
+; explicit YES/NO confirmation (re-asking on anything else), then enables
+; Test Mode, imports the certificate, installs the driver, and reboots.
+; Whether the checkbox is used or not, Inno Setup deletes everything it
+; extracted to {tmp} once Setup exits - nothing driver-related is left
+; behind outside of what was actually installed into Windows.
+#ifdef DriverSourceDir
+  #define IncludeDriver
+  #ifndef DriverName
+    #define DriverName "AmtPtpDeviceUsbKm"
+  #endif
+#endif
+
 #define MyAppName "Wellspring Control Center"
 #define MyAppExeName "Wellspring Control Center.exe"
 #define MyAppPublisher "WellspringPTP"
@@ -52,6 +76,12 @@
 ; the final AppId value the opening brace has to be doubled; the closing
 ; "}" does not need escaping - it isn't a special character.
 #define MyAppId "{{A6C1E4B0-6C1B-4B7E-9C0A-6E9E7C6E5D01}"
+
+#ifdef IncludeDriver
+  #define MyOutputBaseFilename "WellspringPTP-Setup-" + MyAppVersion
+#else
+  #define MyOutputBaseFilename "WellspringControlCenter-Setup-" + MyAppVersion
+#endif
 
 [Setup]
 AppId={#MyAppId}
@@ -65,7 +95,7 @@ DisableProgramGroupPage=yes
 DisableWelcomePage=no
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
-OutputBaseFilename=WellspringControlCenter-Setup-{#MyAppVersion}
+OutputBaseFilename={#MyOutputBaseFilename}
 OutputDir=output
 Compression=lzma2/max
 SolidCompression=yes
@@ -82,6 +112,18 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 ; Published GUI (Min - framework-dependent single file from CI, or
 ; publish\win-x64 for a local build via build-gui.ps1).
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#ifdef IncludeDriver
+; Signed driver package - embedded in setup.exe but NOT copied under {app}.
+; dontcopy means these are only extracted (to {tmp}) on demand, via
+; ExtractTemporaryFile in [Code]; see CurStepChanged below. DestDir is
+; required syntax here but unused for dontcopy entries.
+Source: "{#DriverSourceDir}\{#DriverName}.sys"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "{#DriverSourceDir}\{#DriverName}.inf"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "{#DriverSourceDir}\{#DriverName}.cat"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "{#DriverSourceDir}\{#DriverName}.cer"; DestDir: "{tmp}"; Flags: dontcopy
+; Interactive install/reboot prompt (lives alongside this .iss).
+Source: "DriverInstallPrompt.bat"; DestDir: "{tmp}"; Flags: dontcopy
+#endif
 
 [Dirs]
 ; Shared settings/profiles folder for all users. The GUI normally runs
@@ -97,6 +139,13 @@ Name: "{commonprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Workin
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+#ifdef IncludeDriver
+; Unchecked by default (a reboot is a big enough action that it should be an
+; opt-in click, not a surprise). Runs visibly (no runhidden) so the user can
+; answer the YES/NO prompt, and Setup waits for it (no nowait) so the
+; {tmp} cleanup below happens only after the console closes.
+Filename: "{cmd}"; Parameters: "/c ""{tmp}\DriverInstallPrompt.bat"" ""{#DriverName}"""; WorkingDir: "{tmp}"; Description: "Install Wellspring PTP driver now (opens a console; may reboot)"; Flags: postinstall unchecked
+#endif
 
 [Code]
 
@@ -127,6 +176,27 @@ begin
   end;
   Result := Found;
 end;
+
+#ifdef IncludeDriver
+// Driver files were embedded with Flags: dontcopy, so they don't exist on
+// disk until explicitly extracted. Do that right after the app itself is
+// installed, so they're ready by the time the Finished page's [Run] entry
+// (if the user checks it) tries to launch DriverInstallPrompt.bat. Inno
+// Setup deletes everything it extracts to {tmp} when Setup exits, whether
+// the user installs the driver, skips it, or cancels - no manual cleanup
+// needed here.
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    ExtractTemporaryFile('{#DriverName}.sys');
+    ExtractTemporaryFile('{#DriverName}.inf');
+    ExtractTemporaryFile('{#DriverName}.cat');
+    ExtractTemporaryFile('{#DriverName}.cer');
+    ExtractTemporaryFile('DriverInstallPrompt.bat');
+  end;
+end;
+#endif
 
 function InitializeSetup(): Boolean;
 begin

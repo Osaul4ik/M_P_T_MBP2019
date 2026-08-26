@@ -46,6 +46,8 @@ jobs:
     name: Build Driver + GUI, package archives
     runs-on: windows-2022
     timeout-minutes: 60
+    outputs:
+      version: ${{ steps.setver.outputs.version }}
 
     steps:
     - uses: actions/checkout@v4
@@ -97,6 +99,7 @@ jobs:
     # інших workflow цього репозиторію - для узгодженого нейминга артефактів.
     # =====================================================================
     - name: Compute driver version and date
+      id: setver
       run: |
         $ErrorActionPreference = "Stop"
         $now = Get-Date
@@ -109,6 +112,7 @@ jobs:
 
         Add-Content -Path $env:GITHUB_ENV -Value "DRIVER_DATE=$driverDate"
         Add-Content -Path $env:GITHUB_ENV -Value "DRIVER_VERSION=$driverVersion"
+        Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$driverVersion"
       shell: pwsh
 
     - name: Build USB KM Driver
@@ -384,4 +388,50 @@ jobs:
       with:
         name: WellspringPTP-Full-${{ env.DRIVER_VERSION }}
         path: stage/full
+        if-no-files-found: error
+
+  # =============================================================================
+  # Третій артефакт: інсталлер (Inno Setup), як і в BuildGui.yml, тільки цього
+  # разу він пакує ще й Driver-теку (.sys/.inf/.cat/.cer/InstallCert.bat/
+  # TestMode.bat) поруч з GUI. Береться з Min-архіву (framework-dependent -
+  # менший, не тягне в setup.exe самодостатній .NET рантайм). Окремий job,
+  # залежить від build-and-package і качає артефакт через download-artifact
+  # (а не локальну теку stage), щоб перевірити, що Min-архів валідний саме як
+  # завантажений артефакт.
+  # =============================================================================
+  package-installer:
+    name: Build installer (Inno Setup, Driver + GUI, from Min)
+    runs-on: windows-2022
+    needs: build-and-package
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download Min archive (Driver + GUI)
+      uses: actions/download-artifact@v4
+      with:
+        name: WellspringPTP-Min-${{ needs.build-and-package.outputs.version }}
+        path: stage/min
+
+    - name: Install Inno Setup
+      run: choco install innosetup -y --no-progress
+      shell: pwsh
+
+    - name: Compile installer
+      run: |
+        $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+        & $iscc `
+          src\AmtPtpConfigGui\installer\WellspringControlCenter.iss `
+          "/DMyAppVersion=${{ needs.build-and-package.outputs.version }}" `
+          "/DSourceDir=$PWD\stage\min\WellspringPTP\Gui" `
+          "/DDriverSourceDir=$PWD\stage\min\WellspringPTP\Driver"
+        if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+      shell: pwsh
+
+    - name: Upload installer artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: WellspringPTP-Installer-${{ needs.build-and-package.outputs.version }}
+        path: src/AmtPtpConfigGui/installer/output/*.exe
         if-no-files-found: error
