@@ -1,6 +1,5 @@
 @echo off
-setlocal EnableDelayedExpansion
-chcp 65001 >nul
+setlocal
 title Wellspring PTP - Driver Installation
 
 rem %1 = driver base name (no extension), passed in from the .iss [Run] line.
@@ -31,16 +30,12 @@ echo      effect and for the driver to load.
 echo.
 echo Save any open work before continuing.
 echo.
-set "REPLY="
-set /p "REPLY=Install the driver and reboot now? Type YES to continue, or NO to skip: "
 
-if /i "%REPLY%"=="YES" goto INSTALL
-if /i "%REPLY%"=="NO"  goto SKIP
+choice /c YN /n /m "Install the driver and reboot now? [Y]es / [N]o: "
 
-echo.
-echo Please answer YES or NO.
-echo.
-pause >nul
+if errorlevel 2 goto SKIP
+if errorlevel 1 goto INSTALL
+
 goto ASK
 
 :INSTALL
