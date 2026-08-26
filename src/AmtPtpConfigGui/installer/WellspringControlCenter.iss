@@ -493,6 +493,13 @@ begin
     Exec(ExpandConstant('{sys}\shutdown.exe'),
       '/r /t 15 /c "Wellspring PTP: reboot required to finish driver installation." /f',
       '', SW_HIDE, ewNoWait, ResultCode);
+    // WizardForm.Tag := 1 bypasses Inno's built-in OnCloseQuery confirmation
+    // ("Setup is not complete. If you exit now... Exit Setup?"), which
+    // otherwise fires because we're closing the wizard while it's still on
+    // wpInstalling, not wpFinished. Without this, WizardForm.Close below
+    // does NOT close silently - the user has to manually confirm/close,
+    // defeating the whole point of scheduling an automatic reboot here.
+    WizardForm.Tag := 1;
     WizardForm.Close;
   end;
 end;
@@ -588,7 +595,22 @@ begin
   // As of Inno Setup 6.6.0, CreateCustomForm takes the size upfront
   // (ClientWidth/ClientHeight became read-only properties afterward) -
   // False/False here means the form doesn't grow with WizardSizePercent.
-  UninstallForm := CreateCustomForm(ScaleX(420), ScaleY(210), False, False);
+  //
+  // BUG FIX: the previous fixed 420x210 size (and every control's Top
+  // hardcoded as an absolute pixel offset) only accounted for DPI scaling
+  // via ScaleX/ScaleY - it did NOT account for larger system font/text
+  // scaling (Windows "Make text bigger" accessibility setting, or a bigger
+  // default UI font). At larger font sizes the two wrapped TNewStaticText
+  // labels below need more than one line, but neither had an explicit
+  // Height, so they kept the default single-line height and the wrapped
+  // second line got clipped by the label's own bounds (and, for the
+  // bottom label, potentially by the form's bottom edge too). Every
+  // control's Top is now derived from the previous control's Top+Height
+  // instead of a hardcoded number, so the layout no longer overlaps or
+  // clips if a label needs more lines than expected. The form itself is
+  // taller and its height is also derived from the last control instead
+  // of being a fixed guess.
+  UninstallForm := CreateCustomForm(ScaleX(420), ScaleY(260), False, False);
   try
     UninstallForm.Caption := 'Uninstall Wellspring PTP';
     UninstallForm.Position := poScreenCenter;
@@ -598,6 +620,7 @@ begin
     Lbl.Left := ScaleX(16);
     Lbl.Top := ScaleY(16);
     Lbl.Width := UninstallForm.ClientWidth - ScaleX(32);
+    Lbl.Height := ScaleY(17);
     Lbl.AutoSize := False;
     Lbl.WordWrap := True;
     Lbl.Caption := 'What would you like to remove?';
@@ -605,7 +628,7 @@ begin
     RadioBoth := TNewRadioButton.Create(UninstallForm);
     RadioBoth.Parent := UninstallForm;
     RadioBoth.Left := ScaleX(16);
-    RadioBoth.Top := ScaleY(48);
+    RadioBoth.Top := Lbl.Top + Lbl.Height + ScaleY(15);
     RadioBoth.Width := UninstallForm.ClientWidth - ScaleX(32);
     RadioBoth.Caption := 'Driver and GUI (remove everything)';
     RadioBoth.Checked := True;
@@ -613,27 +636,38 @@ begin
     RadioGuiOnly := TNewRadioButton.Create(UninstallForm);
     RadioGuiOnly.Parent := UninstallForm;
     RadioGuiOnly.Left := ScaleX(16);
-    RadioGuiOnly.Top := ScaleY(76);
+    RadioGuiOnly.Top := RadioBoth.Top + RadioBoth.Height + ScaleY(6);
     RadioGuiOnly.Width := UninstallForm.ClientWidth - ScaleX(32);
     RadioGuiOnly.Caption := 'GUI only (keep the driver installed)';
 
     RadioDriverOnly := TNewRadioButton.Create(UninstallForm);
     RadioDriverOnly.Parent := UninstallForm;
     RadioDriverOnly.Left := ScaleX(16);
-    RadioDriverOnly.Top := ScaleY(104);
+    RadioDriverOnly.Top := RadioGuiOnly.Top + RadioGuiOnly.Height + ScaleY(6);
     RadioDriverOnly.Width := UninstallForm.ClientWidth - ScaleX(32);
     RadioDriverOnly.Caption := 'Driver only (keep the GUI installed)';
 
     Lbl := TNewStaticText.Create(UninstallForm);
     Lbl.Parent := UninstallForm;
     Lbl.Left := ScaleX(16);
-    Lbl.Top := ScaleY(136);
+    Lbl.Top := RadioDriverOnly.Top + RadioDriverOnly.Height + ScaleY(16);
     Lbl.Width := UninstallForm.ClientWidth - ScaleX(32);
+    // Explicit 3-line height (instead of relying on the default
+    // single-line height) - this text wraps to 2 lines at normal font
+    // size and up to 3 at larger accessibility text scaling. Sized
+    // generously rather than measured exactly, since Inno's Pascal Script
+    // has no cheap way to query wrapped-text extent up front.
+    Lbl.Height := ScaleY(17) * 3;
     Lbl.AutoSize := False;
     Lbl.WordWrap := True;
     Lbl.Caption :=
       'As long as either the driver or the GUI remains installed, this ' +
       'uninstaller stays available in Programs and Features.';
+
+    // Form grows to fit whatever the labels above actually needed,
+    // instead of assuming a fixed 210px was always enough.
+    UninstallForm.ClientHeight :=
+      Lbl.Top + Lbl.Height + ScaleY(16) + ScaleY(23) + ScaleY(16);
 
     OKButton := TNewButton.Create(UninstallForm);
     OKButton.Parent := UninstallForm;
