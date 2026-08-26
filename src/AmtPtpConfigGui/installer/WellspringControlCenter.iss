@@ -141,10 +141,15 @@ Name: "{commonprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Workin
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 #ifdef IncludeDriver
 ; Unchecked by default (a reboot is a big enough action that it should be an
-; opt-in click, not a surprise). Runs visibly (no runhidden) so the user can
-; answer the YES/NO prompt, and Setup waits for it (no nowait) so the
-; {tmp} cleanup below happens only after the console closes.
-Filename: "{cmd}"; Parameters: "/c ""{tmp}\DriverInstallPrompt.bat"" ""{#DriverName}"""; WorkingDir: "{tmp}"; Description: "Install Wellspring PTP driver now (opens a console; may reboot)"; Flags: postinstall unchecked
+; opt-in click, not a surprise). shellexec launches the .bat through its own
+; file association (cmd.exe) instead of us building a "cmd /c ""..."" ""..."""
+; command line by hand - manually nesting two quoted arguments after /c hits
+; a classic cmd.exe parsing bug (it strips the first and last quote of the
+; WHOLE string when both exist, not per-token, corrupting the path when a
+; second quoted argument follows). shellexec sidesteps that entirely.
+; No nowait, so Setup still waits for the console to close before exiting
+; (which is also when it cleans up everything extracted to {tmp}).
+Filename: "{tmp}\DriverInstallPrompt.bat"; Parameters: "{#DriverName}"; WorkingDir: "{tmp}"; Description: "Install Wellspring PTP driver now (opens a console; may reboot)"; Flags: postinstall unchecked shellexec
 #endif
 
 [Code]
