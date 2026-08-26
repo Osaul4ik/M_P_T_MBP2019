@@ -13,6 +13,17 @@ set "HERE=%~dp0"
 set "INF=%HERE%%DRVNAME%.inf"
 set "CER=%HERE%%DRVNAME%.cer"
 
+rem Must run elevated: bcdedit, pnputil and Import-Certificate into
+rem Cert:\LocalMachine\* all require Administrator privileges.
+net session >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo [ERROR] This script must be run as Administrator.
+    echo.
+    pause
+    goto END
+)
+
 :ASK
 cls
 echo =====================================================
@@ -63,9 +74,23 @@ if not exist "%CER%" (
 echo.
 echo [2/4] Importing certificate into Trusted Root ...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Import-Certificate -FilePath '%CER%' -CertStoreLocation Cert:\LocalMachine\Root | Out-Null"
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Failed to import the certificate into Trusted Root.
+    echo.
+    pause
+    goto END
+)
 
 echo [2/4] Importing certificate into Trusted Publishers ...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Import-Certificate -FilePath '%CER%' -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null"
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Failed to import the certificate into Trusted Publishers.
+    echo.
+    pause
+    goto END
+)
 
 if not exist "%INF%" (
     echo.

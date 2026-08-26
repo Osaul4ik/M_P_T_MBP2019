@@ -14,10 +14,15 @@ if errorlevel 1 (
 )
 
 :: Detect current Test Mode status
+:: Note: bcdedit's Yes/No value text can be localized on non-English
+:: Windows builds, so we don't compare against "Yes"/"No". Instead we
+:: rely on the fact that bcdedit only emits the "testsigning" element
+:: at all when it has been explicitly set to on; when off (the
+:: default), the element is absent from /enum output entirely. This
+:: keeps detection correct regardless of display language.
 set "STATE=DISABLED"
-for /f "tokens=2" %%A in ('bcdedit /enum ^| findstr /i "testsigning"') do (
-    if /i "%%A"=="Yes" set "STATE=ENABLED"
-)
+bcdedit /enum | findstr /i "testsigning" >nul
+if not errorlevel 1 set "STATE=ENABLED"
 
 :MENU
 cls
