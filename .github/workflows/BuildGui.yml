@@ -20,10 +20,11 @@ env:
 jobs:
 
   # =============================================================================
-  # Тільки GUI: build + package. Драйвер, WDK, підпис і генерація .cat тут
-  # не потрібні - весь відповідний блок з BuildAll.yml вирізаний.
-  # Завантажуються два фінальні артефакти:
-  #   - WellspringPTP-Gui-Min-<version>   (framework-dependent, без .NET runtime)
+  # GUI only: build + package. Driver, WDK, signing, and .cat generation are
+  # not required here - the entire corresponding block from BuildAll.yml
+  # has been removed.
+  # Two final artifacts are uploaded:
+  #   - WellspringPTP-Gui-Min-<version>   (framework-dependent, no .NET runtime)
   #   - WellspringPTP-Gui-Full-<version>  (self-contained)
   # =============================================================================
   build-and-package:
@@ -37,8 +38,8 @@ jobs:
     - uses: actions/checkout@v4
 
     # =====================================================================
-    # Обчислення версії/дати - той самий формат, що й у BuildAll.yml, для
-    # узгодженого нейминга артефактів.
+    # Compute version/date - same format as BuildAll.yml for consistent
+    # artifact naming.
     # =====================================================================
     - name: Compute build version and date
       id: setver
@@ -58,7 +59,7 @@ jobs:
       shell: pwsh
 
     # =====================================================================
-    # GUI: .NET SDK, restore, дві публікації (framework-dependent і
+    # GUI: .NET SDK, restore, two publishes (framework-dependent and
     # self-contained).
     # =====================================================================
     - name: Setup .NET SDK
@@ -70,9 +71,9 @@ jobs:
       run: dotnet restore "$env:GUI_PROJECT_DIR\$env:GUI_PROJECT_NAME.csproj"
       shell: pwsh
 
-    # Framework-dependent single file, win-x64: exe важить одиниці МБ, але
-    # потребує встановленого на цільовій машині .NET 8 Desktop Runtime.
-    # Це те, що йде в "Min" архів.
+    # Framework-dependent single file, win-x64: the exe is only a few MB,
+    # but .NET 8 Desktop Runtime must be installed on the target machine.
+    # This goes into the "Min" archive.
     - name: Publish GUI (framework-dependent, single file, win-x64)
       run: |
         dotnet publish "$env:GUI_PROJECT_DIR\$env:GUI_PROJECT_NAME.csproj" `
@@ -83,8 +84,9 @@ jobs:
           -o artifacts/gui-min
       shell: pwsh
 
-    # Self-contained single file, win-x64: важчий exe (вбудований CLR/WPF),
-    # зате нічого встановлювати додатково не треба. Йде в "Full" архів.
+    # Self-contained single file, win-x64: larger exe (bundled CLR/WPF),
+    # but no additional runtime installation is required. Goes into the
+    # "Full" archive.
     - name: Publish GUI (self-contained, single file, win-x64)
       run: |
         dotnet publish "$env:GUI_PROJECT_DIR\$env:GUI_PROJECT_NAME.csproj" `
@@ -98,8 +100,8 @@ jobs:
       shell: pwsh
 
     # =====================================================================
-    # Формуємо структуру WellspringPTP/Gui для обох варіантів - та сама
-    # схема, що й в BuildAll.yml, тільки без теки Driver.
+    # Create the WellspringPTP/Gui structure for both variants - same
+    # layout as in BuildAll.yml, only without the Driver directory.
     # =====================================================================
     - name: Stage folder structure (WellspringPTP/Gui)
       run: |
@@ -132,11 +134,11 @@ jobs:
         if-no-files-found: error
 
   # =============================================================================
-  # Третій артефакт: інсталятор (Inno Setup), зібраний поверх Min-архіву
-  # (framework-dependent - легший, не тягне self-contained рантайм у
-  # setup.exe). Окремий job, залежить від build-and-package через
-  # download-artifact, а не через локальний стейдж, щоб перевірити, що
-  # Min-архів дійсно валідний як завантажений артефакт.
+  # Third artifact: installer (Inno Setup), built from the Min archive
+  # (framework-dependent - smaller, does not bundle the self-contained runtime
+  # into setup.exe). Separate job, depends on build-and-package and uses
+  # download-artifact instead of the local staging directory to verify that
+  # the Min archive is valid as a downloaded artifact.
   # =============================================================================
   package-installer:
     name: Build installer (Inno Setup, from Min)
