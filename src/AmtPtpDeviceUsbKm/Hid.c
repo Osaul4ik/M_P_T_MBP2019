@@ -685,18 +685,33 @@ AmtPtpSetFeatures(
 		}
 		case REPORTID_FUNCSWITCH:
 		{
+			// AUDIT FIX: same missing-length-check class of bug as
+			// REPORTID_REPORTMODE above - validate before dereferencing.
+			if (!HidValidateReportSize(pHidPacket, sizeof(PTP_DEVICE_SELECTIVE_REPORT_MODE_REPORT))) {
+				status = STATUS_INVALID_BUFFER_SIZE;
+				goto exit;
+			}
+
+			// During T2 recovery the old FDO is already committed to PnP
+			// re-enumeration. MTConfig issues the Function Switch feature
+			// report as part of the same configuration sequence that follows
+			// Device Mode. There is no useful hardware write to perform on this
+			// stale stack, and failing the request produces the MTConfig Event 1
+			// spam we are explicitly suppressing for this recovery window.
+			// The replacement FDO receives the real report after enumeration.
+			if (t2RestartPending) {
+				AmtTrace(pDeviceContext,
+					"SetFeatures: T2 restart pending, suppressing MTConfig "
+					"Function Switch hardware write and completing SET_FEATURE successfully");
+				status = STATUS_SUCCESS;
+				goto exit;
+			}
+
 			if (lifecycleBlocked) {
 				AmtTrace(pDeviceContext,
 					"SetFeatures: lifecycle blocked, rejecting non-Device-Mode "
 					"SET_FEATURE reportId=0x%02X", pHidPacket->reportId);
 				status = STATUS_DEVICE_NOT_READY;
-				goto exit;
-			}
-
-			// AUDIT FIX: same missing-length-check class of bug as
-			// REPORTID_REPORTMODE above - validate before dereferencing.
-			if (!HidValidateReportSize(pHidPacket, sizeof(PTP_DEVICE_SELECTIVE_REPORT_MODE_REPORT))) {
-				status = STATUS_INVALID_BUFFER_SIZE;
 				goto exit;
 			}
 
