@@ -800,7 +800,9 @@ namespace AmtPtpConfigGui
                 {
                     var exe = Environment.ProcessPath;
                     if (!string.IsNullOrWhiteSpace(exe))
-                        key.SetValue(valueName, $"\"{exe}\"");
+                        // Windows starts the GUI directly into the system tray.
+                        // A normal manual launch still opens the main window.
+                        key.SetValue(valueName, $"\"{exe}\" -tray");
                 }
                 else
                 {

@@ -1,5 +1,6 @@
 using System;
 using System.IO.Pipes;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -69,9 +70,32 @@ namespace AmtPtpConfigGui
 
             StartActivationPipeServer();
 
+            var startInTray = e.Args.Any(arg =>
+                string.Equals(arg, "-tray", StringComparison.OrdinalIgnoreCase));
+
             var mainWindow = new MainWindow();
             MainWindow = mainWindow;
-            mainWindow.Show();
+
+            if (startInTray)
+            {
+                // Keep the first WPF render completely invisible. Showing the
+                // window with zero opacity + no taskbar entry lets Loaded run
+                // (where startup registration/reconnect are initialized),
+                // then Hide() parks the already-created window in the tray.
+                // This avoids the visible "window flash" seen when Windows
+                // starts the app from HKCU\...\Run.
+                mainWindow.Opacity = 0;
+                mainWindow.ShowInTaskbar = false;
+                mainWindow.ShowActivated = false;
+                mainWindow.Show();
+                mainWindow.Hide();
+                mainWindow.Opacity = 1;
+                mainWindow.ShowInTaskbar = true;
+            }
+            else
+            {
+                mainWindow.Show();
+            }
         }
 
         protected override void OnExit(ExitEventArgs e)
