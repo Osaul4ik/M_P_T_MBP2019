@@ -270,10 +270,22 @@ begin
 
   NoAutoRebootCheckBox := TNewCheckBox.Create(WizardForm);
   NoAutoRebootCheckBox.Parent := InstallChoicePage.Surface;
-  NoAutoRebootCheckBox.Left := ScaleX(8);
+  // BUG FIX: TNewCheckBox is a plain, unmodified TCheckBox (see NewCtrls.pas
+  // - "TNewCheckBox = class(TCheckBox);", no overrides). TCheckBox.AutoSize
+  // defaults to True, which recalculates Height to fit a SINGLE line of the
+  // caption and silently overrides whatever Height we set below - the long
+  // two-line warning caption was getting squeezed into a one-line box
+  // instead of actually wrapping into the reserved 42px. Must be turned off
+  // before Width/Height are set, or AutoSize fights our explicit values.
+  NoAutoRebootCheckBox.AutoSize := False;
+  // Align to the CheckListBox's own Left, not an arbitrary offset - that's
+  // where the radio items above actually start, so the checkbox's glyph
+  // lines up with them instead of sitting at a different, unrelated
+  // indent.
+  NoAutoRebootCheckBox.Left := InstallChoicePage.CheckListBox.Left;
   NoAutoRebootCheckBox.Top := InstallChoicePage.CheckListBox.Top +
     InstallChoicePage.CheckListBox.Height + ScaleY(8);
-  NoAutoRebootCheckBox.Width := InstallChoicePage.SurfaceWidth - ScaleX(16);
+  NoAutoRebootCheckBox.Width := InstallChoicePage.CheckListBox.Width;
   NoAutoRebootCheckBox.Height := ScaleY(42);
   NoAutoRebootCheckBox.Caption := 'I understand what I''m doing and I do NOT want my PC restarted automatically';
   NoAutoRebootCheckBox.Font.Color := clRed;
