@@ -193,6 +193,21 @@ const
   SettingsDirName = 'WellspringPTP';
   RunKeyPath = 'Software\Microsoft\Windows\CurrentVersion\Run';
   RunValueName = 'WellspringPTP';
+  LB_GETITEMHEIGHT = $01A1;
+  SB_VERT = 1;
+
+#ifdef IncludeDriver
+// Used to read the CheckListBox's real, native per-item pixel height
+// instead of guessing it (see the Height fix in InitializeWizard below).
+function SendMessage(hWnd: Longint; Msg: Longint; WParam: Longint;
+  LParam: Longint): Longint;
+  external 'SendMessageA@user32.dll stdcall';
+// Used to force-hide the vertical scrollbar once the box is sized to
+// exactly fit its 2 items, so no leftover scroll range can appear even
+// if some other DPI/theme edge case still leaves a few stray pixels.
+function ShowScrollBar(hWnd: Longint; wBar: Longint; bShow: Boolean): Boolean;
+  external 'ShowScrollBar@user32.dll stdcall';
+#endif
 
 var
   #ifdef IncludeDriver
@@ -255,18 +270,29 @@ begin
   // BUG FIX: CreateInputOptionPage's CheckListBox does NOT shrink-wrap to
   // its actual items - Inno sizes it to span almost the entire page
   // (Initialize sets Height := DefaultBoxBottom-relative, regardless of
-  // how many options were Add()-ed). With only the 2 short one-line
-  // captions above, every item lands at MinItemHeight (ScaleY(22), set in
-  // the same Initialize call) since neither caption wraps. Shrink the box
-  // down to just those 2 items so anything anchored below it doesn't end
-  // up positioned at/past the page's own bottom edge and get clipped -
-  // that was the original bug with the checkbox below (it was anchored to
-  // Surface.Height directly, same failure mode one level up). The box is
-  // borderless/surface-colored here (BorderStyle=bsNone, Color=SurfaceColor,
-  // set in the same Initialize call for a non-ListBox page), so shrinking
-  // it leaves no visible artifact - just unused surface below it.
+  // how many options were Add()-ed). Shrink the box down to just those 2
+  // items so anything anchored below it doesn't end up positioned at/past
+  // the page's own bottom edge and get clipped - that was the original bug
+  // with the checkbox below (it was anchored to Surface.Height directly,
+  // same failure mode one level up). The box is borderless/surface-colored
+  // here (BorderStyle=bsNone, Color=SurfaceColor, set in the same
+  // Initialize call for a non-ListBox page), so shrinking it leaves no
+  // visible artifact - just unused surface below it.
+  //
+  // BUG FIX 2: originally used an assumed MinItemHeight of ScaleY(22) here,
+  // but that's a guess, not the control's real per-item pixel height - on
+  // this box's actual font/DPI the native listbox row is a couple of
+  // pixels taller, so 2 items slightly overflowed the box we requested.
+  // Windows then kept a (mostly invisible, "empty") vertical scrollbar on
+  // the native listbox for that leftover sliver, so scrolling revealed
+  // blank space below the two real items instead of anything real. Ask the
+  // control for its own real item height via LB_GETITEMHEIGHT instead of
+  // guessing, then explicitly hide the vertical scrollbar - once the box
+  // exactly fits its content there is nothing left to scroll.
   InstallChoicePage.CheckListBox.Height :=
-    InstallChoicePage.CheckListBox.Items.Count * ScaleY(22);
+    InstallChoicePage.CheckListBox.Items.Count *
+    SendMessage(InstallChoicePage.CheckListBox.Handle, LB_GETITEMHEIGHT, 0, 0);
+  ShowScrollBar(InstallChoicePage.CheckListBox.Handle, SB_VERT, False);
 
   NoAutoRebootCheckBox := TNewCheckBox.Create(WizardForm);
   NoAutoRebootCheckBox.Parent := InstallChoicePage.Surface;
