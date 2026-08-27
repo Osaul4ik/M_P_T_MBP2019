@@ -196,7 +196,7 @@ var
   #ifdef IncludeDriver
   InstallChoicePage: TInputOptionWizardPage;
   NoAutoRebootCheckBox: TNewCheckBox;
-  // UninstallChoice is used only by the uninstall flow.
+  // UninstallChoice is no longer used for choices; uninstall removes everything.
   UninstallChoice: Integer;
   #endif
   RebootNeeded: Boolean;
@@ -253,11 +253,13 @@ begin
   InstallChoicePage.SelectedValueIndex := 0;
 
   NoAutoRebootCheckBox := TNewCheckBox.Create(WizardForm);
-  NoAutoRebootCheckBox.Parent := WizardForm;
-  NoAutoRebootCheckBox.Left := ScaleX(12);
-  NoAutoRebootCheckBox.Top := InstallChoicePage.Surface.Top + InstallChoicePage.Surface.Height + ScaleY(12);
-  NoAutoRebootCheckBox.Width := WizardForm.ClientWidth - ScaleX(24);
+  NoAutoRebootCheckBox.Parent := InstallChoicePage.Surface;
+  NoAutoRebootCheckBox.Left := ScaleX(8);
+  NoAutoRebootCheckBox.Top := InstallChoicePage.Surface.Height + ScaleY(8);
+  NoAutoRebootCheckBox.Width := InstallChoicePage.SurfaceWidth - ScaleX(16);
+  NoAutoRebootCheckBox.Height := ScaleY(42);
   NoAutoRebootCheckBox.Caption := 'I understand what I''m doing and I do NOT want my PC restarted automatically';
+  NoAutoRebootCheckBox.WordWrap := True;
   NoAutoRebootCheckBox.Font.Color := clRed;
 end;
 
@@ -273,16 +275,12 @@ begin
     if NoAutoRebootCheckBox.Checked then
       MsgBox(
         'The driver will be installed, but your PC will NOT be restarted automatically.' + #13#10#13#10 +
-        'The driver may not be bound to the touchpad until you manually restart Windows.' + #13#10#13#10 +
-        'Please restart the PC yourself after installation.',
+        'The driver may not be bound to the touchpad until you manually restart Windows.',
         mbInformation, MB_OK)
     else
       MsgBox(
         'Installing the driver requires a restart to finish.' + #13#10#13#10 +
-        'Once the driver has been installed, Setup will close automatically ' +
-        'and your computer will restart - no further confirmation will be ' +
-        'asked at that point.' + #13#10#13#10 +
-        'Please save any open work before continuing.',
+        'Setup will restart your computer automatically after installation.',
         mbInformation, MB_OK);
   end;
 end;
@@ -506,7 +504,8 @@ begin
   // window without Inno treating it as an aborted/incomplete Setup and
   // asking "Setup is not complete, exit anyway?". This replaces the old
   // Finished-page "restart now / later" choice entirely: it just happens.
-  if (CurStep = ssDone) and RebootNeeded and (not NoAutoRebootCheckBox.Checked) then
+  if (CurStep = ssDone) and RebootNeeded and
+     (not NoAutoRebootCheckBox.Checked) then
   begin
     // BUG FIX: /t 15 gave Windows a 15-second countdown - and ANY nonzero
     // /t value makes Windows show its own "your PC will restart" warning
@@ -566,7 +565,7 @@ end;
 // where RebootNeeded is never set.
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  Result := (PageID = wpFinished) and RebootNeeded and (not NoAutoRebootCheckBox.Checked);
+  Result := (PageID = wpFinished) and RebootNeeded;
 end;
 
 function InitializeSetup(): Boolean;
@@ -842,11 +841,21 @@ end;
 #endif
 
 function InitializeUninstall(): Boolean;
+#ifdef IncludeDriver
+var
+  Choice: Integer;
+#endif
 begin
   KillRunningApp;
   Result := True;
+
   #ifdef IncludeDriver
+  // Always remove both GUI and driver. No custom uninstall choices.
   UninstallChoice := 0;
+  // Choice = 0 (Driver + GUI): fall through with Result = True and let
+  // Inno's normal uninstall proceed - CurUninstallStepChanged below
+  // removes the driver first, then Inno removes the GUI's files,
+  // shortcut, registry entry, and finally itself.
   #endif
 end;
 
@@ -855,7 +864,8 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     #ifdef IncludeDriver
-    RemoveDriverNow;
+    if UninstallChoice = 0 then
+      RemoveDriverNow;
     #endif
     MaybeDeleteSettings;
   end;
