@@ -270,14 +270,13 @@ begin
 
   NoAutoRebootCheckBox := TNewCheckBox.Create(WizardForm);
   NoAutoRebootCheckBox.Parent := InstallChoicePage.Surface;
-  // BUG FIX: TNewCheckBox is a plain, unmodified TCheckBox (see NewCtrls.pas
-  // - "TNewCheckBox = class(TCheckBox);", no overrides). TCheckBox.AutoSize
-  // defaults to True, which recalculates Height to fit a SINGLE line of the
-  // caption and silently overrides whatever Height we set below - the long
-  // two-line warning caption was getting squeezed into a one-line box
-  // instead of actually wrapping into the reserved 42px. Must be turned off
-  // before Width/Height are set, or AutoSize fights our explicit values.
-  NoAutoRebootCheckBox.AutoSize := False;
+  // NOTE: TNewCheckBox is a plain, unmodified TCheckBox (see NewCtrls.pas -
+  // "TNewCheckBox = class(TCheckBox);", no overrides), and TControl.AutoSize
+  // defaults to False, so no explicit reset is needed here. AutoSize itself
+  // is NOT exposed by Inno Setup's Pascal Script class wrapper for
+  // TNewCheckBox (compiling `NoAutoRebootCheckBox.AutoSize := False;` fails
+  // with "Unknown identifier 'AUTOSIZE'"), so it can't be set from script
+  // even if a future Inno Setup version changes the underlying default.
   // Align to the CheckListBox's own Left, not an arbitrary offset - that's
   // where the radio items above actually start, so the checkbox's glyph
   // lines up with them instead of sitting at a different, unrelated
