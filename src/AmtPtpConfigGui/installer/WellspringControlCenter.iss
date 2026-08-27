@@ -259,7 +259,6 @@ begin
   NoAutoRebootCheckBox.Width := InstallChoicePage.SurfaceWidth - ScaleX(16);
   NoAutoRebootCheckBox.Height := ScaleY(42);
   NoAutoRebootCheckBox.Caption := 'I understand what I''m doing and I do NOT want my PC restarted automatically';
-  NoAutoRebootCheckBox.WordWrap := True;
   NoAutoRebootCheckBox.Font.Color := clRed;
 end;
 
@@ -672,7 +671,6 @@ begin
     SubTitleLbl.Width := UninstallForm.ClientWidth - ScaleX(48);
     SubTitleLbl.Height := ScaleY(38);
     SubTitleLbl.AutoSize := False;
-    SubTitleLbl.WordWrap := True;
     SubTitleLbl.Caption :=
       'Select what you want to remove, then click Next to continue.';
 
@@ -683,7 +681,6 @@ begin
     InfoLbl.Width := UninstallForm.ClientWidth - ScaleX(48);
     InfoLbl.Height := ScaleY(34);
     InfoLbl.AutoSize := False;
-    InfoLbl.WordWrap := True;
     InfoLbl.Caption := 'The driver can be kept installed independently of the GUI.';
 
     RadioBoth := TNewRadioButton.Create(UninstallForm);
