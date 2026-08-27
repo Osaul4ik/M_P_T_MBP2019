@@ -799,8 +799,14 @@ namespace AmtPtpConfigGui
                 if (enabled)
                 {
                     var exe = Environment.ProcessPath;
+                    // "-tray" tells App.OnStartup (see App.xaml.cs) to keep
+                    // MainWindow parked in the tray on launch instead of
+                    // showing it - without this, every Windows sign-in would
+                    // pop the full config window on screen even though the
+                    // user only asked for the app to be *running* at
+                    // startup, not front-and-center.
                     if (!string.IsNullOrWhiteSpace(exe))
-                        key.SetValue(valueName, $"\"{exe}\"");
+                        key.SetValue(valueName, $"\"{exe}\" -tray");
                 }
                 else
                 {
