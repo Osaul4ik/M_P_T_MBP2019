@@ -252,10 +252,27 @@ begin
   InstallChoicePage.Add('Driver only');
   InstallChoicePage.SelectedValueIndex := 0;
 
+  // BUG FIX: CreateInputOptionPage's CheckListBox does NOT shrink-wrap to
+  // its actual items - Inno sizes it to span almost the entire page
+  // (Initialize sets Height := DefaultBoxBottom-relative, regardless of
+  // how many options were Add()-ed). With only the 2 short one-line
+  // captions above, every item lands at MinItemHeight (ScaleY(22), set in
+  // the same Initialize call) since neither caption wraps. Shrink the box
+  // down to just those 2 items so anything anchored below it doesn't end
+  // up positioned at/past the page's own bottom edge and get clipped -
+  // that was the original bug with the checkbox below (it was anchored to
+  // Surface.Height directly, same failure mode one level up). The box is
+  // borderless/surface-colored here (BorderStyle=bsNone, Color=SurfaceColor,
+  // set in the same Initialize call for a non-ListBox page), so shrinking
+  // it leaves no visible artifact - just unused surface below it.
+  InstallChoicePage.CheckListBox.Height :=
+    InstallChoicePage.CheckListBox.Items.Count * ScaleY(22);
+
   NoAutoRebootCheckBox := TNewCheckBox.Create(WizardForm);
   NoAutoRebootCheckBox.Parent := InstallChoicePage.Surface;
   NoAutoRebootCheckBox.Left := ScaleX(8);
-  NoAutoRebootCheckBox.Top := InstallChoicePage.Surface.Height + ScaleY(8);
+  NoAutoRebootCheckBox.Top := InstallChoicePage.CheckListBox.Top +
+    InstallChoicePage.CheckListBox.Height + ScaleY(8);
   NoAutoRebootCheckBox.Width := InstallChoicePage.SurfaceWidth - ScaleX(16);
   NoAutoRebootCheckBox.Height := ScaleY(42);
   NoAutoRebootCheckBox.Caption := 'I understand what I''m doing and I do NOT want my PC restarted automatically';
