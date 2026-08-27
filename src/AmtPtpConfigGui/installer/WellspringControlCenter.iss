@@ -590,118 +590,6 @@ end;
 
 #ifdef IncludeDriver
 
-// Small custom dialog (there is no wizard during uninstall, so this is
-// built by hand with CreateCustomForm) letting the user pick exactly
-// what to remove. Returns 0 = Driver + GUI, 1 = GUI only, 2 = Driver
-// only, or -1 if the user cancelled.
-function AskUninstallChoice(): Integer;
-var
-  UninstallForm: TSetupForm;
-  TitleLbl, SubTitleLbl, InfoLbl: TNewStaticText;
-  RadioBoth, RadioGuiOnly, RadioDriverOnly: TNewRadioButton;
-  NextButton, CancelButton: TNewButton;
-  ResultCode: Integer;
-begin
-  Result := -1;
-
-  // Inno Setup does not expose the normal wizard-page API to the uninstaller,
-  // so this uses a custom form styled like a normal Setup wizard page rather
-  // than the old small dialog.
-  UninstallForm := CreateCustomForm(ScaleX(520), ScaleY(330), False, False);
-  try
-    UninstallForm.Caption := 'Wellspring Control Center Setup';
-    UninstallForm.Position := poScreenCenter;
-
-    TitleLbl := TNewStaticText.Create(UninstallForm);
-    TitleLbl.Parent := UninstallForm;
-    TitleLbl.Left := ScaleX(24);
-    TitleLbl.Top := ScaleY(22);
-    TitleLbl.Width := UninstallForm.ClientWidth - ScaleX(48);
-    TitleLbl.Height := ScaleY(26);
-    TitleLbl.AutoSize := False;
-    TitleLbl.Font.Size := 14;
-    TitleLbl.Font.Style := [fsBold];
-    TitleLbl.Caption := 'Uninstall Wellspring Control Center';
-
-    SubTitleLbl := TNewStaticText.Create(UninstallForm);
-    SubTitleLbl.Parent := UninstallForm;
-    SubTitleLbl.Left := ScaleX(24);
-    SubTitleLbl.Top := TitleLbl.Top + TitleLbl.Height + ScaleY(6);
-    SubTitleLbl.Width := UninstallForm.ClientWidth - ScaleX(48);
-    SubTitleLbl.Height := ScaleY(38);
-    SubTitleLbl.AutoSize := False;
-    SubTitleLbl.WordWrap := True;
-    SubTitleLbl.Caption :=
-      'Select what you want to remove, then click Next to continue.';
-
-    InfoLbl := TNewStaticText.Create(UninstallForm);
-    InfoLbl.Parent := UninstallForm;
-    InfoLbl.Left := ScaleX(24);
-    InfoLbl.Top := SubTitleLbl.Top + SubTitleLbl.Height + ScaleY(14);
-    InfoLbl.Width := UninstallForm.ClientWidth - ScaleX(48);
-    InfoLbl.Height := ScaleY(34);
-    InfoLbl.AutoSize := False;
-    InfoLbl.WordWrap := True;
-    InfoLbl.Caption := 'The driver can be kept installed independently of the GUI.';
-
-    RadioBoth := TNewRadioButton.Create(UninstallForm);
-    RadioBoth.Parent := UninstallForm;
-    RadioBoth.Left := ScaleX(40);
-    RadioBoth.Top := InfoLbl.Top + InfoLbl.Height + ScaleY(12);
-    RadioBoth.Width := UninstallForm.ClientWidth - ScaleX(64);
-    RadioBoth.Caption := 'Driver + GUI (remove everything)';
-    RadioBoth.Checked := True;
-
-    RadioGuiOnly := TNewRadioButton.Create(UninstallForm);
-    RadioGuiOnly.Parent := UninstallForm;
-    RadioGuiOnly.Left := ScaleX(40);
-    RadioGuiOnly.Top := RadioBoth.Top + RadioBoth.Height + ScaleY(9);
-    RadioGuiOnly.Width := UninstallForm.ClientWidth - ScaleX(64);
-    RadioGuiOnly.Caption := 'GUI only (keep the driver installed)';
-
-    RadioDriverOnly := TNewRadioButton.Create(UninstallForm);
-    RadioDriverOnly.Parent := UninstallForm;
-    RadioDriverOnly.Left := ScaleX(40);
-    RadioDriverOnly.Top := RadioGuiOnly.Top + RadioGuiOnly.Height + ScaleY(9);
-    RadioDriverOnly.Width := UninstallForm.ClientWidth - ScaleX(64);
-    RadioDriverOnly.Caption := 'Driver only (keep the GUI installed)';
-
-    NextButton := TNewButton.Create(UninstallForm);
-    NextButton.Parent := UninstallForm;
-    NextButton.Width := ScaleX(90);
-    NextButton.Height := ScaleY(26);
-    NextButton.Left := UninstallForm.ClientWidth - ScaleX(24) -
-      NextButton.Width - ScaleX(86);
-    NextButton.Top := UninstallForm.ClientHeight - ScaleY(24) - NextButton.Height;
-    NextButton.Caption := 'Next >';
-    NextButton.ModalResult := mrOk;
-    NextButton.Default := True;
-
-    CancelButton := TNewButton.Create(UninstallForm);
-    CancelButton.Parent := UninstallForm;
-    CancelButton.Width := ScaleX(90);
-    CancelButton.Height := ScaleY(26);
-    CancelButton.Left := UninstallForm.ClientWidth - ScaleX(24) -
-      CancelButton.Width;
-    CancelButton.Top := UninstallForm.ClientHeight - ScaleY(24) - CancelButton.Height;
-    CancelButton.Caption := 'Cancel';
-    CancelButton.ModalResult := mrCancel;
-    CancelButton.Cancel := True;
-
-    if UninstallForm.ShowModal() = mrOk then
-    begin
-      if RadioBoth.Checked then
-        Result := 0
-      else if RadioGuiOnly.Checked then
-        Result := 1
-      else if RadioDriverOnly.Checked then
-        Result := 2;
-    end;
-  finally
-    UninstallForm.Free;
-  end;
-end;
-
 // Removes every installed package originating from our own INF
 // (regardless of what "oemNN.inf" number Windows assigned it - same
 // Get-WindowsDriver matching approach used on install, see
@@ -799,55 +687,13 @@ end;
 #endif
 
 function InitializeUninstall(): Boolean;
-#ifdef IncludeDriver
-var
-  Choice: Integer;
-#endif
 begin
   KillRunningApp;
   Result := True;
 
-  #ifdef IncludeDriver
-  Choice := AskUninstallChoice();
-  if Choice = -1 then
-  begin
-    Result := False;
-    Exit;
-  end;
-  UninstallChoice := Choice;
-
-  if Choice = 1 then
-  begin
-    // GUI only: handled entirely here, since returning False below skips
-    // Inno's normal file/registry removal (and its self-delete) - that's
-    // exactly what keeps the driver-uninstall option available later.
-    RemoveGuiFilesKeepUninstaller;
-    MaybeDeleteSettings;
-    MsgBox(
-      'Wellspring Control Center has been removed.' + #13#10 +
-      'The driver is still installed - run this uninstaller again if you ' +
-      'want to remove it too.',
-      mbInformation, MB_OK);
-    Result := False;
-    Exit;
-  end
-  else if Choice = 2 then
-  begin
-    // Driver only: same idea, but nothing under {app} is touched.
-    RemoveDriverNow;
-    MsgBox(
-      'The driver has been removed.' + #13#10 +
-      'Wellspring Control Center is still installed - run this ' +
-      'uninstaller again if you want to remove it too.',
-      mbInformation, MB_OK);
-    Result := False;
-    Exit;
-  end;
-  // Choice = 0 (Driver + GUI): fall through with Result = True and let
-  // Inno's normal uninstall proceed - CurUninstallStepChanged below
-  // removes the driver first, then Inno removes the GUI's files,
-  // shortcut, registry entry, and finally itself.
-  #endif
+  // Normal uninstall path: remove everything.
+  // Driver packages are removed in CurUninstallStepChanged, then Inno
+  // removes the GUI files, registry entries and the uninstaller itself.
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
