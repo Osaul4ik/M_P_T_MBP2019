@@ -800,9 +800,7 @@ namespace AmtPtpConfigGui
                 {
                     var exe = Environment.ProcessPath;
                     if (!string.IsNullOrWhiteSpace(exe))
-                        // Windows starts the GUI directly into the system tray.
-                        // A normal manual launch still opens the main window.
-                        key.SetValue(valueName, $"\"{exe}\" -tray");
+                        key.SetValue(valueName, $"\"{exe}\"");
                 }
                 else
                 {
@@ -1673,6 +1671,23 @@ namespace AmtPtpConfigGui
             }
 
             bool connected = _device.TryConnect();
+
+            // Opening the Wellspring control-device only proves that the
+            // control device exists. It does not prove that an active
+            // Wellspring HID target is currently attached to it. This can
+            // happen when the Apple/default HID driver is servicing the
+            // touchpad instead of Wellspring. Require authoritative device
+            // info from the driver before showing Connected or a model.
+            if (connected)
+            {
+                if (!_device.TryGetDeviceInfo(out var activeInfo) ||
+                    activeInfo.StructVersion != 1 ||
+                    activeInfo.ProductId == 0)
+                {
+                    _device.Disconnect();
+                    connected = false;
+                }
+            }
 
             if (connected)
             {
