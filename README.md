@@ -214,3 +214,4 @@ This project is based on the excellent work of the original **mac-precision-touc
 
 # License
 * USB driver — GPL v2
+
