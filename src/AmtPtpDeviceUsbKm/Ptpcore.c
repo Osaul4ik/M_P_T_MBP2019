@@ -393,7 +393,21 @@ PTPCore_ProcessFrame(
         if (!matchResult.NewIdentity[ci]) continue;
 
         ULONG  oldId; USHORT oldX, oldY;
-        if (pCtx->ActiveContacts[p].WasInGesture) {
+
+        // BUG FIX (spurious tap-click on 2nd-finger touchdown): WasInGesture
+        // alone is the *previous* frame's taint - stale the instant a second
+        // finger lands in the SAME frame a firmware identity-break (Origin==0)
+        // fires for the finger already moving. That race used to fall into
+        // the "else" branch below: a real, RecentLifts-recorded UP for the
+        // old ID, emitted in the very same report as the fresh DOWNs for the
+        // rebirthed contact and the new second finger. Windows' PTP stack
+        // reads that UP+DOWN+DOWN combo as a quick tap-then-2-finger-gesture
+        // and fires a click, even though the finger never left the pad.
+        // gestureThisFrame (already known at this point - computed above from
+        // this frame's own candidate set) is the same signal Phase C uses for
+        // its taint decision (see shouldTaint); using it here too closes the
+        // gap instead of only patching the symptom downstream.
+        if (pCtx->ActiveContacts[p].WasInGesture || gestureThisFrame) {
             AmtContactEnterGrace(pCtx->ActiveContacts, p, &oldId, &oldX, &oldY);
             AmtContactExpireGrace(pCtx->ActiveContacts, p);
             // Gesture lift: not recorded in RecentLifts.
